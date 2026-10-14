@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
 import { Monitor, AlertTriangle, Loader2, Sparkles } from 'lucide-react';
-import { AnimatedBackground } from '../components/AnimatedBackground';
 
 export function LoginPage() {
   const { login, isFirstRun, createFirstAdmin } = useAuth();
@@ -47,8 +46,6 @@ export function LoginPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden">
-      <AnimatedBackground />
-      
       {/* Animated gradient orbs */}
       <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-500/20 rounded-full blur-3xl animate-pulse" />
       <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-500/20 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1s' }} />

@@ -7,10 +7,12 @@ import { User, UserRole } from '../lib/types';
 import { getUsers, saveUsers, generateId, hashPassword, getSystems } from '../lib/storage';
 import { logger } from '../lib/logger';
 import { useToast } from '../components/Toast';
+import { useAuth } from '../contexts/AuthContext';
 import { AnimatedCard, StaggerContainer, StaggerItem } from '../components/AnimatedCard';
 
 export function UsersPage() {
   const { toast } = useToast();
+  const { refreshUser, user: currentUser } = useAuth();
   const [users, setUsers] = useState<User[]>(getUsers());
   const [showForm, setShowForm] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
@@ -68,6 +70,10 @@ export function UsersPage() {
 
     saveUsers(updated);
     setUsers(updated);
+    // Обновляем текущего пользователя если изменили его данные
+    if (editingUser?.id === currentUser?.id || (!editingUser && form.login === currentUser?.login)) {
+      refreshUser();
+    }
     resetForm();
   };
 
@@ -88,6 +94,7 @@ export function UsersPage() {
     const updated = users.map(u => u.id === user.id ? { ...u, isActive: !u.isActive } : u);
     saveUsers(updated);
     setUsers(updated);
+    if (user.id === currentUser?.id) refreshUser();
     logger.admin(`Пользователь ${user.isActive ? 'деактивирован' : 'активирован'}: ${user.login}`, user.login);
     toast(user.isActive ? 'warning' : 'success', `Пользователь "${user.login}" ${user.isActive ? 'деактивирован' : 'активирован'}`);
   };

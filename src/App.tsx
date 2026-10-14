@@ -3,9 +3,8 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { ToastProvider } from './components/Toast';
 import { AnimatedBackground } from './components/AnimatedBackground';
-import { initializeDb } from './lib/storage';
+import { initializeDb, getSystems } from './lib/storage';
 import { initializeRtspMock } from './lib/rtsp-mock';
-import { getSystems } from './lib/storage';
 import { Layout } from './components/Layout';
 import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
@@ -16,6 +15,18 @@ import { IpFilterPage } from './pages/IpFilterPage';
 import { LogsPage } from './pages/LogsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AboutPage } from './pages/AboutPage';
+
+// Роли, которым доступна каждая страница
+const PAGE_ROLES: Record<string, string[]> = {
+  'dashboard': ['admin', 'operator', 'viewer'],
+  'video-wall': ['admin', 'operator', 'viewer'],
+  'systems': ['admin'],
+  'users': ['admin'],
+  'ip-filter': ['admin'],
+  'logs': ['admin', 'operator'],
+  'settings': ['admin'],
+  'about': ['admin', 'operator', 'viewer'],
+};
 
 function AppContent() {
   const { user, isFirstRun } = useAuth();
@@ -28,18 +39,33 @@ function AppContent() {
     initializeRtspMock(systems);
   }, []);
 
-  // Show login if not authenticated
-  if (!user && !isFirstRun) {
-    return (
-      <>
-        <AnimatedBackground />
-        <LoginPage />
-      </>
-    );
-  }
+  // Проверка доступа к странице
+  const canAccessPage = (page: string): boolean => {
+    if (!user) return false;
+    const allowedRoles = PAGE_ROLES[page] || [];
+    // Администраторы (isAdmin=true) имеют доступ ко всему
+    if (user.isAdmin) return true;
+    return allowedRoles.includes(user.role);
+  };
 
-  // Show first-run setup
-  if (isFirstRun) {
+  // Обёртка для навигации с проверкой прав
+  const handleNavigate = (page: string) => {
+    if (canAccessPage(page)) {
+      setCurrentPage(page);
+    } else {
+      setCurrentPage('dashboard');
+    }
+  };
+
+  // Если пользователь пытается зайти на недоступную страницу — редирект
+  useEffect(() => {
+    if (user && !canAccessPage(currentPage)) {
+      setCurrentPage('dashboard');
+    }
+  }, [user, currentPage]);
+
+  // Show login / first-run setup
+  if (!user || isFirstRun) {
     return (
       <>
         <AnimatedBackground />
@@ -53,11 +79,11 @@ function AppContent() {
     switch (currentPage) {
       case 'dashboard': return <DashboardPage />;
       case 'video-wall': return <VideoWallPage />;
-      case 'systems': return <SystemsPage />;
-      case 'users': return <UsersPage />;
-      case 'ip-filter': return <IpFilterPage />;
-      case 'logs': return <LogsPage />;
-      case 'settings': return <SettingsPage />;
+      case 'systems': return canAccessPage('systems') ? <SystemsPage /> : <DashboardPage />;
+      case 'users': return canAccessPage('users') ? <UsersPage /> : <DashboardPage />;
+      case 'ip-filter': return canAccessPage('ip-filter') ? <IpFilterPage /> : <DashboardPage />;
+      case 'logs': return canAccessPage('logs') ? <LogsPage /> : <DashboardPage />;
+      case 'settings': return canAccessPage('settings') ? <SettingsPage /> : <DashboardPage />;
       case 'about': return <AboutPage />;
       default: return <DashboardPage />;
     }
@@ -66,7 +92,7 @@ function AppContent() {
   return (
     <>
       <AnimatedBackground />
-      <Layout currentPage={currentPage} onNavigate={setCurrentPage}>
+      <Layout currentPage={currentPage} onNavigate={handleNavigate}>
         {renderPage()}
       </Layout>
     </>

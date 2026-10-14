@@ -29,9 +29,12 @@ export function Layout({ children, currentPage, onNavigate }: LayoutProps) {
   const { theme, toggleTheme } = useTheme();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const filteredMenu = menuItems.filter(item => 
-    user && item.roles.includes(user.role)
-  );
+  const filteredMenu = menuItems.filter(item => {
+    if (!user) return false;
+    // Администраторы (isAdmin=true) видят все пункты
+    if (user.isAdmin) return true;
+    return item.roles.includes(user.role);
+  });
 
   return (
     <div className="min-h-screen flex relative">
@@ -150,7 +153,8 @@ export function Layout({ children, currentPage, onNavigate }: LayoutProps) {
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium truncate text-white">{user?.login}</p>
               <p className="text-xs text-gray-500">
-                {user?.role === 'admin' ? 'Администратор' : 
+                {user?.isAdmin ? 'Администратор' :
+                 user?.role === 'admin' ? 'Администратор' : 
                  user?.role === 'operator' ? 'Оператор' : 'Наблюдатель'}
               </p>
             </div>

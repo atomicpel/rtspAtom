@@ -14,6 +14,7 @@ interface AuthContextType {
   logout: () => void;
   isFirstRun: boolean;
   createFirstAdmin: (login: string, password: string) => Promise<boolean>;
+  refreshUser: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -23,27 +24,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [isFirstRun, setIsFirstRun] = useState(false);
 
+  // Восстановление сессии при загрузке
   useEffect(() => {
-    // Check if first run (no users)
     const users = getUsers();
     if (users.length === 0) {
       setIsFirstRun(true);
       return;
     }
     
-    // Restore session
     const currentSession = getCurrentSession();
     if (currentSession) {
       const sessionUser = users.find(u => u.id === currentSession.userId);
       if (sessionUser && sessionUser.isActive) {
         setUser(sessionUser);
         setSession(currentSession);
+      } else {
+        // Сессия невалидна — очищаем
+        clearCurrentSession();
       }
     }
   }, []);
 
+  // Обновление данных пользователя из хранилища
+  const refreshUser = useCallback(() => {
+    if (!user) return;
+    const freshUser = getUsers().find(u => u.id === user.id);
+    if (freshUser) {
+      setUser(freshUser);
+    }
+  }, [user]);
+
   const login = useCallback(async (loginStr: string, password: string, ip: string) => {
-    // Check rate limit
     if (isBlocked(ip)) {
       return { success: false, error: 'Превышено количество попыток. Подождите 15 минут.' };
     }
@@ -66,7 +77,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return { success: false, error: 'Неверный логин или пароль' };
     }
 
-    // Create session
+    // Создаём сессию
     const token = generateToken();
     const newSession: Session = {
       id: generateId(),
@@ -119,11 +130,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     saveUsers([admin]);
     setIsFirstRun(false);
     logger.admin(`Создан первый администратор: ${loginStr}`, loginStr);
+    
+    // Автоматический вход после создания первого админа
+    const token = generateToken();
+    const newSession: Session = {
+      id: generateId(),
+      userId: admin.id,
+      token,
+      ip: '127.0.0.1',
+      expiresAt: new Date(Date.now() + 3600 * 1000).toISOString(),
+    };
+    saveSessions([newSession]);
+    setCurrentSession(token);
+    setUser(admin);
+    setSession(newSession);
+    
     return true;
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, session, login, logout, isFirstRun, createFirstAdmin }}>
+    <AuthContext.Provider value={{ user, session, login, logout, isFirstRun, createFirstAdmin, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );
