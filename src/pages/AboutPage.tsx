@@ -52,8 +52,8 @@ export function AboutPage() {
           transition={{ delay: 0.4 }}
           className="text-gray-400 max-w-lg mx-auto"
         >
-          Панель управления сервером RTSP-видеотрансляции для развёртывания 
-          в изолированной локальной сети
+          Панель управления системами видеонаблюдения с множеством камер.
+          Удалённые рабочие столы, видеостена, гибкое управление доступом.
         </motion.p>
       </motion.div>
 
@@ -101,7 +101,7 @@ export function AboutPage() {
               <h3 className="text-sm font-medium text-white group-hover:text-blue-400 transition-colors">RTSP-ретрансляция</h3>
             </div>
             <p className="text-xs text-gray-400">
-              Приём и ретрансляция RTSP-потоков с IP-камер. Поддержка HLS/WebRTC для клиентов.
+              Управление удалёнными системами с множеством камер. Ретрансляция RTSP-потоков, поддержка HLS/WebRTC.
             </p>
           </AnimatedCard>
         </StaggerItem>

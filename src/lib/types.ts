@@ -1,25 +1,36 @@
 export type UserRole = 'admin' | 'operator' | 'viewer';
 
-export interface User {
-  id: string;
-  login: string;
-  passwordHash: string;
-  role: UserRole;
-  allowedCidrs: string[];
-  allowedStreams: string[];
-  isActive: boolean;
-  createdAt: string;
-}
-
-export interface Stream {
+export interface Camera {
   id: string;
   name: string;
   url: string;
   sourceLogin: string;
   sourcePassword: string;
-  priority: number;
   isActive: boolean;
   status: 'online' | 'offline' | 'reconnecting';
+}
+
+export interface System {
+  id: string;
+  name: string;
+  hostname: string;
+  ip: string;
+  description: string;
+  cameras: Camera[];
+  isActive: boolean;
+  status: 'online' | 'offline' | 'reconnecting';
+  createdAt: string;
+}
+
+export interface User {
+  id: string;
+  login: string;
+  passwordHash: string;
+  role: UserRole;
+  isAdmin: boolean; // Явные права администратора
+  allowedCidrs: string[];
+  allowedSystemIds: string[]; // Разрешённые системы (пусто = все)
+  isActive: boolean;
   createdAt: string;
 }
 
@@ -68,7 +79,7 @@ export interface SystemMetrics {
   ram: number;
   networkIn: number;
   networkOut: number;
-  activeStreams: number;
+  activeSystems: number;
   connectedClients: number;
   uptime: number;
 }

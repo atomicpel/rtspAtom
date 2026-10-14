@@ -5,12 +5,12 @@ import { ToastProvider } from './components/Toast';
 import { AnimatedBackground } from './components/AnimatedBackground';
 import { initializeDb } from './lib/storage';
 import { initializeRtspMock } from './lib/rtsp-mock';
-import { getStreams } from './lib/storage';
+import { getSystems } from './lib/storage';
 import { Layout } from './components/Layout';
 import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { VideoWallPage } from './pages/VideoWallPage';
-import { StreamsPage } from './pages/StreamsPage';
+import { SystemsPage } from './pages/SystemsPage';
 import { UsersPage } from './pages/UsersPage';
 import { IpFilterPage } from './pages/IpFilterPage';
 import { LogsPage } from './pages/LogsPage';
@@ -24,8 +24,8 @@ function AppContent() {
   // Initialize DB and mock on mount
   useEffect(() => {
     initializeDb();
-    const streams = getStreams();
-    initializeRtspMock(streams);
+    const systems = getSystems();
+    initializeRtspMock(systems);
   }, []);
 
   // Show login if not authenticated
@@ -53,7 +53,7 @@ function AppContent() {
     switch (currentPage) {
       case 'dashboard': return <DashboardPage />;
       case 'video-wall': return <VideoWallPage />;
-      case 'streams': return <StreamsPage />;
+      case 'systems': return <SystemsPage />;
       case 'users': return <UsersPage />;
       case 'ip-filter': return <IpFilterPage />;
       case 'logs': return <LogsPage />;

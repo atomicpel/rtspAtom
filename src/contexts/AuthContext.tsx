@@ -109,8 +109,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       login: loginStr,
       passwordHash: hashPassword(password),
       role: 'admin',
+      isAdmin: true,
       allowedCidrs: ['0.0.0.0/0'],
-      allowedStreams: [],
+      allowedSystemIds: [],
       isActive: true,
       createdAt: new Date().toISOString(),
     };

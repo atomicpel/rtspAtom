@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
-  Plus, Edit2, Trash2, UserCheck, UserX, Key, X, Check, Users as UsersIcon
+  Plus, Edit2, Trash2, UserCheck, UserX, Key, X, Check, Users as UsersIcon, Shield, ShieldCheck
 } from 'lucide-react';
 import { User, UserRole } from '../lib/types';
-import { getUsers, saveUsers, generateId, hashPassword } from '../lib/storage';
+import { getUsers, saveUsers, generateId, hashPassword, getSystems } from '../lib/storage';
 import { logger } from '../lib/logger';
 import { useToast } from '../components/Toast';
 import { AnimatedCard, StaggerContainer, StaggerItem } from '../components/AnimatedCard';
@@ -17,11 +17,18 @@ export function UsersPage() {
   const [showPasswordChange, setShowPasswordChange] = useState<string | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [form, setForm] = useState({
-    login: '', role: 'viewer' as UserRole, allowedCidrs: '', isActive: true
+    login: '', 
+    role: 'viewer' as UserRole, 
+    isAdmin: false,
+    allowedCidrs: '', 
+    allowedSystemIds: [] as string[],
+    isActive: true 
   });
 
+  const allSystems = getSystems();
+
   const resetForm = () => {
-    setForm({ login: '', role: 'viewer', allowedCidrs: '', isActive: true });
+    setForm({ login: '', role: 'viewer', isAdmin: false, allowedCidrs: '', allowedSystemIds: [], isActive: true });
     setEditingUser(null);
     setShowForm(false);
   };
@@ -34,8 +41,10 @@ export function UsersPage() {
       updated = users.map(u => u.id === editingUser.id ? {
         ...u,
         login: form.login,
-        role: form.role,
+        role: form.isAdmin ? 'admin' : form.role,
+        isAdmin: form.isAdmin,
         allowedCidrs: form.allowedCidrs.split(',').map(s => s.trim()).filter(Boolean),
+        allowedSystemIds: form.allowedSystemIds,
         isActive: form.isActive,
       } : u);
       logger.admin(`Пользователь обновлён: ${form.login}`, form.login);
@@ -45,9 +54,10 @@ export function UsersPage() {
         id: generateId(),
         login: form.login,
         passwordHash: hashPassword('password'),
-        role: form.role,
+        role: form.isAdmin ? 'admin' : form.role,
+        isAdmin: form.isAdmin,
         allowedCidrs: form.allowedCidrs.split(',').map(s => s.trim()).filter(Boolean),
-        allowedStreams: [],
+        allowedSystemIds: form.allowedSystemIds,
         isActive: form.isActive,
         createdAt: new Date().toISOString(),
       };
@@ -100,26 +110,38 @@ export function UsersPage() {
     setForm({
       login: user.login,
       role: user.role,
+      isAdmin: user.isAdmin,
       allowedCidrs: user.allowedCidrs.join(', '),
+      allowedSystemIds: user.allowedSystemIds,
       isActive: user.isActive,
     });
     setEditingUser(user);
     setShowForm(true);
   };
 
-  const getRoleLabel = (role: UserRole) => {
-    switch (role) {
+  const getRoleLabel = (user: User) => {
+    if (user.isAdmin) return 'Администратор';
+    switch (user.role) {
       case 'admin': return 'Администратор';
       case 'operator': return 'Оператор';
       case 'viewer': return 'Наблюдатель';
     }
   };
 
-  const getRoleColor = (role: UserRole) => {
-    switch (role) {
+  const getRoleColor = (user: User) => {
+    if (user.isAdmin) return 'bg-gradient-to-r from-red-950/50 to-pink-950/50 text-red-400 border-red-700/50';
+    switch (user.role) {
       case 'admin': return 'bg-gradient-to-r from-red-950/50 to-pink-950/50 text-red-400 border-red-700/50';
       case 'operator': return 'bg-gradient-to-r from-blue-950/50 to-cyan-950/50 text-blue-400 border-blue-700/50';
       case 'viewer': return 'bg-gray-800/50 text-gray-400 border-gray-700/50';
+    }
+  };
+
+  const toggleSystemAccess = (systemId: string) => {
+    if (form.allowedSystemIds.includes(systemId)) {
+      setForm({...form, allowedSystemIds: form.allowedSystemIds.filter(id => id !== systemId)});
+    } else {
+      setForm({...form, allowedSystemIds: [...form.allowedSystemIds, systemId]});
     }
   };
 
@@ -136,7 +158,7 @@ export function UsersPage() {
             <UsersIcon className="w-5 h-5 text-blue-400" />
             Пользователи
           </h2>
-          <p className="text-sm text-gray-500">Управление учётными записями и доступом</p>
+          <p className="text-sm text-gray-500">Управление учётными записями, ролями и доступом к системам</p>
         </div>
         <motion.button
           whileHover={{ scale: 1.05 }}
@@ -144,9 +166,7 @@ export function UsersPage() {
           onClick={() => setShowForm(true)}
           className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white text-sm font-medium rounded-xl transition-all shadow-lg shadow-blue-500/20"
         >
-          <motion.div whileHover={{ rotate: 90 }} transition={{ duration: 0.3 }}>
-            <Plus className="w-4 h-4" />
-          </motion.div>
+          <Plus className="w-4 h-4" />
           Добавить
         </motion.button>
       </motion.div>
@@ -159,9 +179,8 @@ export function UsersPage() {
               <tr className="border-b border-gray-800/50 bg-gray-800/20">
                 <th className="text-left p-3 text-gray-400 font-medium">Логин</th>
                 <th className="text-left p-3 text-gray-400 font-medium">Роль</th>
-                <th className="text-left p-3 text-gray-400 font-medium">CIDR</th>
+                <th className="text-left p-3 text-gray-400 font-medium">Доступ к системам</th>
                 <th className="text-left p-3 text-gray-400 font-medium">Статус</th>
-                <th className="text-left p-3 text-gray-400 font-medium">Создан</th>
                 <th className="text-right p-3 text-gray-400 font-medium">Действия</th>
               </tr>
             </thead>
@@ -182,16 +201,27 @@ export function UsersPage() {
                       >
                         {user.login.charAt(0).toUpperCase()}
                       </motion.div>
-                      <span className="text-white font-medium group-hover:text-blue-400 transition-colors">{user.login}</span>
+                      <div>
+                        <span className="text-white font-medium group-hover:text-blue-400 transition-colors">{user.login}</span>
+                        {user.isAdmin && (
+                          <span className="ml-2 text-[10px] bg-red-950/50 text-red-400 px-1.5 py-0.5 rounded border border-red-700/30">
+                            ADMIN
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </td>
                   <td className="p-3">
-                    <span className={`px-2.5 py-1 rounded-lg text-xs border ${getRoleColor(user.role)}`}>
-                      {getRoleLabel(user.role)}
+                    <span className={`px-2.5 py-1 rounded-lg text-xs border ${getRoleColor(user)}`}>
+                      {getRoleLabel(user)}
                     </span>
                   </td>
-                  <td className="p-3 text-gray-400 font-mono text-xs">
-                    {user.allowedCidrs.join(', ') || '—'}
+                  <td className="p-3">
+                    <span className="text-xs text-gray-400">
+                      {user.isAdmin || user.allowedSystemIds.length === 0 
+                        ? 'Все системы' 
+                        : `${user.allowedSystemIds.length} систем`}
+                    </span>
                   </td>
                   <td className="p-3">
                     <span className={`flex items-center gap-1.5 text-xs ${user.isActive ? 'text-green-400' : 'text-red-400'}`}>
@@ -202,9 +232,6 @@ export function UsersPage() {
                       />
                       {user.isActive ? 'Активен' : 'Отключён'}
                     </span>
-                  </td>
-                  <td className="p-3 text-gray-500 text-xs">
-                    {new Date(user.createdAt).toLocaleDateString('ru-RU')}
                   </td>
                   <td className="p-3">
                     <div className="flex items-center justify-end gap-1">
@@ -270,7 +297,7 @@ export function UsersPage() {
               initial={{ scale: 0.9, y: 20 }}
               animate={{ scale: 1, y: 0 }}
               exit={{ scale: 0.9, y: 20 }}
-              className="glass-strong rounded-2xl w-full max-w-md p-6 relative overflow-hidden"
+              className="glass-strong rounded-2xl w-full max-w-lg p-6 relative overflow-hidden max-h-[90vh] overflow-y-auto"
             >
               <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-purple-500/5 pointer-events-none" />
               <div className="flex items-center justify-between mb-5 relative">
@@ -298,18 +325,37 @@ export function UsersPage() {
                     disabled={!!editingUser}
                   />
                 </div>
-                <div>
-                  <label className="block text-sm text-gray-300 mb-1.5">Роль</label>
-                  <select
-                    value={form.role}
-                    onChange={e => setForm({...form, role: e.target.value as UserRole})}
-                    className="w-full px-4 py-2.5 bg-gray-800/50 border border-gray-700/50 rounded-xl text-white text-sm focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
-                  >
-                    <option value="admin">Администратор</option>
-                    <option value="operator">Оператор</option>
-                    <option value="viewer">Наблюдатель</option>
-                  </select>
+
+                <div className="flex items-center gap-4">
+                  <div className="flex-1">
+                    <label className="block text-sm text-gray-300 mb-1.5">Роль</label>
+                    <select
+                      value={form.role}
+                      onChange={e => setForm({...form, role: e.target.value as UserRole})}
+                      disabled={form.isAdmin}
+                      className="w-full px-4 py-2.5 bg-gray-800/50 border border-gray-700/50 rounded-xl text-white text-sm focus:outline-none focus:border-blue-500 disabled:opacity-50"
+                    >
+                      <option value="admin">Администратор</option>
+                      <option value="operator">Оператор</option>
+                      <option value="viewer">Наблюдатель</option>
+                    </select>
+                  </div>
+                  <div className="pt-6">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={form.isAdmin}
+                        onChange={e => setForm({...form, isAdmin: e.target.checked})}
+                        className="rounded"
+                      />
+                      <span className="text-sm text-gray-300 flex items-center gap-1">
+                        <ShieldCheck className="w-4 h-4 text-red-400" />
+                        Права админа
+                      </span>
+                    </label>
+                  </div>
                 </div>
+
                 <div>
                   <label className="block text-sm text-gray-300 mb-1.5">Разрешённые CIDR (через запятую)</label>
                   <input
@@ -320,6 +366,45 @@ export function UsersPage() {
                     placeholder="192.168.1.0/24, 10.0.0.0/8"
                   />
                 </div>
+
+                {/* System Access */}
+                <div>
+                  <label className="block text-sm text-gray-300 mb-1.5 flex items-center gap-2">
+                    <Shield className="w-4 h-4" />
+                    Доступ к системам
+                    {!form.isAdmin && form.allowedSystemIds.length === 0 && (
+                      <span className="text-xs text-green-400">(все системы)</span>
+                    )}
+                  </label>
+                  {form.isAdmin ? (
+                    <p className="text-xs text-gray-500 bg-gray-800/30 p-3 rounded-xl border border-gray-700/30">
+                      Администратор имеет доступ ко всем системам
+                    </p>
+                  ) : (
+                    <div className="bg-gray-800/30 border border-gray-700/30 rounded-xl p-3 space-y-2 max-h-48 overflow-y-auto">
+                      {allSystems.length === 0 ? (
+                        <p className="text-xs text-gray-500 text-center py-2">Нет систем. Добавьте их на странице «Системы»</p>
+                      ) : (
+                        allSystems.map(system => (
+                          <label key={system.id} className="flex items-center gap-2 cursor-pointer hover:bg-gray-700/30 p-1.5 rounded-lg transition-colors">
+                            <input
+                              type="checkbox"
+                              checked={form.allowedSystemIds.includes(system.id)}
+                              onChange={() => toggleSystemAccess(system.id)}
+                              className="rounded"
+                            />
+                            <span className="text-xs text-white">{system.name}</span>
+                            <span className="text-[10px] text-gray-500 ml-auto">{system.cameras.length} камер</span>
+                          </label>
+                        ))
+                      )}
+                      <p className="text-[10px] text-gray-500 pt-1 border-t border-gray-700/30">
+                        Если ничего не выбрано — доступ ко всем системам
+                      </p>
+                    </div>
+                  )}
+                </div>
+
                 <div className="flex items-center gap-3">
                   <input
                     type="checkbox"

@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { 
-  LayoutDashboard, LayoutGrid, Video, Users, Shield, ScrollText, 
+  LayoutDashboard, LayoutGrid, Server, Video, Users, Shield, ScrollText, 
   Settings, Info, LogOut, Sun, Moon, Menu, X, Monitor, Sparkles
 } from 'lucide-react';
 
@@ -16,7 +16,7 @@ interface LayoutProps {
 const menuItems = [
   { id: 'dashboard', label: 'Панель управления', icon: LayoutDashboard, roles: ['admin', 'operator', 'viewer'] },
   { id: 'video-wall', label: 'Видеостена', icon: LayoutGrid, roles: ['admin', 'operator', 'viewer'] },
-  { id: 'streams', label: 'Потоки', icon: Video, roles: ['admin', 'operator', 'viewer'] },
+  { id: 'systems', label: 'Системы', icon: Server, roles: ['admin'] },
   { id: 'users', label: 'Пользователи', icon: Users, roles: ['admin'] },
   { id: 'ip-filter', label: 'IP-фильтр', icon: Shield, roles: ['admin'] },
   { id: 'logs', label: 'Журналы', icon: ScrollText, roles: ['admin', 'operator'] },

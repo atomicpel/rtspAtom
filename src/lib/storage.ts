@@ -1,8 +1,8 @@
-import { User, Stream, IpRule, LogEntry, Session, Settings } from './types';
+import { User, System, Camera, IpRule, LogEntry, Session, Settings } from './types';
 
 const KEYS = {
   users: 'rtsp_users',
-  streams: 'rtsp_streams',
+  systems: 'rtsp_systems',
   ipRules: 'rtsp_ip_rules',
   logs: 'rtsp_logs',
   sessions: 'rtsp_sessions',
@@ -65,13 +65,13 @@ export function getUserByLogin(login: string): User | undefined {
   return getUsers().find(u => u.login === login);
 }
 
-// Streams
-export function getStreams(): Stream[] {
-  return get<Stream[]>(KEYS.streams, []);
+// Systems
+export function getSystems(): System[] {
+  return get<System[]>(KEYS.systems, []);
 }
 
-export function saveStreams(streams: Stream[]): void {
-  set(KEYS.streams, streams);
+export function saveSystems(systems: System[]): void {
+  set(KEYS.systems, systems);
 }
 
 // IP Rules
@@ -99,7 +99,6 @@ export function addLog(log: Omit<LogEntry, 'id' | 'timestamp'>): void {
     id: generateId(),
     timestamp: new Date().toISOString(),
   });
-  // Keep last 10000 logs
   if (logs.length > 10000) logs.length = 10000;
   saveLogs(logs);
 }
@@ -187,6 +186,15 @@ export function clearFailedLogin(ip: string): void {
   saveLoginAttempts(attempts);
 }
 
+// Helper: get systems available to user
+export function getSystemsForUser(user: User | null): System[] {
+  const allSystems = getSystems();
+  if (!user) return [];
+  if (user.isAdmin || user.role === 'admin') return allSystems;
+  if (user.allowedSystemIds.length === 0) return allSystems; // пусто = все
+  return allSystems.filter(s => user.allowedSystemIds.includes(s.id));
+}
+
 // Initialize with seed data
 export function initializeDb(): void {
   if (get<boolean>(KEYS.initialized, false)) return;
@@ -196,39 +204,108 @@ export function initializeDb(): void {
     login: 'admin',
     passwordHash: hashPassword('admin'),
     role: 'admin',
+    isAdmin: true,
     allowedCidrs: ['0.0.0.0/0'],
-    allowedStreams: [],
+    allowedSystemIds: [],
     isActive: true,
     createdAt: new Date().toISOString(),
   };
 
-  const testStreams: Stream[] = [
+  const testSystems: System[] = [
     {
       id: generateId(),
-      name: 'Камера КПП-1',
-      url: 'rtsp://192.168.1.100:554/stream1',
-      sourceLogin: 'cam_admin',
-      sourcePassword: 'cam_pass123',
-      priority: 1,
+      name: 'КПП-1 (Центральный пост)',
+      hostname: 'kpp1-server',
+      ip: '192.168.1.10',
+      description: 'Центральный пост охраны КПП №1',
       isActive: true,
       status: 'online',
       createdAt: new Date().toISOString(),
+      cameras: [
+        {
+          id: generateId(),
+          name: 'Камера въезда',
+          url: 'rtsp://192.168.1.100:554/stream1',
+          sourceLogin: 'cam_admin',
+          sourcePassword: 'cam_pass123',
+          isActive: true,
+          status: 'online',
+        },
+        {
+          id: generateId(),
+          name: 'Камера выезда',
+          url: 'rtsp://192.168.1.101:554/stream1',
+          sourceLogin: 'cam_admin',
+          sourcePassword: 'cam_pass123',
+          isActive: true,
+          status: 'online',
+        },
+        {
+          id: generateId(),
+          name: 'Камера КПП (внутр.)',
+          url: 'rtsp://192.168.1.102:554/stream1',
+          sourceLogin: 'cam_admin',
+          sourcePassword: 'cam_pass123',
+          isActive: true,
+          status: 'online',
+        },
+      ],
     },
     {
       id: generateId(),
-      name: 'Камера Периметр',
-      url: 'rtsp://192.168.1.101:554/stream1',
-      sourceLogin: 'cam_admin',
-      sourcePassword: 'cam_pass456',
-      priority: 2,
+      name: 'Периметр (Северный участок)',
+      hostname: 'perim-north',
+      ip: '192.168.1.20',
+      description: 'Северный участок периметра объекта',
       isActive: true,
       status: 'online',
       createdAt: new Date().toISOString(),
+      cameras: [
+        {
+          id: generateId(),
+          name: 'Камера С-1',
+          url: 'rtsp://192.168.1.110:554/stream1',
+          sourceLogin: 'cam_admin',
+          sourcePassword: 'cam_pass456',
+          isActive: true,
+          status: 'online',
+        },
+        {
+          id: generateId(),
+          name: 'Камера С-2',
+          url: 'rtsp://192.168.1.111:554/stream1',
+          sourceLogin: 'cam_admin',
+          sourcePassword: 'cam_pass456',
+          isActive: true,
+          status: 'online',
+        },
+      ],
+    },
+    {
+      id: generateId(),
+      name: 'Склад (Западный)',
+      hostname: 'warehouse-west',
+      ip: '192.168.1.30',
+      description: 'Западный складской комплекс',
+      isActive: true,
+      status: 'online',
+      createdAt: new Date().toISOString(),
+      cameras: [
+        {
+          id: generateId(),
+          name: 'Ворота склада',
+          url: 'rtsp://192.168.1.120:554/stream1',
+          sourceLogin: 'cam_admin',
+          sourcePassword: 'cam_pass789',
+          isActive: true,
+          status: 'online',
+        },
+      ],
     },
   ];
 
   saveUsers([adminUser]);
-  saveStreams(testStreams);
+  saveSystems(testSystems);
   saveIpRules([]);
   saveLogs([]);
   saveSessions([]);

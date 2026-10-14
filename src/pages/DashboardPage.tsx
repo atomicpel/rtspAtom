@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { 
-  Video, Users, Cpu, HardDrive, ArrowDown, ArrowUp, Activity, Wifi, TrendingUp
+  Video, Users, Cpu, HardDrive, ArrowDown, ArrowUp, Activity, Wifi, TrendingUp, Server
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
 import { getMockMetrics } from '../lib/rtsp-mock';
-import { getStreams } from '../lib/storage';
+import { getSystems } from '../lib/storage';
 import { AnimatedCard, StaggerContainer, StaggerItem } from '../components/AnimatedCard';
 
 interface MetricCardProps {
@@ -17,7 +17,7 @@ interface MetricCardProps {
   delay?: number;
 }
 
-function MetricCard({ title, value, icon: Icon, color, subtitle, delay = 0 }: MetricCardProps) {
+function MetricCard({ title, value, icon: Icon, color, subtitle }: MetricCardProps) {
   return (
     <StaggerItem>
       <AnimatedCard className="p-5 group">
@@ -53,7 +53,7 @@ export function DashboardPage() {
   const [metrics, setMetrics] = useState(getMockMetrics());
   const [cpuHistory, setCpuHistory] = useState<Array<{ time: string; cpu: number; ram: number }>>([]);
   const [networkHistory, setNetworkHistory] = useState<Array<{ time: string; in: number; out: number }>>([]);
-  const streams = getStreams();
+  const systems = getSystems();
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -83,23 +83,25 @@ export function DashboardPage() {
     return `${days}д ${hours}ч ${mins}м`;
   };
 
+  const totalCameras = systems.reduce((sum, s) => sum + s.cameras.length, 0);
+
   return (
     <div className="space-y-6">
       {/* Metrics Grid */}
       <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard 
-          title="Активные потоки" 
-          value={metrics.activeStreams}
-          icon={Video}
+          title="Активные системы" 
+          value={metrics.activeSystems}
+          icon={Server}
           color="bg-blue-950/50 text-blue-400"
-          subtitle={`из ${streams.length} настроенных`}
+          subtitle={`из ${systems.length} настроенных`}
         />
         <MetricCard 
-          title="Подключённые клиенты" 
-          value={metrics.connectedClients}
-          icon={Users}
+          title="Камеры онлайн" 
+          value={metrics.totalCameras}
+          icon={Video}
           color="bg-green-950/50 text-green-400"
-          subtitle="текущие сессии"
+          subtitle={`из ${totalCameras} всего`}
         />
         <MetricCard 
           title="CPU" 
@@ -182,13 +184,9 @@ export function DashboardPage() {
 
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* CPU/RAM Chart */}
         <AnimatedCard className="p-5" delay={0.2}>
           <div className="flex items-center gap-2 mb-4">
-            <motion.div
-              animate={{ rotate: [0, 5, -5, 0] }}
-              transition={{ duration: 3, repeat: Infinity }}
-            >
+            <motion.div animate={{ rotate: [0, 5, -5, 0] }} transition={{ duration: 3, repeat: Infinity }}>
               <Cpu className="w-4 h-4 text-yellow-400" />
             </motion.div>
             <h3 className="text-sm font-medium text-gray-300">Загрузка системы</h3>
@@ -216,7 +214,6 @@ export function DashboardPage() {
                     border: '1px solid rgba(59, 130, 246, 0.3)', 
                     borderRadius: '12px',
                     backdropFilter: 'blur(10px)',
-                    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)'
                   }}
                   labelStyle={{ color: '#9CA3AF' }}
                 />
@@ -227,13 +224,9 @@ export function DashboardPage() {
           </div>
         </AnimatedCard>
 
-        {/* Network Chart */}
         <AnimatedCard className="p-5" delay={0.3}>
           <div className="flex items-center gap-2 mb-4">
-            <motion.div
-              animate={{ scale: [1, 1.1, 1] }}
-              transition={{ duration: 2, repeat: Infinity }}
-            >
+            <motion.div animate={{ scale: [1, 1.1, 1] }} transition={{ duration: 2, repeat: Infinity }}>
               <Wifi className="w-4 h-4 text-cyan-400" />
             </motion.div>
             <h3 className="text-sm font-medium text-gray-300">Сетевой трафик</h3>
@@ -261,7 +254,6 @@ export function DashboardPage() {
                     border: '1px solid rgba(59, 130, 246, 0.3)', 
                     borderRadius: '12px',
                     backdropFilter: 'blur(10px)',
-                    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)'
                   }}
                   labelStyle={{ color: '#9CA3AF' }}
                 />
@@ -273,31 +265,30 @@ export function DashboardPage() {
         </AnimatedCard>
       </div>
 
-      {/* Stream Status Summary */}
+      {/* Systems Status */}
       <AnimatedCard className="p-5" delay={0.4}>
-        <h3 className="text-sm font-medium text-gray-300 mb-3">Статус потоков</h3>
+        <h3 className="text-sm font-medium text-gray-300 mb-3">Статус систем</h3>
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {streams.map((stream, index) => (
-            <StaggerItem key={stream.id}>
+          {systems.map(system => (
+            <StaggerItem key={system.id}>
               <motion.div 
                 whileHover={{ scale: 1.02, x: 4 }}
                 className="flex items-center gap-3 p-3 bg-gray-800/30 rounded-xl border border-gray-700/30 hover:border-blue-500/30 transition-all group"
               >
                 <motion.div 
                   animate={{ 
-                    scale: stream.status === 'online' ? [1, 1.3, 1] : 1,
-                    opacity: stream.status === 'reconnecting' ? [1, 0.5, 1] : 1
+                    scale: system.status === 'online' ? [1, 1.3, 1] : 1,
                   }}
-                  transition={{ duration: stream.status === 'online' ? 2 : 1, repeat: Infinity }}
+                  transition={{ duration: 2, repeat: Infinity }}
                   className={`w-3 h-3 rounded-full ${
-                    stream.status === 'online' ? 'bg-green-500 shadow-lg shadow-green-500/50' :
-                    stream.status === 'reconnecting' ? 'bg-yellow-500 shadow-lg shadow-yellow-500/50' :
+                    system.status === 'online' ? 'bg-green-500 shadow-lg shadow-green-500/50' :
+                    system.status === 'reconnecting' ? 'bg-yellow-500 shadow-lg shadow-yellow-500/50' :
                     'bg-red-500 shadow-lg shadow-red-500/50'
                   }`}
                 />
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-white truncate group-hover:text-blue-400 transition-colors">{stream.name}</p>
-                  <p className="text-xs text-gray-500">{stream.status === 'online' ? 'Активен' : stream.status === 'reconnecting' ? 'Переподключение' : 'Отключён'}</p>
+                  <p className="text-sm font-medium text-white truncate group-hover:text-blue-400 transition-colors">{system.name}</p>
+                  <p className="text-xs text-gray-500">{system.cameras.length} камер • {system.ip}</p>
                 </div>
               </motion.div>
             </StaggerItem>

@@ -10,94 +10,82 @@
  * - HLS: ffmpeg -i rtsp://source -c:v libx264 -preset ultrafast -f hls -hls_time 2 output.m3u8
  * - WebRTC: использовать mediasoup или Janus Gateway
  * 
- * TODO: Мониторинг потоков:
- * - Периодически проверять доступность RTSP-источника
+ * TODO: Мониторинг систем:
+ * - Периодически проверять доступность удалённых рабочих столов
  * - Автоматический перезапуск при обрыве
  * - Логирование событий подключения/отключения
  */
 
-import { Stream } from './types';
+import { System } from './types';
 
-export interface RtspStatus {
-  streamId: string;
+export interface SystemStatus {
+  systemId: string;
   status: 'online' | 'offline' | 'reconnecting';
-  bitrate: number;
-  fps: number;
-  resolution: string;
+  cameraCount: number;
+  activeCameras: number;
   clients: number;
   uptime: number;
 }
 
-// Mock RTSP statuses
-const mockStatuses: Record<string, RtspStatus> = {};
+// Mock statuses
+const mockStatuses: Record<string, SystemStatus> = {};
 
-export function initializeRtspMock(streams: Stream[]): void {
-  streams.forEach(stream => {
-    if (!mockStatuses[stream.id]) {
-      mockStatuses[stream.id] = {
-        streamId: stream.id,
-        status: stream.isActive ? 'online' : 'offline',
-        bitrate: stream.isActive ? Math.floor(Math.random() * 4000) + 2000 : 0,
-        fps: stream.isActive ? Math.floor(Math.random() * 10) + 20 : 0,
-        resolution: '1920x1080',
-        clients: stream.isActive ? Math.floor(Math.random() * 5) : 0,
-        uptime: stream.isActive ? Math.floor(Math.random() * 86400) : 0,
+export function initializeRtspMock(systems: System[]): void {
+  systems.forEach(system => {
+    if (!mockStatuses[system.id]) {
+      const activeCameras = system.cameras.filter(c => c.isActive).length;
+      mockStatuses[system.id] = {
+        systemId: system.id,
+        status: system.isActive ? 'online' : 'offline',
+        cameraCount: system.cameras.length,
+        activeCameras,
+        clients: system.isActive ? Math.floor(Math.random() * 3) : 0,
+        uptime: system.isActive ? Math.floor(Math.random() * 86400) : 0,
       };
     }
   });
 }
 
-export function getStreamStatus(streamId: string): RtspStatus | null {
-  return mockStatuses[streamId] || null;
+export function getSystemStatus(systemId: string): SystemStatus | null {
+  return mockStatuses[systemId] || null;
 }
 
-export function getAllStatuses(): RtspStatus[] {
+export function getAllStatuses(): SystemStatus[] {
   return Object.values(mockStatuses);
 }
 
-export function toggleStream(streamId: string, active: boolean): void {
-  if (mockStatuses[streamId]) {
-    mockStatuses[streamId].status = active ? 'online' : 'offline';
-    mockStatuses[streamId].clients = active ? Math.floor(Math.random() * 5) : 0;
-    mockStatuses[streamId].bitrate = active ? Math.floor(Math.random() * 4000) + 2000 : 0;
-    mockStatuses[streamId].fps = active ? Math.floor(Math.random() * 10) + 20 : 0;
+export function toggleSystem(systemId: string, active: boolean): void {
+  if (mockStatuses[systemId]) {
+    mockStatuses[systemId].status = active ? 'online' : 'offline';
+    mockStatuses[systemId].clients = active ? Math.floor(Math.random() * 3) : 0;
+    mockStatuses[systemId].activeCameras = active ? mockStatuses[systemId].cameraCount : 0;
   }
 }
 
 /**
- * TODO: Реальная функция запуска RTSP-ретрансляции
+ * TODO: Реальная функция подключения к удалённому рабочему столу
  * 
- * async function startRtspRelay(stream: Stream): Promise<void> {
- *   const ffmpeg = spawn('ffmpeg', [
- *     '-rtsp_transport', 'tcp',
- *     '-i', `rtsp://${stream.sourceLogin}:${stream.sourcePassword}@${stream.url}`,
- *     '-c', 'copy',
- *     '-f', 'rtsp',
- *     `rtsp://localhost:8554/${stream.id}`
- *   ]);
- *   
- *   ffmpeg.on('error', (err) => {
- *     logger.streamError(`FFmpeg error for ${stream.name}: ${err.message}`, stream.name);
- *   });
- *   
- *   ffmpeg.stderr.on('data', (data) => {
- *     // Parse FFmpeg output for bitrate, fps, etc.
- *   });
+ * async function connectToRemoteSystem(system: System): Promise<void> {
+ *   // Подключение к удалённому хосту
+ *   // Получение списка камер
+ *   // Запуск ретрансляции для каждой камеры
  * }
  */
 
 export function getMockMetrics() {
   const statuses = getAllStatuses();
-  const activeStreams = statuses.filter(s => s.status === 'online').length;
+  const activeSystems = statuses.filter(s => s.status === 'online').length;
   const totalClients = statuses.reduce((sum, s) => sum + s.clients, 0);
+  const totalCameras = statuses.reduce((sum, s) => sum + s.activeCameras, 0);
   
   return {
     cpu: Math.floor(Math.random() * 30) + 10,
     ram: Math.floor(Math.random() * 40) + 30,
     networkIn: Math.floor(Math.random() * 50) + 20,
     networkOut: Math.floor(Math.random() * 100) + 50,
-    activeStreams,
+    activeSystems,
     connectedClients: totalClients,
+    totalCameras,
     uptime: 86400 + Math.floor(Math.random() * 10000),
   };
 }
