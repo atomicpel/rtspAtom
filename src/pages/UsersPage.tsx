@@ -13,7 +13,18 @@ import { AnimatedCard, StaggerContainer, StaggerItem } from '../components/Anima
 export function UsersPage() {
   const { toast } = useToast();
   const { refreshUser, user: currentUser } = useAuth();
-  const [users, setUsers] = useState<User[]>(getUsers());
+  
+  // Безопасная загрузка пользователей с default значениями
+  const [users, setUsers] = useState<User[]>(() => {
+    const rawUsers = getUsers();
+    return rawUsers.map(u => ({
+      ...u,
+      isAdmin: u.isAdmin ?? false,
+      allowedSystemIds: u.allowedSystemIds ?? [],
+      allowedCidrs: u.allowedCidrs ?? [],
+    }));
+  });
+  
   const [showForm, setShowForm] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [showPasswordChange, setShowPasswordChange] = useState<string | null>(null);
@@ -117,9 +128,9 @@ export function UsersPage() {
     setForm({
       login: user.login,
       role: user.role,
-      isAdmin: user.isAdmin,
-      allowedCidrs: user.allowedCidrs.join(', '),
-      allowedSystemIds: user.allowedSystemIds,
+      isAdmin: user.isAdmin ?? false,
+      allowedCidrs: (user.allowedCidrs ?? []).join(', '),
+      allowedSystemIds: user.allowedSystemIds ?? [],
       isActive: user.isActive,
     });
     setEditingUser(user);
@@ -127,20 +138,22 @@ export function UsersPage() {
   };
 
   const getRoleLabel = (user: User) => {
-    if (user.isAdmin) return 'Администратор';
+    if (user.isAdmin ?? false) return 'Администратор';
     switch (user.role) {
       case 'admin': return 'Администратор';
       case 'operator': return 'Оператор';
       case 'viewer': return 'Наблюдатель';
+      default: return 'Наблюдатель';
     }
   };
 
   const getRoleColor = (user: User) => {
-    if (user.isAdmin) return 'bg-gradient-to-r from-red-950/50 to-pink-950/50 text-red-400 border-red-700/50';
+    if (user.isAdmin ?? false) return 'bg-gradient-to-r from-red-950/50 to-pink-950/50 text-red-400 border-red-700/50';
     switch (user.role) {
       case 'admin': return 'bg-gradient-to-r from-red-950/50 to-pink-950/50 text-red-400 border-red-700/50';
       case 'operator': return 'bg-gradient-to-r from-blue-950/50 to-cyan-950/50 text-blue-400 border-blue-700/50';
       case 'viewer': return 'bg-gray-800/50 text-gray-400 border-gray-700/50';
+      default: return 'bg-gray-800/50 text-gray-400 border-gray-700/50';
     }
   };
 
@@ -210,7 +223,7 @@ export function UsersPage() {
                       </motion.div>
                       <div>
                         <span className="text-white font-medium group-hover:text-blue-400 transition-colors">{user.login}</span>
-                        {user.isAdmin && (
+                        {(user.isAdmin ?? false) && (
                           <span className="ml-2 text-[10px] bg-red-950/50 text-red-400 px-1.5 py-0.5 rounded border border-red-700/30">
                             ADMIN
                           </span>
@@ -225,9 +238,9 @@ export function UsersPage() {
                   </td>
                   <td className="p-3">
                     <span className="text-xs text-gray-400">
-                      {user.isAdmin || user.allowedSystemIds.length === 0 
+                      {(user.isAdmin ?? false) || (user.allowedSystemIds?.length ?? 0) === 0 
                         ? 'Все системы' 
-                        : `${user.allowedSystemIds.length} систем`}
+                        : `${user.allowedSystemIds?.length ?? 0} систем`}
                     </span>
                   </td>
                   <td className="p-3">
