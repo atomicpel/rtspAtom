@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
+import { ToastProvider } from './components/Toast';
+import { AnimatedBackground } from './components/AnimatedBackground';
 import { initializeDb } from './lib/storage';
 import { initializeRtspMock } from './lib/rtsp-mock';
 import { getStreams } from './lib/storage';
@@ -27,12 +29,22 @@ function AppContent() {
 
   // Show login if not authenticated
   if (!user && !isFirstRun) {
-    return <LoginPage />;
+    return (
+      <>
+        <AnimatedBackground />
+        <LoginPage />
+      </>
+    );
   }
 
   // Show first-run setup
   if (isFirstRun) {
-    return <LoginPage />;
+    return (
+      <>
+        <AnimatedBackground />
+        <LoginPage />
+      </>
+    );
   }
 
   // Render page based on current route
@@ -50,18 +62,23 @@ function AppContent() {
   };
 
   return (
-    <Layout currentPage={currentPage} onNavigate={setCurrentPage}>
-      {renderPage()}
-    </Layout>
+    <>
+      <AnimatedBackground />
+      <Layout currentPage={currentPage} onNavigate={setCurrentPage}>
+        {renderPage()}
+      </Layout>
+    </>
   );
 }
 
 function App() {
   return (
     <ThemeProvider>
-      <AuthProvider>
-        <AppContent />
-      </AuthProvider>
+      <ToastProvider>
+        <AuthProvider>
+          <AppContent />
+        </AuthProvider>
+      </ToastProvider>
     </ThemeProvider>
   );
 }
