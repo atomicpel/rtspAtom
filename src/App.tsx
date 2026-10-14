@@ -9,6 +9,7 @@ import { getStreams } from './lib/storage';
 import { Layout } from './components/Layout';
 import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { VideoWallPage } from './pages/VideoWallPage';
 import { StreamsPage } from './pages/StreamsPage';
 import { UsersPage } from './pages/UsersPage';
 import { IpFilterPage } from './pages/IpFilterPage';
@@ -51,6 +52,7 @@ function AppContent() {
   const renderPage = () => {
     switch (currentPage) {
       case 'dashboard': return <DashboardPage />;
+      case 'video-wall': return <VideoWallPage />;
       case 'streams': return <StreamsPage />;
       case 'users': return <UsersPage />;
       case 'ip-filter': return <IpFilterPage />;
