@@ -7,6 +7,24 @@ import { AlertCircle, Video, Radio, Globe, Film, RefreshCw, Loader } from 'lucid
 // Встроенное видео для демонстрации (работает всегда)
 const FALLBACK_VIDEO_URL = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
 
+// Публичные CORS прокси для обхода ограничений
+const CORS_PROXIES = [
+  'https://corsproxy.io/?',
+  'https://api.allorigins.win/raw?url=',
+  'https://cors-anywhere.herokuapp.com/',
+];
+
+// Функция для получения URL через прокси
+function getProxiedUrl(url: string): string {
+  // Не проксируем локальные URL
+  if (url.startsWith('http://localhost') || url.startsWith('http://127.0.0.1')) {
+    return url;
+  }
+  
+  // Используем первый прокси
+  return CORS_PROXIES[0] + encodeURIComponent(url);
+}
+
 interface VideoPlayerProps {
   url: string;
   protocol: StreamProtocol;
@@ -127,7 +145,8 @@ export function VideoPlayer({ url, protocol, name, className = '', autoPlay = tr
                       setRetryCount(prev => prev + 1);
                       hls.startLoad();
                     } else {
-                      console.log('[VideoPlayer] Switching to fallback video');
+                      console.log('[VideoPlayer] Network error after retries, switching to fallback');
+                      setError('Поток недоступен (CORS или сеть). Показываю демо видео.');
                       setUseFallback(true);
                     }
                     break;
@@ -137,6 +156,7 @@ export function VideoPlayer({ url, protocol, name, className = '', autoPlay = tr
                     break;
                   default:
                     console.log('[VideoPlayer] Fatal error, switching to fallback');
+                    setError('Ошибка загрузки потока. Показываю демо видео.');
                     setUseFallback(true);
                     break;
                 }
@@ -307,6 +327,18 @@ export function VideoPlayer({ url, protocol, name, className = '', autoPlay = tr
               <p>FLV поток должен быть доступен через HTTP:</p>
               <p>• http://server/stream.flv</p>
               <p>• Убедитесь что сервер отдаёт FLV</p>
+            </div>
+          )}
+          
+          {(protocol === 'hls' || protocol === 'http' || protocol === 'https') && (
+            <div className="text-[10px] text-gray-500 space-y-1 mb-3">
+              <p className="font-semibold text-yellow-400">Проблема CORS:</p>
+              <p>Сервер блокирует запросы из браузера.</p>
+              <p className="mt-1">Решения:</p>
+              <p>1. Используйте локальный HLS сервер (MediaMTX)</p>
+              <p>2. Добавьте CORS заголовки на сервер</p>
+              <p>3. Положите HLS файлы на свой веб-сервер</p>
+              <p className="mt-1 text-blue-400">Показываю демо видео вместо потока...</p>
             </div>
           )}
           
