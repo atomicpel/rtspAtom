@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 import Hls from 'hls.js';
+import mpegts from 'mpegts.js';
 import { StreamProtocol } from '../lib/types';
 import { AlertCircle, Video, Radio, Globe, Film, RefreshCw } from 'lucide-react';
 
@@ -33,8 +34,8 @@ export function detectProtocolFromUrl(url: string): StreamProtocol {
     return 'rtmp';
   }
   
-  // FLV
-  if (lowerUrl.includes('.flv')) {
+  // FLV (HTTP-FLV)
+  if (lowerUrl.includes('.flv') || lowerUrl.includes('/flv')) {
     return 'flv';
   }
   
@@ -54,6 +55,8 @@ export function detectProtocolFromUrl(url: string): StreamProtocol {
     if (lowerUrl.includes('.mp4')) return 'http';
     if (lowerUrl.includes('.webm')) return 'http';
     if (lowerUrl.includes('.m3u8')) return 'hls';
+    if (lowerUrl.includes('.flv')) return 'flv';
+    if (lowerUrl.includes('.ts')) return 'ts';
     
     // По умолчанию предполагаем HLS для HTTP потоков
     return 'hls';
@@ -73,6 +76,7 @@ export function VideoPlayer({ url, protocol, name, className = '', autoPlay = tr
     if (!video || !url) return;
 
     let hls: Hls | null = null;
+    let mpegtsPlayer: any = null;
     setError(null);
     setRetryCount(0);
 
@@ -128,6 +132,42 @@ export function VideoPlayer({ url, protocol, name, className = '', autoPlay = tr
             setError('HLS не поддерживается в этом браузере');
           }
         }
+        // HTTP-FLV и MPEG-TS потоки (через mpegts.js)
+        else if (protocol === 'flv' || protocol === 'ts' || url.includes('.flv') || url.includes('.ts')) {
+          if (mpegts.isSupported()) {
+            mpegtsPlayer = mpegts.createPlayer({
+              type: protocol === 'flv' ? 'flv' : 'mpegts',
+              url: url,
+              isLive: true,
+            }, {
+              enableWorker: false,
+              enableStashBuffer: false,
+              stashInitialSize: 128,
+              autoCleanupSourceBuffer: true,
+              autoCleanupMaxBackwardDuration: 30,
+              autoCleanupMinBackwardDuration: 15,
+            });
+            
+            mpegtsPlayer.attachMediaElement(video);
+            mpegtsPlayer.load();
+            
+            if (autoPlay) {
+              const playPromise = mpegtsPlayer.play();
+              if (playPromise && playPromise.catch) {
+                playPromise.catch((e: any) => {
+                  console.log('Autoplay prevented:', e);
+                });
+              }
+            }
+            
+            mpegtsPlayer.on(mpegts.Events.ERROR, (errorType: any, errorDetail: any, errorInfo: any) => {
+              console.error('MPEGTS error:', errorType, errorDetail, errorInfo);
+              setError(`Ошибка ${errorType}: ${errorDetail}`);
+            });
+          } else {
+            setError('MPEG-TS/FLV не поддерживается в этом браузере');
+          }
+        }
         // HTTP/HTTPS потоки (MP4, WebM)
         else if (protocol === 'http' || protocol === 'https') {
           video.src = url;
@@ -137,9 +177,17 @@ export function VideoPlayer({ url, protocol, name, className = '', autoPlay = tr
             }
           });
         }
-        // Неподдерживаемые протоколы
-        else {
-          setError(`${protocol.toUpperCase()} требует конвертер`);
+        // RTSP потоки - показываем инструкцию
+        else if (protocol === 'rtsp') {
+          setError('RTSP требует конвертер в HTTP-FLV/HLS');
+        }
+        // RTMP потоки
+        else if (protocol === 'rtmp') {
+          setError('RTMP требует конвертер в HTTP-FLV/HLS');
+        }
+        // WebRTC
+        else if (protocol === 'webrtc') {
+          setError('WebRTC требует специальный сервер');
         }
       } catch (err) {
         console.error('Video player error:', err);
@@ -152,6 +200,9 @@ export function VideoPlayer({ url, protocol, name, className = '', autoPlay = tr
     return () => {
       if (hls) {
         hls.destroy();
+      }
+      if (mpegtsPlayer) {
+        mpegtsPlayer.destroy();
       }
     };
   }, [url, protocol, autoPlay, retryCount]);
@@ -176,11 +227,25 @@ export function VideoPlayer({ url, protocol, name, className = '', autoPlay = tr
           <p className="text-sm text-white font-medium mb-2">{name}</p>
           <p className="text-xs text-yellow-400 mb-3">{error}</p>
           
-          {(protocol === 'rtsp' || protocol === 'rtmp' || protocol === 'flv') && (
+          {(protocol === 'rtsp' || protocol === 'rtmp') && (
             <div className="text-[10px] text-gray-500 space-y-1 mb-3">
-              <p>Для воспроизведения {protocol.toUpperCase()} нужен:</p>
-              <p>• MediaMTX, SRS или FFmpeg сервер</p>
-              <p>• Конвертация в HLS/WebRTC</p>
+              <p className="font-semibold text-yellow-400">Как конвертировать {protocol.toUpperCase()}:</p>
+              <p>1. Установите MediaMTX: github.com/bluenviron/mediamtx</p>
+              <p>2. Добавьте камеру в конфиг:</p>
+              <code className="block bg-black/30 p-1 rounded text-[9px]">
+                paths:<br/>
+                &nbsp;&nbsp;cam1:<br/>
+                &nbsp;&nbsp;&nbsp;&nbsp;source: {url}
+              </code>
+              <p>3. Используйте URL: http://localhost:8888/cam1/hls</p>
+            </div>
+          )}
+          
+          {protocol === 'flv' && (
+            <div className="text-[10px] text-gray-500 space-y-1 mb-3">
+              <p>FLV поток должен быть доступен через HTTP:</p>
+              <p>• http://server/stream.flv</p>
+              <p>• Убедитесь что сервер отдаёт FLV</p>
             </div>
           )}
           
