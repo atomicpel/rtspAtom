@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Grid3x3, LayoutGrid, Maximize2, Minimize2, Plus, X, Save, 
-  Video, Radio, Settings, Server, ChevronDown, ChevronRight
+  Video, Radio, Settings, Server, ChevronDown, ChevronRight, RefreshCw, Clock
 } from 'lucide-react';
 import { System, Camera } from '../lib/types';
 import { getSystemsForUser } from '../lib/storage';
@@ -11,6 +11,23 @@ import { useToast } from '../components/Toast';
 import { AnimatedCard, StaggerContainer, StaggerItem } from '../components/AnimatedCard';
 
 type LayoutType = '1x1' | '2x2' | '3x3' | '4x4';
+
+// Интервалы автоперезагрузки в секундах
+const REFRESH_INTERVALS = [
+  { value: 0, label: 'Выкл' },
+  { value: 15, label: '15 сек' },
+  { value: 30, label: '30 сек' },
+  { value: 60, label: '1 мин' },
+  { value: 180, label: '3 мин' },
+  { value: 300, label: '5 мин' },
+  { value: 600, label: '10 мин' },
+  { value: 900, label: '15 мин' },
+  { value: 1800, label: '30 мин' },
+  { value: 3600, label: '1 час' },
+  { value: 7200, label: '2 часа' },
+  { value: 10800, label: '3 часа' },
+  { value: 18000, label: '5 часов' },
+];
 
 // Cell data: systemId + cameraId (or null)
 interface CellData {
@@ -42,10 +59,75 @@ export function VideoWallPage() {
     new Set(availableSystems.map(s => s.id))
   );
   const [fullscreenCell, setFullscreenCell] = useState<number | null>(null);
+  const [isWallFullscreen, setIsWallFullscreen] = useState(false);
+  const [refreshInterval, setRefreshInterval] = useState<number>(() => {
+    const saved = localStorage.getItem('rtsp_video_wall_refresh');
+    return saved ? parseInt(saved) : 0;
+  });
+  const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
   const [configs, setConfigs] = useState<VideoWallConfig[]>(() => {
     const saved = localStorage.getItem('rtsp_video_wall_configs_v2');
     return saved ? JSON.parse(saved) : [];
   });
+
+  // Автоперезагрузка потоков
+  useEffect(() => {
+    if (refreshInterval === 0) return;
+
+    const interval = setInterval(() => {
+      setLastRefresh(new Date());
+      // В реальной реализации здесь будет перезагрузка RTSP потоков
+      // TODO: В продакшене вызвать API для перезагрузки потоков
+      console.log('Автоперезагрузка потоков:', new Date().toLocaleTimeString());
+    }, refreshInterval * 1000);
+
+    return () => clearInterval(interval);
+  }, [refreshInterval]);
+
+  // Сохранение интервала в localStorage
+  useEffect(() => {
+    localStorage.setItem('rtsp_video_wall_refresh', refreshInterval.toString());
+  }, [refreshInterval]);
+
+  // Полноэкранный режим
+  useEffect(() => {
+    if (isWallFullscreen) {
+      document.documentElement.requestFullscreen?.().catch(() => {
+        console.log('Fullscreen API не поддерживается');
+      });
+      // Уведомляем App.tsx о входе в полноэкранный режим
+      window.dispatchEvent(new CustomEvent('videowall:fullscreen:start'));
+    } else {
+      if (document.fullscreenElement) {
+        document.exitFullscreen?.().catch(() => {});
+      }
+      // Уведомляем App.tsx о выходе из полноэкранного режима
+      window.dispatchEvent(new CustomEvent('videowall:fullscreen:end'));
+    }
+  }, [isWallFullscreen]);
+
+  // Обработка выхода из полноэкранного режима через Escape
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      if (!document.fullscreenElement && isWallFullscreen) {
+        setIsWallFullscreen(false);
+      }
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isWallFullscreen) {
+        setIsWallFullscreen(false);
+      }
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('keydown', handleKeyDown);
+    
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isWallFullscreen]);
 
   const getGridClass = () => {
     switch (layout) {
@@ -172,6 +254,190 @@ export function VideoWallPage() {
     setExpandedSystems(newExpanded);
   };
 
+  // Полноэкранная версия видеостены
+  if (isWallFullscreen) {
+    return (
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 z-[100] bg-black flex flex-col"
+      >
+        {/* Полноэкранная панель управления */}
+        <div className="flex items-center justify-between px-4 py-2 bg-gray-900/90 backdrop-blur-sm border-b border-gray-800">
+          <div className="flex items-center gap-3">
+            <LayoutGrid className="w-5 h-5 text-blue-400" />
+            <span className="text-sm font-medium text-white">Видеостена</span>
+            <span className="text-xs text-gray-500">
+              {availableSystems.length} систем • {availableSystems.reduce((s, sys) => s + sys.cameras.length, 0)} камер
+            </span>
+            {refreshInterval > 0 && (
+              <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                <RefreshCw className="w-3 h-3 animate-spin" style={{ animationDuration: '3s' }} />
+                <span>Авто: {REFRESH_INTERVALS.find(i => i.value === refreshInterval)?.label}</span>
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* Layout Selector */}
+            <div className="flex items-center gap-1 bg-gray-800/50 border border-gray-700/50 rounded-lg p-0.5">
+              {[
+                { id: '1x1' as LayoutType, label: '1×1' },
+                { id: '2x2' as LayoutType, label: '2×2' },
+                { id: '3x3' as LayoutType, label: '3×3' },
+                { id: '4x4' as LayoutType, label: '4×4' },
+              ].map(item => (
+                <motion.button
+                  key={item.id}
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => setLayout(item.id)}
+                  className={`px-2.5 py-1.5 rounded text-xs font-medium transition-all ${
+                    layout === item.id
+                      ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg'
+                      : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+                  }`}
+                >
+                  {item.label}
+                </motion.button>
+              ))}
+            </div>
+
+            {/* Автоперезагрузка */}
+            <div className="flex items-center gap-1 bg-gray-800/50 border border-gray-700/50 rounded-lg px-2 py-1">
+              <RefreshCw className={`w-3 h-3 text-gray-400 ${refreshInterval > 0 ? 'animate-spin' : ''}`} style={{ animationDuration: '3s' }} />
+              <select
+                value={refreshInterval}
+                onChange={(e) => setRefreshInterval(parseInt(e.target.value))}
+                className="bg-transparent text-xs text-gray-300 focus:outline-none cursor-pointer"
+              >
+                {REFRESH_INTERVALS.map(interval => (
+                  <option key={interval.value} value={interval.value} className="bg-gray-900">
+                    {interval.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={handleAutoFill}
+              className="px-2.5 py-1.5 bg-green-600/20 hover:bg-green-600/30 text-green-400 text-xs font-medium rounded-lg transition-all border border-green-700/30"
+            >
+              Авто
+            </motion.button>
+
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={handleClearAll}
+              className="px-2.5 py-1.5 bg-red-600/20 hover:bg-red-600/30 text-red-400 text-xs font-medium rounded-lg transition-all border border-red-700/30"
+            >
+              Очистить
+            </motion.button>
+
+            <motion.button
+              whileHover={{ scale: 1.1, rotate: 90 }}
+              whileTap={{ scale: 0.9 }}
+              onClick={() => setIsWallFullscreen(false)}
+              className="p-2 bg-gray-800/80 hover:bg-gray-700 text-white rounded-lg transition-colors"
+              title="Выйти из полноэкранного режима (Esc)"
+            >
+              <Minimize2 className="w-4 h-4" />
+            </motion.button>
+          </div>
+        </div>
+
+        {/* Полноэкранная сетка */}
+        <div className="flex-1 p-2">
+          <div className={`grid ${getGridClass()} gap-2 h-full`}>
+            {Array.from({ length: getCellCount() }).map((_, index) => {
+              const { system, camera } = getCellData(index);
+
+              return (
+                <motion.div
+                  key={index}
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: 0.02 * index }}
+                  onClick={() => handleCellClick(index)}
+                  className="relative bg-black/80 border border-gray-700/30 rounded-lg overflow-hidden cursor-pointer group"
+                >
+                  {camera && system ? (
+                    <>
+                      <div className="absolute inset-0 bg-gradient-to-br from-gray-900 to-gray-800">
+                        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.1)_0%,transparent_70%)]" />
+                      </div>
+
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="text-center px-2">
+                          <Video className="w-12 h-12 mx-auto text-gray-600 mb-2" />
+                          <p className="text-sm text-gray-400 font-medium">{camera.name}</p>
+                          <p className="text-xs text-gray-600 mt-1">{system.name}</p>
+                        </div>
+                      </div>
+
+                      {camera.status === 'online' && (
+                        <div className="absolute top-2 left-2 flex items-center gap-1 bg-black/60 px-2 py-0.5 rounded backdrop-blur-sm border border-red-500/30">
+                          <motion.div
+                            animate={{ scale: [1, 1.3, 1], opacity: [1, 0.5, 1] }}
+                            transition={{ duration: 1, repeat: Infinity }}
+                            className="w-1.5 h-1.5 rounded-full bg-red-500"
+                          />
+                          <span className="text-[10px] text-white font-medium">LIVE</span>
+                        </div>
+                      )}
+
+                      <div className={`absolute top-2 right-2 w-2 h-2 rounded-full ${
+                        camera.status === 'online' ? 'bg-green-500 shadow-lg shadow-green-500/50' :
+                        camera.status === 'reconnecting' ? 'bg-yellow-500' :
+                        'bg-red-500'
+                      }`} />
+
+                      <motion.button
+                        whileHover={{ scale: 1.2 }}
+                        whileTap={{ scale: 0.9 }}
+                        onClick={(e) => handleClearCell(index, e)}
+                        className="absolute bottom-2 right-2 p-1.5 bg-red-600/80 hover:bg-red-600 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        <X className="w-3 h-3" />
+                      </motion.button>
+
+                      <motion.button
+                        whileHover={{ scale: 1.2 }}
+                        whileTap={{ scale: 0.9 }}
+                        onClick={(e) => { e.stopPropagation(); setFullscreenCell(index); }}
+                        className="absolute bottom-2 left-2 p-1.5 bg-blue-600/80 hover:bg-blue-600 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        <Maximize2 className="w-3 h-3" />
+                      </motion.button>
+                    </>
+                  ) : (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="text-center">
+                        <Plus className="w-10 h-10 mx-auto text-gray-700 mb-2" />
+                        <p className="text-xs text-gray-700">Ячейка {index + 1}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="absolute inset-0 bg-blue-500/0 group-hover:bg-blue-500/5 transition-colors" />
+                </motion.div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Подсказка */}
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-xs text-gray-600 bg-gray-900/80 px-3 py-1.5 rounded-lg backdrop-blur-sm">
+          Нажмите Esc для выхода из полноэкранного режима
+        </div>
+      </motion.div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -185,8 +451,19 @@ export function VideoWallPage() {
             <LayoutGrid className="w-5 h-5 text-blue-400" />
             Видеостена
           </h2>
-          <p className="text-sm text-gray-500">
-            {availableSystems.length} систем доступно • {availableSystems.reduce((s, sys) => s + sys.cameras.length, 0)} камер
+          <p className="text-sm text-gray-500 flex items-center gap-2">
+            <span>{availableSystems.length} систем доступно • {availableSystems.reduce((s, sys) => s + sys.cameras.length, 0)} камер</span>
+            {refreshInterval > 0 && (
+              <span className="flex items-center gap-1 text-xs text-blue-400">
+                <motion.div
+                  key={lastRefresh.getTime()}
+                  initial={{ scale: 0, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  className="w-1.5 h-1.5 rounded-full bg-blue-400"
+                />
+                Обновлено: {lastRefresh.toLocaleTimeString('ru-RU')}
+              </span>
+            )}
           </p>
         </div>
 
@@ -215,6 +492,22 @@ export function VideoWallPage() {
             ))}
           </div>
 
+          {/* Автоперезагрузка */}
+          <div className="flex items-center gap-1 bg-gray-900/50 border border-gray-800/50 rounded-xl px-2 py-1">
+            <RefreshCw className={`w-3.5 h-3.5 text-gray-400 ${refreshInterval > 0 ? 'animate-spin' : ''}`} style={{ animationDuration: '3s' }} />
+            <select
+              value={refreshInterval}
+              onChange={(e) => setRefreshInterval(parseInt(e.target.value))}
+              className="bg-transparent text-xs text-gray-300 focus:outline-none cursor-pointer"
+            >
+              {REFRESH_INTERVALS.map(interval => (
+                <option key={interval.value} value={interval.value} className="bg-gray-900">
+                  {interval.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <motion.button
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
@@ -241,6 +534,18 @@ export function VideoWallPage() {
           >
             <Save className="w-3.5 h-3.5" />
             Сохранить
+          </motion.button>
+
+          {/* Полноэкранный режим */}
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={() => setIsWallFullscreen(true)}
+            className="px-3 py-2 bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-400 text-xs font-medium rounded-xl transition-all border border-cyan-700/30 flex items-center gap-1.5"
+            title="Полноэкранный режим"
+          >
+            <Maximize2 className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">На весь экран</span>
           </motion.button>
         </div>
       </motion.div>
@@ -293,10 +598,10 @@ export function VideoWallPage() {
 
           return (
             <motion.div
-              key={index}
+              key={`${index}-${lastRefresh.getTime()}`}
               initial={{ opacity: 0, scale: 0.8 }}
               animate={{ opacity: 1, scale: 1 }}
-              transition={{ delay: 0.05 * index }}
+              transition={{ delay: 0.05 * index, duration: 0.3 }}
               whileHover={{ scale: 1.02 }}
               onClick={() => handleCellClick(index)}
               className="relative bg-black/50 border border-gray-700/30 rounded-xl overflow-hidden cursor-pointer group"

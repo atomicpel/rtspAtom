@@ -31,12 +31,27 @@ const PAGE_ROLES: Record<string, string[]> = {
 function AppContent() {
   const { user, isFirstRun } = useAuth();
   const [currentPage, setCurrentPage] = useState('dashboard');
+  const [isWallFullscreen, setIsWallFullscreen] = useState(false);
 
   // Initialize DB and mock on mount
   useEffect(() => {
     initializeDb();
     const systems = getSystems();
     initializeRtspMock(systems);
+  }, []);
+
+  // Слушаем события полноэкранного режима
+  useEffect(() => {
+    const handleFullscreenStart = () => setIsWallFullscreen(true);
+    const handleFullscreenEnd = () => setIsWallFullscreen(false);
+
+    window.addEventListener('videowall:fullscreen:start', handleFullscreenStart);
+    window.addEventListener('videowall:fullscreen:end', handleFullscreenEnd);
+
+    return () => {
+      window.removeEventListener('videowall:fullscreen:start', handleFullscreenStart);
+      window.removeEventListener('videowall:fullscreen:end', handleFullscreenEnd);
+    };
   }, []);
 
   // Проверка доступа к странице
@@ -88,6 +103,16 @@ function AppContent() {
       default: return <DashboardPage />;
     }
   };
+
+  // Полноэкранный режим видеостены - рендерим без Layout
+  if (isWallFullscreen && currentPage === 'video-wall') {
+    return (
+      <>
+        <AnimatedBackground />
+        {renderPage()}
+      </>
+    );
+  }
 
   return (
     <>
