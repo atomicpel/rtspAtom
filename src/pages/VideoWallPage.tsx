@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  LayoutGrid, Maximize2, Minimize2, Plus, X, Save, 
+import {
+  LayoutGrid, Maximize2, Minimize2, Plus, X, Save,
   Video, Settings, Server, ChevronDown, ChevronRight, RefreshCw
 } from 'lucide-react';
 import { Computer, Stream } from '../lib/types';
@@ -9,7 +9,7 @@ import { getComputersForUser, saveVideoWallState, getVideoWallState } from '../l
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../components/Toast';
 import { AnimatedCard, StaggerContainer, StaggerItem } from '../components/AnimatedCard';
-
+import { VideoPlayer } from '../components/VideoPlayer';
 type LayoutType = '1x1' | '2x2' | '3x3' | '4x4';
 
 const REFRESH_INTERVALS = [
@@ -260,22 +260,25 @@ export function VideoWallPage() {
       >
         {stream && computer ? (
           <>
-            <div className="absolute inset-0 bg-gradient-to-br from-gray-900 to-gray-800">
-              <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.1)_0%,transparent_70%)]" />
+            <VideoPlayer
+              url={stream.url}
+              protocol={stream.protocol}
+              name={stream.name}
+              className="absolute inset-0"
+              autoPlay={true}
+              muted={true}
+            />
+            
+            {/* Название потока */}
+            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-2 pointer-events-none">
+              <p className={`${isFullscreenMode ? 'text-sm' : 'text-xs'} text-white font-medium truncate`}>
+                {stream.name}
+              </p>
+              <p className={`${isFullscreenMode ? 'text-xs' : 'text-[10px]'} text-gray-300 truncate`}>
+                {computer.name}
+              </p>
             </div>
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="text-center px-2">
-                <motion.div
-                  animate={{ y: [0, -5, 0] }}
-                  transition={{ duration: 3, repeat: Infinity }}
-                >
-                  <Video className={`${isFullscreenMode ? 'w-12 h-12' : 'w-8 h-8'} mx-auto text-gray-600 mb-2`} />
-                </motion.div>
-                <p className={`${isFullscreenMode ? 'text-sm' : 'text-xs'} text-gray-400 font-medium`}>{stream.name}</p>
-                <p className={`${isFullscreenMode ? 'text-xs' : 'text-[10px]'} text-gray-600 mt-0.5`}>{computer.name}</p>
-                <p className="text-[9px] text-purple-500 mt-0.5 uppercase">{stream.protocol}</p>
-              </div>
-            </div>
+
             {stream.status === 'online' && (
               <motion.div
                 initial={{ opacity: 0, x: -10 }}
@@ -636,17 +639,21 @@ export function VideoWallPage() {
               <motion.div initial={{ scale: 0.8 }} animate={{ scale: 1 }} exit={{ scale: 0.8 }}
                 className="relative w-full h-full max-w-6xl max-h-[80vh] bg-black rounded-2xl overflow-hidden border border-gray-700/50"
               >
-                <div className="absolute inset-0 bg-gradient-to-br from-gray-900 to-gray-800">
-                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.1)_0%,transparent_70%)]" />
-                </div>
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="text-center">
-                    <Video className="w-24 h-24 mx-auto text-gray-600 mb-4" />
-                    <p className="text-xl text-gray-400 font-medium">{stream.name}</p>
-                    <p className="text-sm text-gray-600 mt-1">{computer.name} • {computer.ip}</p>
-                    <p className="text-xs text-purple-500 mt-1 uppercase">{stream.protocol}</p>
-                    <p className="text-xs text-gray-700 font-mono mt-2">{stream.url}</p>
-                  </div>
+                <VideoPlayer
+                  url={stream.url}
+                  protocol={stream.protocol}
+                  name={stream.name}
+                  className="absolute inset-0"
+                  autoPlay={true}
+                  muted={true}
+                />
+                
+                {/* Информация о потоке */}
+                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 pointer-events-none">
+                  <p className="text-xl text-white font-medium">{stream.name}</p>
+                  <p className="text-sm text-gray-300 mt-1">{computer.name} • {computer.ip}</p>
+                  <p className="text-xs text-purple-400 mt-1 uppercase">{stream.protocol}</p>
+                  <p className="text-xs text-gray-500 font-mono mt-1">{stream.url}</p>
                 </div>
                 {stream.status === 'online' && (
                   <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}
