@@ -265,8 +265,6 @@ export function VideoWallPage() {
               protocol={stream.protocol}
               name={stream.name}
               className="absolute inset-0"
-              autoPlay={true}
-              muted={true}
             />
             
             {/* Название потока */}
@@ -644,8 +642,6 @@ export function VideoWallPage() {
                   protocol={stream.protocol}
                   name={stream.name}
                   className="absolute inset-0"
-                  autoPlay={true}
-                  muted={true}
                 />
                 
                 {/* Информация о потоке */}
