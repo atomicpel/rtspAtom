@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState } from 'react';
 import Hls from 'hls.js';
 import { StreamProtocol } from '../lib/types';
-import { AlertCircle, Video, Radio, Globe, Film, Wifi } from 'lucide-react';
+import { AlertCircle, Video, Radio, Globe, Film } from 'lucide-react';
 
 interface VideoPlayerProps {
   url: string;
@@ -10,6 +10,56 @@ interface VideoPlayerProps {
   className?: string;
   autoPlay?: boolean;
   muted?: boolean;
+}
+
+// Автоматическое определение типа потока по URL
+export function detectProtocolFromUrl(url: string): StreamProtocol {
+  if (!url) return 'hls';
+  
+  const lowerUrl = url.toLowerCase();
+  
+  // HLS/m3u8
+  if (lowerUrl.includes('.m3u8') || lowerUrl.includes('/hls/')) {
+    return 'hls';
+  }
+  
+  // RTSP
+  if (lowerUrl.startsWith('rtsp://')) {
+    return 'rtsp';
+  }
+  
+  // RTMP
+  if (lowerUrl.startsWith('rtmp://')) {
+    return 'rtmp';
+  }
+  
+  // FLV
+  if (lowerUrl.includes('.flv')) {
+    return 'flv';
+  }
+  
+  // MPEG-TS
+  if (lowerUrl.includes('.ts') && !lowerUrl.includes('.m3u8')) {
+    return 'ts';
+  }
+  
+  // WebRTC
+  if (lowerUrl.startsWith('webrtc://')) {
+    return 'webrtc';
+  }
+  
+  // HTTP/HTTPS - может быть HLS, MP4, WebM или другой формат
+  if (lowerUrl.startsWith('http://') || lowerUrl.startsWith('https://')) {
+    // Проверяем расширение
+    if (lowerUrl.includes('.mp4')) return 'http';
+    if (lowerUrl.includes('.webm')) return 'http';
+    if (lowerUrl.includes('.m3u8')) return 'hls';
+    
+    // По умолчанию предполагаем HLS для HTTP потоков
+    return 'hls';
+  }
+  
+  return 'hls';
 }
 
 export function VideoPlayer({ url, protocol, name, className = '', autoPlay = true, muted = true }: VideoPlayerProps) {
@@ -41,8 +91,20 @@ export function VideoPlayer({ url, protocol, name, className = '', autoPlay = tr
           });
           hls.on(Hls.Events.ERROR, (event, data) => {
             console.error('HLS error:', data);
-            if (data.fatal) {
-              setError(`HLS ошибка: ${data.type}`);
+            if (data.fatal && hls) {
+              switch (data.type) {
+                case Hls.ErrorTypes.NETWORK_ERROR:
+                  setError('Сетевая ошибка: поток недоступен');
+                  hls.startLoad();
+                  break;
+                case Hls.ErrorTypes.MEDIA_ERROR:
+                  setError('Ошибка медиа: попробуйте перезагрузить');
+                  hls.recoverMediaError();
+                  break;
+                default:
+                  setError('Ошибка загрузки потока');
+                  break;
+              }
             }
           });
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
@@ -58,29 +120,15 @@ export function VideoPlayer({ url, protocol, name, className = '', autoPlay = tr
       // HTTP/HTTPS потоки (MP4, WebM)
       else if (protocol === 'http' || protocol === 'https') {
         video.src = url;
-        if (autoPlay) {
-          video.play().catch(e => console.log('Autoplay prevented:', e));
-        }
+        video.addEventListener('loadeddata', () => {
+          if (autoPlay) {
+            video.play().catch(e => console.log('Autoplay prevented:', e));
+          }
+        });
       }
-      // FLV потоки (через video тег не работают, нужна библиотека flv.js)
-      else if (protocol === 'flv') {
-        setError('FLV требует сервер-конвертер (MediaMTX, SRS)');
-      }
-      // RTSP потоки (браузер не поддерживает напрямую)
-      else if (protocol === 'rtsp') {
-        setError('RTSP требует сервер-конвертер в HLS/WebRTC');
-      }
-      // RTMP потоки
-      else if (protocol === 'rtmp') {
-        setError('RTMP требует сервер-конвертер в HLS/WebRTC');
-      }
-      // WebRTC
-      else if (protocol === 'webrtc') {
-        setError('WebRTC требует специальный сервер (Janus, mediasoup)');
-      }
-      // MPEG-TS
-      else if (protocol === 'ts') {
-        setError('MPEG-TS требует сервер-конвертер');
+      // Неподдерживаемые протоколы
+      else {
+        setError(`${protocol.toUpperCase()} требует конвертер`);
       }
     } catch (err) {
       console.error('Video player error:', err);
@@ -106,11 +154,13 @@ export function VideoPlayer({ url, protocol, name, className = '', autoPlay = tr
           <AlertCircle className="w-12 h-12 mx-auto text-yellow-500 mb-3" />
           <p className="text-sm text-white font-medium mb-2">{name}</p>
           <p className="text-xs text-yellow-400 mb-3">{error}</p>
-          <div className="text-[10px] text-gray-500 space-y-1">
-            <p>Для воспроизведения {protocol.toUpperCase()} нужен:</p>
-            <p>• MediaMTX, SRS или FFmpeg сервер</p>
-            <p>• Конвертация в HLS/WebRTC</p>
-          </div>
+          {(protocol === 'rtsp' || protocol === 'rtmp' || protocol === 'flv') && (
+            <div className="text-[10px] text-gray-500 space-y-1">
+              <p>Для воспроизведения {protocol.toUpperCase()} нужен:</p>
+              <p>• MediaMTX, SRS или FFmpeg сервер</p>
+              <p>• Конвертация в HLS/WebRTC</p>
+            </div>
+          )}
         </div>
       </div>
     );

@@ -9,6 +9,7 @@ import { getComputers, saveComputers, generateId } from '../lib/storage';
 import { logger } from '../lib/logger';
 import { useToast } from '../components/Toast';
 import { AnimatedCard, StaggerContainer, StaggerItem } from '../components/AnimatedCard';
+import { detectProtocolFromUrl } from '../components/VideoPlayer';
 
 const PROTOCOLS: { value: StreamProtocol; label: string; icon: React.ElementType }[] = [
   { value: 'rtsp', label: 'RTSP', icon: Radio },
@@ -44,8 +45,10 @@ export function ComputersPage() {
     name: '', hostname: '', ip: '', description: ''
   });
   const [streamForm, setStreamForm] = useState({
-    name: '', url: '', protocol: 'rtsp' as StreamProtocol, sourceLogin: '', sourcePassword: ''
+    name: '', url: '', protocol: 'hls' as StreamProtocol, sourceLogin: '', sourcePassword: ''
   });
+  const [streamCheckStatus, setStreamCheckStatus] = useState<'idle' | 'checking' | 'success' | 'error'>('idle');
+  const [streamCheckMessage, setStreamCheckMessage] = useState('');
 
   const resetComputerForm = () => {
     setComputerForm({ name: '', hostname: '', ip: '', description: '' });
@@ -54,9 +57,46 @@ export function ComputersPage() {
   };
 
   const resetStreamForm = () => {
-    setStreamForm({ name: '', url: '', protocol: 'rtsp', sourceLogin: '', sourcePassword: '' });
+    setStreamForm({ name: '', url: '', protocol: 'hls', sourceLogin: '', sourcePassword: '' });
     setEditingStream(null);
     setShowStreamForm(null);
+    setStreamCheckStatus('idle');
+    setStreamCheckMessage('');
+  };
+
+  const checkStream = async () => {
+    if (!streamForm.url) {
+      toast('error', 'Введите URL потока');
+      return;
+    }
+
+    setStreamCheckStatus('checking');
+    setStreamCheckMessage('Проверка потока...');
+
+    const protocol = detectProtocolFromUrl(streamForm.url);
+
+    try {
+      // HLS потоки
+      if (protocol === 'hls' || protocol === 'm3u8' || streamForm.url.includes('.m3u8')) {
+        const response = await fetch(streamForm.url, { method: 'HEAD', mode: 'no-cors' });
+        setStreamCheckStatus('success');
+        setStreamCheckMessage('✓ HLS поток доступен');
+      }
+      // HTTP/HTTPS видео
+      else if (protocol === 'http' || protocol === 'https') {
+        const response = await fetch(streamForm.url, { method: 'HEAD', mode: 'no-cors' });
+        setStreamCheckStatus('success');
+        setStreamCheckMessage('✓ HTTP поток доступен');
+      }
+      // RTSP/RTMP/FLV
+      else {
+        setStreamCheckStatus('error');
+        setStreamCheckMessage(`⚠ ${protocol.toUpperCase()} требует сервер-конвертер`);
+      }
+    } catch (error) {
+      setStreamCheckStatus('error');
+      setStreamCheckMessage('✗ Поток недоступен или заблокирован CORS');
+    }
   };
 
   const handleSaveComputer = () => {
@@ -491,18 +531,53 @@ export function ComputersPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-300 mb-1.5">URL потока</label>
+                  <label className="block text-sm text-gray-300 mb-1.5">
+                    URL потока
+                    {streamForm.url && (
+                      <span className="ml-2 text-xs text-green-400">
+                        ({detectProtocolFromUrl(streamForm.url).toUpperCase()})
+                      </span>
+                    )}
+                  </label>
                   <input type="text" value={streamForm.url}
-                    onChange={e => setStreamForm({...streamForm, url: e.target.value})}
+                    onChange={e => {
+                      const newUrl = e.target.value;
+                      const detectedProtocol = detectProtocolFromUrl(newUrl);
+                      setStreamForm({
+                        ...streamForm, 
+                        url: newUrl,
+                        protocol: detectedProtocol
+                      });
+                    }}
                     className="w-full px-4 py-2.5 bg-gray-800/50 border border-gray-700/50 rounded-xl text-white text-sm font-mono focus:outline-none focus:border-blue-500 transition-all"
-                    placeholder={
-                      streamForm.protocol === 'rtsp' ? 'rtsp://192.168.1.100:554/stream1' :
-                      streamForm.protocol === 'hls' || streamForm.protocol === 'm3u8' ? 'http://server/stream.m3u8' :
-                      streamForm.protocol === 'flv' ? 'http://server/stream.flv' :
-                      streamForm.protocol === 'rtmp' ? 'rtmp://server/live/stream' :
-                      'http://192.168.1.100:8080/stream'
-                    }
+                    placeholder="Вставьте URL потока (автоопределение типа)"
                   />
+                  {streamForm.url && (
+                    <div className="flex items-center justify-between mt-1">
+                      <p className="text-xs text-gray-500">
+                        Тип потока: <span className="text-purple-400 font-medium">{detectProtocolFromUrl(streamForm.url).toUpperCase()}</span>
+                      </p>
+                      <motion.button
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}
+                        onClick={checkStream}
+                        disabled={streamCheckStatus === 'checking'}
+                        className="text-xs px-2 py-1 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 rounded-lg transition-all disabled:opacity-50"
+                      >
+                        {streamCheckStatus === 'checking' ? 'Проверка...' : 'Проверить'}
+                      </motion.button>
+                    </div>
+                  )}
+                  
+                  {streamCheckMessage && (
+                    <div className={`mt-2 p-2 rounded-lg text-xs ${
+                      streamCheckStatus === 'success' ? 'bg-green-950/30 text-green-400 border border-green-700/30' :
+                      streamCheckStatus === 'error' ? 'bg-red-950/30 text-red-400 border border-red-700/30' :
+                      'bg-blue-950/30 text-blue-400 border border-blue-700/30'
+                    }`}>
+                      {streamCheckMessage}
+                    </div>
+                  )}
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
