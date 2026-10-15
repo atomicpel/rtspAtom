@@ -35,18 +35,28 @@ function AppContent() {
   useEffect(() => {
     try {
       initializeStorage();
-      initializeSeedData();
-      const computers = getComputers();
+      
+      // Try to load data, if it fails, reset
+      let computers = getComputers();
+      if (!computers || computers.length === 0) {
+        // No data, initialize seed data
+        initializeSeedData();
+        computers = getComputers();
+      }
+      
       initializeRtspMock(computers);
     } catch (error) {
       console.error('Initialization error:', error);
-      // If initialization fails, reset data and retry
+      // If initialization fails, reset all data
       try {
         localStorage.clear();
+        sessionStorage.clear();
         initializeStorage();
         initializeSeedData();
         const computers = getComputers();
         initializeRtspMock(computers);
+        // Force reload to start fresh
+        window.location.reload();
       } catch (retryError) {
         console.error('Retry failed:', retryError);
       }

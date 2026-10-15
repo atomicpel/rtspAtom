@@ -60,22 +60,18 @@ export function getUsers(): User[] {
   try {
     const users = JSON.parse(raw);
     
-    // Migration: convert old allowedSystemIds to allowedComputerIds
-    const migrated = users.map((u: any) => {
-      const { allowedSystemIds, ...rest } = u;
-      return {
-        ...rest,
-        allowedComputerIds: u.allowedComputerIds || allowedSystemIds || [],
-        isAdmin: u.isAdmin ?? false,
-      };
-    });
-    
-    // Save migrated data back
-    if (users.some((u: any) => u.allowedSystemIds !== undefined)) {
-      localStorage.setItem(STORAGE_KEYS.users, JSON.stringify(migrated));
-    }
-    
-    return migrated;
+    // Ensure all users have required fields
+    return users.map((u: any) => ({
+      id: u.id || generateId(),
+      login: u.login || '',
+      passwordHash: u.passwordHash || '',
+      role: u.role || 'viewer',
+      isAdmin: u.isAdmin ?? false,
+      allowedCidrs: u.allowedCidrs || u.allowedSystemIds || [],
+      allowedComputerIds: u.allowedComputerIds || u.allowedSystemIds || [],
+      isActive: u.isActive ?? true,
+      createdAt: u.createdAt || new Date().toISOString(),
+    }));
   } catch (error) {
     console.error('Error parsing users:', error);
     return [];
@@ -83,7 +79,19 @@ export function getUsers(): User[] {
 }
 
 export function saveUsers(users: User[]) {
-  localStorage.setItem(STORAGE_KEYS.users, JSON.stringify(users));
+  // Clean up data before saving - remove undefined values
+  const cleaned = users.map(u => ({
+    id: u.id,
+    login: u.login,
+    passwordHash: u.passwordHash,
+    role: u.role,
+    isAdmin: u.isAdmin,
+    allowedCidrs: u.allowedCidrs || [],
+    allowedComputerIds: u.allowedComputerIds || [],
+    isActive: u.isActive,
+    createdAt: u.createdAt,
+  }));
+  localStorage.setItem(STORAGE_KEYS.users, JSON.stringify(cleaned));
 }
 
 export function getUserByLogin(login: string): User | undefined {
@@ -98,21 +106,27 @@ export function getComputers(): Computer[] {
   try {
     const computers = JSON.parse(raw);
     
-    // Migration: convert old rtspStreams to streams
-    const migrated = computers.map((c: any) => {
-      const { rtspStreams, ...rest } = c;
-      return {
-        ...rest,
-        streams: c.streams || rtspStreams || [],
-      };
-    });
-    
-    // Save migrated data back
-    if (computers.some((c: any) => c.rtspStreams !== undefined)) {
-      localStorage.setItem(STORAGE_KEYS.computers, JSON.stringify(migrated));
-    }
-    
-    return migrated;
+    // Normalize computers - ensure all fields exist
+    return computers.map((c: any) => ({
+      id: c.id || generateId(),
+      name: c.name || '',
+      hostname: c.hostname || '',
+      ip: c.ip || '',
+      description: c.description || '',
+      streams: (c.streams || c.rtspStreams || []).map((s: any) => ({
+        id: s.id || generateId(),
+        name: s.name || '',
+        url: s.url || '',
+        protocol: s.protocol || 'rtsp',
+        sourceLogin: s.sourceLogin || '',
+        sourcePassword: s.sourcePassword || '',
+        isActive: s.isActive ?? true,
+        status: s.status || 'online',
+      })),
+      isActive: c.isActive ?? true,
+      status: c.status || 'online',
+      createdAt: c.createdAt || new Date().toISOString(),
+    }));
   } catch (error) {
     console.error('Error parsing computers:', error);
     return [];
@@ -120,7 +134,28 @@ export function getComputers(): Computer[] {
 }
 
 export function saveComputers(computers: Computer[]) {
-  localStorage.setItem(STORAGE_KEYS.computers, JSON.stringify(computers));
+  // Clean up data before saving - remove undefined values
+  const cleaned = computers.map(c => ({
+    id: c.id,
+    name: c.name,
+    hostname: c.hostname,
+    ip: c.ip,
+    description: c.description,
+    streams: (c.streams || []).map(s => ({
+      id: s.id,
+      name: s.name,
+      url: s.url,
+      protocol: s.protocol,
+      sourceLogin: s.sourceLogin,
+      sourcePassword: s.sourcePassword,
+      isActive: s.isActive,
+      status: s.status,
+    })),
+    isActive: c.isActive,
+    status: c.status,
+    createdAt: c.createdAt,
+  }));
+  localStorage.setItem(STORAGE_KEYS.computers, JSON.stringify(cleaned));
 }
 
 export function getComputerById(id: string): Computer | undefined {
@@ -273,7 +308,18 @@ export function generateToken(): string {
 
 // Seed data initialization
 export function initializeSeedData() {
+  // Check if already initialized
   if (localStorage.getItem('initialized')) return;
+  
+  // Check if data already exists
+  const existingUsers = localStorage.getItem(STORAGE_KEYS.users);
+  const existingComputers = localStorage.getItem(STORAGE_KEYS.computers);
+  
+  if (existingUsers && existingComputers) {
+    // Data exists, mark as initialized
+    localStorage.setItem('initialized', 'true');
+    return;
+  }
   
   const adminUser: User = {
     id: generateId(),

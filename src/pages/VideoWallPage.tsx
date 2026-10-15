@@ -50,7 +50,16 @@ const createEmptyCells = (): CellData[] => {
 export function VideoWallPage() {
   const { toast } = useToast();
   const { user } = useAuth();
-  const availableComputers = getComputersForUser(user);
+  
+  // Load computers with error handling
+  const availableComputers = (() => {
+    try {
+      return getComputersForUser(user) || [];
+    } catch (error) {
+      console.error('Error loading computers for video wall:', error);
+      return [];
+    }
+  })();
   
   // Load saved state from localStorage
   const savedState = getVideoWallState();

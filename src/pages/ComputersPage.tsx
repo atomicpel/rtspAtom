@@ -24,7 +24,16 @@ const PROTOCOLS: { value: StreamProtocol; label: string; icon: React.ElementType
 
 export function ComputersPage() {
   const { toast } = useToast();
-  const [computers, setComputers] = useState<Computer[]>(getComputers());
+  
+  // Load computers with error handling
+  const [computers, setComputers] = useState<Computer[]>(() => {
+    try {
+      return getComputers() || [];
+    } catch (error) {
+      console.error('Error loading computers:', error);
+      return [];
+    }
+  });
   const [showComputerForm, setShowComputerForm] = useState(false);
   const [editingComputer, setEditingComputer] = useState<Computer | null>(null);
   const [expandedComputers, setExpandedComputers] = useState<Set<string>>(new Set());
@@ -52,25 +61,40 @@ export function ComputersPage() {
 
   const handleSaveComputer = () => {
     if (!computerForm.name || !computerForm.ip) return;
-    let updated: Computer[];
-    if (editingComputer) {
-      updated = computers.map(c => c.id === editingComputer.id ? {
-        ...c, name: computerForm.name, hostname: computerForm.hostname,
-        ip: computerForm.ip, description: computerForm.description,
-      } : c);
-      toast('success', `Компьютер "${computerForm.name}" обновлён`);
-    } else {
-      const newComputer: Computer = {
-        id: generateId(), ...computerForm,
-        streams: [], isActive: true, status: 'online',
-        createdAt: new Date().toISOString(),
-      };
-      updated = [...computers, newComputer];
-      toast('success', `Компьютер "${computerForm.name}" добавлен`);
+    
+    try {
+      let updated: Computer[];
+      if (editingComputer) {
+        updated = computers.map(c => c.id === editingComputer.id ? {
+          ...c, 
+          name: computerForm.name, 
+          hostname: computerForm.hostname,
+          ip: computerForm.ip, 
+          description: computerForm.description,
+        } : c);
+        toast('success', `Компьютер "${computerForm.name}" обновлён`);
+      } else {
+        const newComputer: Computer = {
+          id: generateId(),
+          name: computerForm.name,
+          hostname: computerForm.hostname,
+          ip: computerForm.ip,
+          description: computerForm.description,
+          streams: [],
+          isActive: true,
+          status: 'online',
+          createdAt: new Date().toISOString(),
+        };
+        updated = [...computers, newComputer];
+        toast('success', `Компьютер "${computerForm.name}" добавлен`);
+      }
+      saveComputers(updated);
+      setComputers(updated);
+      resetComputerForm();
+    } catch (error) {
+      console.error('Error saving computer:', error);
+      toast('error', 'Ошибка при сохранении компьютера');
     }
-    saveComputers(updated);
-    setComputers(updated);
-    resetComputerForm();
   };
 
   const handleDeleteComputer = (computer: Computer) => {
@@ -93,25 +117,44 @@ export function ComputersPage() {
 
   const handleSaveStream = (computerId: string) => {
     if (!streamForm.name || !streamForm.url) return;
-    const updated = computers.map(c => {
-      if (c.id !== computerId) return c;
-      const computerStreams = c.streams || [];
-      let streams: Stream[];
-      if (editingStream) {
-        streams = computerStreams.map(s => s.id === editingStream.id ? { ...s, ...streamForm } : s);
-      } else {
-        const newStream: Stream = {
-          id: generateId(), ...streamForm,
-          isActive: true, status: 'online',
-        };
-        streams = [...computerStreams, newStream];
-      }
-      return { ...c, streams };
-    });
-    saveComputers(updated);
-    setComputers(updated);
-    toast('success', editingStream ? `Поток "${streamForm.name}" обновлён` : `Поток "${streamForm.name}" добавлен`);
-    resetStreamForm();
+    
+    try {
+      const updated = computers.map(c => {
+        if (c.id !== computerId) return c;
+        const computerStreams = c.streams || [];
+        let streams: Stream[];
+        if (editingStream) {
+          streams = computerStreams.map(s => s.id === editingStream.id ? { 
+            ...s, 
+            name: streamForm.name,
+            url: streamForm.url,
+            protocol: streamForm.protocol,
+            sourceLogin: streamForm.sourceLogin,
+            sourcePassword: streamForm.sourcePassword,
+          } : s);
+        } else {
+          const newStream: Stream = {
+            id: generateId(),
+            name: streamForm.name,
+            url: streamForm.url,
+            protocol: streamForm.protocol,
+            sourceLogin: streamForm.sourceLogin,
+            sourcePassword: streamForm.sourcePassword,
+            isActive: true,
+            status: 'online',
+          };
+          streams = [...computerStreams, newStream];
+        }
+        return { ...c, streams };
+      });
+      saveComputers(updated);
+      setComputers(updated);
+      toast('success', editingStream ? `Поток "${streamForm.name}" обновлён` : `Поток "${streamForm.name}" добавлен`);
+      resetStreamForm();
+    } catch (error) {
+      console.error('Error saving stream:', error);
+      toast('error', 'Ошибка при сохранении потока');
+    }
   };
 
   const handleDeleteStream = (computerId: string, stream: Stream) => {
