@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Monitor, Shield, Server, Network, Lock, Database, Sparkles } from 'lucide-react';
+import { Monitor, Shield, Server, Network, Lock, Database, Sparkles, AlertTriangle } from 'lucide-react';
 import { AnimatedCard, StaggerContainer, StaggerItem } from '../components/AnimatedCard';
 
 export function AboutPage() {
@@ -212,6 +212,29 @@ export function AboutPage() {
           <div className="text-white">1.0.0</div>
           <div className="text-gray-400">Обозначение:</div>
           <div className="text-gradient font-bold">115 обрОсН</div>
+        </div>
+      </AnimatedCard>
+
+      {/* Reset Data Button */}
+      <AnimatedCard className="p-5" delay={0.5}>
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-medium text-white mb-1">Сброс данных</h3>
+            <p className="text-xs text-gray-400">Удалить все данные и начать заново</p>
+          </div>
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={() => {
+              if (confirm('Вы уверены? Все данные будут удалены!')) {
+                localStorage.clear();
+                window.location.reload();
+              }
+            }}
+            className="px-4 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 text-xs font-medium rounded-xl transition-all border border-red-700/30"
+          >
+            Сбросить
+          </motion.button>
         </div>
       </AnimatedCard>
 

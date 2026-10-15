@@ -43,9 +43,43 @@ export function initializeStorage() {
   }
 }
 
+// Reset all data (for debugging/migration)
+export function resetAllData() {
+  Object.values(STORAGE_KEYS).forEach(key => {
+    localStorage.removeItem(key);
+  });
+  localStorage.removeItem('initialized');
+  initializeStorage();
+}
+
 // Users
 export function getUsers(): User[] {
-  return JSON.parse(localStorage.getItem(STORAGE_KEYS.users) || '[]');
+  const raw = localStorage.getItem(STORAGE_KEYS.users);
+  if (!raw) return [];
+  
+  try {
+    const users = JSON.parse(raw);
+    
+    // Migration: convert old allowedSystemIds to allowedComputerIds
+    const migrated = users.map((u: any) => {
+      const { allowedSystemIds, ...rest } = u;
+      return {
+        ...rest,
+        allowedComputerIds: u.allowedComputerIds || allowedSystemIds || [],
+        isAdmin: u.isAdmin ?? false,
+      };
+    });
+    
+    // Save migrated data back
+    if (users.some((u: any) => u.allowedSystemIds !== undefined)) {
+      localStorage.setItem(STORAGE_KEYS.users, JSON.stringify(migrated));
+    }
+    
+    return migrated;
+  } catch (error) {
+    console.error('Error parsing users:', error);
+    return [];
+  }
 }
 
 export function saveUsers(users: User[]) {
@@ -58,7 +92,31 @@ export function getUserByLogin(login: string): User | undefined {
 
 // Computers
 export function getComputers(): Computer[] {
-  return JSON.parse(localStorage.getItem(STORAGE_KEYS.computers) || '[]');
+  const raw = localStorage.getItem(STORAGE_KEYS.computers);
+  if (!raw) return [];
+  
+  try {
+    const computers = JSON.parse(raw);
+    
+    // Migration: convert old rtspStreams to streams
+    const migrated = computers.map((c: any) => {
+      const { rtspStreams, ...rest } = c;
+      return {
+        ...rest,
+        streams: c.streams || rtspStreams || [],
+      };
+    });
+    
+    // Save migrated data back
+    if (computers.some((c: any) => c.rtspStreams !== undefined)) {
+      localStorage.setItem(STORAGE_KEYS.computers, JSON.stringify(migrated));
+    }
+    
+    return migrated;
+  } catch (error) {
+    console.error('Error parsing computers:', error);
+    return [];
+  }
 }
 
 export function saveComputers(computers: Computer[]) {

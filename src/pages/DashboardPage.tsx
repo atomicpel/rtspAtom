@@ -83,7 +83,7 @@ export function DashboardPage() {
     return `${days}д ${hours}ч ${mins}м`;
   };
 
-  const totalStreams = computers.reduce((sum: number, c: Computer) => sum + c.streams.length, 0);
+  const totalStreams = computers.reduce((sum: number, c: Computer) => sum + (c.streams?.length || 0), 0);
 
   return (
     <div className="space-y-6">
@@ -284,7 +284,7 @@ export function DashboardPage() {
                 />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-white truncate group-hover:text-blue-400 transition-colors">{computer.name}</p>
-                  <p className="text-xs text-gray-500">{computer.streams.length} потоков • {computer.ip}</p>
+                  <p className="text-xs text-gray-500">{(computer.streams || []).length} потоков • {computer.ip}</p>
                 </div>
               </motion.div>
             </StaggerItem>

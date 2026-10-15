@@ -209,7 +209,7 @@ export function VideoWallPage() {
   const handleAutoFill = () => {
     const allStreams: { computerId: string; stream: Stream }[] = [];
     availableComputers.forEach(computer => {
-      computer.streams.filter(s => s.isActive && s.status === 'online').forEach(stream => {
+      (computer.streams || []).filter(s => s.isActive && s.status === 'online').forEach(stream => {
         allStreams.push({ computerId: computer.id, stream });
       });
     });
@@ -396,7 +396,7 @@ export function VideoWallPage() {
             Видеостена
           </h2>
           <p className="text-sm text-gray-500 flex items-center gap-2">
-            <span>{availableComputers.length} компьютеров • {availableComputers.reduce((s, c) => s + c.streams.length, 0)} потоков</span>
+            <span>{availableComputers.length} компьютеров • {availableComputers.reduce((s, c) => s + (c.streams?.length || 0), 0)} потоков</span>
             {refreshInterval > 0 && (
               <span className="flex items-center gap-1 text-xs text-blue-400">
                 <motion.div key={lastRefresh.getTime()} initial={{ scale: 0, opacity: 0 }}
@@ -544,7 +544,7 @@ export function VideoWallPage() {
                           }`} />
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-white truncate">{computer.name}</p>
-                            <p className="text-[10px] text-gray-500 font-mono">{computer.ip} • {computer.streams.length} потоков</p>
+                            <p className="text-[10px] text-gray-500 font-mono">{computer.ip} • {(computer.streams || []).length} потоков</p>
                           </div>
                           <Server className="w-4 h-4 text-gray-600 shrink-0" />
                         </motion.button>
@@ -556,10 +556,10 @@ export function VideoWallPage() {
                               className="border-t border-gray-700/30 overflow-hidden"
                             >
                               <div className="p-2 space-y-1">
-                                {computer.streams.length === 0 ? (
+                                {(computer.streams || []).length === 0 ? (
                                   <p className="text-xs text-gray-500 text-center py-2">Нет потоков</p>
                                 ) : (
-                                  computer.streams.map(stream => (
+                                  (computer.streams || []).map(stream => (
                                     <motion.button key={stream.id}
                                       whileHover={{ scale: 1.01, x: 2 }} whileTap={{ scale: 0.99 }}
                                       onClick={() => handleStreamSelect(computer.id, stream.id)}

@@ -33,10 +33,24 @@ function AppContent() {
   const [isWallFullscreen, setIsWallFullscreen] = useState(false);
 
   useEffect(() => {
-    initializeStorage();
-    initializeSeedData();
-    const computers = getComputers();
-    initializeRtspMock(computers);
+    try {
+      initializeStorage();
+      initializeSeedData();
+      const computers = getComputers();
+      initializeRtspMock(computers);
+    } catch (error) {
+      console.error('Initialization error:', error);
+      // If initialization fails, reset data and retry
+      try {
+        localStorage.clear();
+        initializeStorage();
+        initializeSeedData();
+        const computers = getComputers();
+        initializeRtspMock(computers);
+      } catch (retryError) {
+        console.error('Retry failed:', retryError);
+      }
+    }
   }, []);
 
   const canAccessPage = (page: string): boolean => {

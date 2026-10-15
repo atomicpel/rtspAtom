@@ -95,15 +95,16 @@ export function ComputersPage() {
     if (!streamForm.name || !streamForm.url) return;
     const updated = computers.map(c => {
       if (c.id !== computerId) return c;
+      const computerStreams = c.streams || [];
       let streams: Stream[];
       if (editingStream) {
-        streams = c.streams.map(s => s.id === editingStream.id ? { ...s, ...streamForm } : s);
+        streams = computerStreams.map(s => s.id === editingStream.id ? { ...s, ...streamForm } : s);
       } else {
         const newStream: Stream = {
           id: generateId(), ...streamForm,
           isActive: true, status: 'online',
         };
-        streams = [...c.streams, newStream];
+        streams = [...computerStreams, newStream];
       }
       return { ...c, streams };
     });
@@ -117,7 +118,7 @@ export function ComputersPage() {
     if (!confirm(`Удалить поток "${stream.name}"?`)) return;
     const updated = computers.map(c => {
       if (c.id !== computerId) return c;
-      return { ...c, streams: c.streams.filter(s => s.id !== stream.id) };
+      return { ...c, streams: (c.streams || []).filter(s => s.id !== stream.id) };
     });
     saveComputers(updated);
     setComputers(updated);
@@ -129,7 +130,7 @@ export function ComputersPage() {
       if (c.id !== computerId) return c;
       return {
         ...c,
-        streams: c.streams.map(s => s.id === stream.id ? {
+        streams: (c.streams || []).map(s => s.id === stream.id ? {
           ...s, isActive: !s.isActive,
           status: (!s.isActive ? 'online' : 'offline') as Stream['status']
         } : s)
@@ -165,8 +166,8 @@ export function ComputersPage() {
     return found ? found.label : protocol.toUpperCase();
   };
 
-  const totalStreams = computers.reduce((sum, c) => sum + c.streams.length, 0);
-  const activeStreams = computers.reduce((sum, c) => sum + c.streams.filter(s => s.isActive).length, 0);
+  const totalStreams = computers.reduce((sum, c) => sum + (c.streams?.length || 0), 0);
+  const activeStreams = computers.reduce((sum, c) => sum + (c.streams || []).filter(s => s.isActive).length, 0);
 
   return (
     <div className="space-y-6">
@@ -210,7 +211,7 @@ export function ComputersPage() {
                   <div className="flex-1 min-w-0">
                     <h3 className="text-sm font-medium text-white">{computer.name}</h3>
                     <p className="text-xs text-gray-500 font-mono">
-                      {computer.hostname} • {computer.ip} • {computer.streams.length} потоков
+                      {computer.hostname} • {computer.ip} • {(computer.streams || []).length} потоков
                     </p>
                   </div>
                   <div className="flex items-center gap-1">
@@ -247,7 +248,7 @@ export function ComputersPage() {
                     >
                       <div className="p-4 space-y-2">
                         {computer.description && <p className="text-xs text-gray-500 mb-3">{computer.description}</p>}
-                        {computer.streams.map(stream => {
+                        {(computer.streams || []).map(stream => {
                           const ProtocolIcon = getProtocolIcon(stream.protocol);
                           return (
                             <motion.div key={stream.id} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}
