@@ -16,7 +16,7 @@ interface LayoutProps {
 const menuItems = [
   { id: 'dashboard', label: 'Панель управления', icon: LayoutDashboard, roles: ['admin', 'operator', 'viewer'] },
   { id: 'video-wall', label: 'Видеостена', icon: LayoutGrid, roles: ['admin', 'operator', 'viewer'] },
-  { id: 'systems', label: 'Системы', icon: Server, roles: ['admin'] },
+  { id: 'computers', label: 'Компьютеры', icon: Server, roles: ['admin'] },
   { id: 'users', label: 'Пользователи', icon: Users, roles: ['admin'] },
   { id: 'ip-filter', label: 'IP-фильтр', icon: Shield, roles: ['admin'] },
   { id: 'logs', label: 'Журналы', icon: ScrollText, roles: ['admin', 'operator'] },

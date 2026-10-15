@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
 import { getMockMetrics } from '../lib/rtsp-mock';
-import { getSystems } from '../lib/storage';
+import { getComputers } from '../lib/storage';
 import { AnimatedCard, StaggerContainer, StaggerItem } from '../components/AnimatedCard';
 
 interface MetricCardProps {
@@ -14,7 +14,6 @@ interface MetricCardProps {
   icon: React.ElementType;
   color: string;
   subtitle?: string;
-  delay?: number;
 }
 
 function MetricCard({ title, value, icon: Icon, color, subtitle }: MetricCardProps) {
@@ -53,7 +52,7 @@ export function DashboardPage() {
   const [metrics, setMetrics] = useState(getMockMetrics());
   const [cpuHistory, setCpuHistory] = useState<Array<{ time: string; cpu: number; ram: number }>>([]);
   const [networkHistory, setNetworkHistory] = useState<Array<{ time: string; in: number; out: number }>>([]);
-  const systems = getSystems();
+  const computers = getComputers();
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -83,25 +82,24 @@ export function DashboardPage() {
     return `${days}д ${hours}ч ${mins}м`;
   };
 
-  const totalCameras = systems.reduce((sum, s) => sum + s.cameras.length, 0);
+  const totalStreams = computers.reduce((sum, c) => sum + c.rtspStreams.length, 0);
 
   return (
     <div className="space-y-6">
-      {/* Metrics Grid */}
       <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard 
-          title="Активные системы" 
-          value={metrics.activeSystems}
+          title="Активные компьютеры" 
+          value={metrics.activeComputers}
           icon={Server}
           color="bg-blue-950/50 text-blue-400"
-          subtitle={`из ${systems.length} настроенных`}
+          subtitle={`из ${computers.length} настроенных`}
         />
         <MetricCard 
-          title="Камеры онлайн" 
-          value={metrics.totalCameras}
+          title="RTSP-потоки онлайн" 
+          value={metrics.totalStreams}
           icon={Video}
           color="bg-green-950/50 text-green-400"
-          subtitle={`из ${totalCameras} всего`}
+          subtitle={`из ${totalStreams} всего`}
         />
         <MetricCard 
           title="CPU" 
@@ -119,7 +117,6 @@ export function DashboardPage() {
         />
       </StaggerContainer>
 
-      {/* Network Stats */}
       <StaggerContainer className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <StaggerItem>
           <AnimatedCard className="p-4 flex items-center gap-3">
@@ -182,7 +179,6 @@ export function DashboardPage() {
         </StaggerItem>
       </StaggerContainer>
 
-      {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <AnimatedCard className="p-5" delay={0.2}>
           <div className="flex items-center gap-2 mb-4">
@@ -265,30 +261,29 @@ export function DashboardPage() {
         </AnimatedCard>
       </div>
 
-      {/* Systems Status */}
       <AnimatedCard className="p-5" delay={0.4}>
-        <h3 className="text-sm font-medium text-gray-300 mb-3">Статус систем</h3>
+        <h3 className="text-sm font-medium text-gray-300 mb-3">Статус компьютеров</h3>
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {systems.map(system => (
-            <StaggerItem key={system.id}>
+          {computers.map(computer => (
+            <StaggerItem key={computer.id}>
               <motion.div 
                 whileHover={{ scale: 1.02, x: 4 }}
                 className="flex items-center gap-3 p-3 bg-gray-800/30 rounded-xl border border-gray-700/30 hover:border-blue-500/30 transition-all group"
               >
                 <motion.div 
                   animate={{ 
-                    scale: system.status === 'online' ? [1, 1.3, 1] : 1,
+                    scale: computer.status === 'online' ? [1, 1.3, 1] : 1,
                   }}
                   transition={{ duration: 2, repeat: Infinity }}
                   className={`w-3 h-3 rounded-full ${
-                    system.status === 'online' ? 'bg-green-500 shadow-lg shadow-green-500/50' :
-                    system.status === 'reconnecting' ? 'bg-yellow-500 shadow-lg shadow-yellow-500/50' :
+                    computer.status === 'online' ? 'bg-green-500 shadow-lg shadow-green-500/50' :
+                    computer.status === 'reconnecting' ? 'bg-yellow-500 shadow-lg shadow-yellow-500/50' :
                     'bg-red-500 shadow-lg shadow-red-500/50'
                   }`}
                 />
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-white truncate group-hover:text-blue-400 transition-colors">{system.name}</p>
-                  <p className="text-xs text-gray-500">{system.cameras.length} камер • {system.ip}</p>
+                  <p className="text-sm font-medium text-white truncate group-hover:text-blue-400 transition-colors">{computer.name}</p>
+                  <p className="text-xs text-gray-500">{computer.rtspStreams.length} RTSP-потоков • {computer.ip}</p>
                 </div>
               </motion.div>
             </StaggerItem>

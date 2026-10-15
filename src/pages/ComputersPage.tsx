@@ -4,187 +4,187 @@ import {
   Plus, Edit2, Trash2, Power, X, Check, Server, Video, 
   ChevronDown, ChevronRight, Monitor, AlertCircle
 } from 'lucide-react';
-import { System, Camera } from '../lib/types';
-import { getSystems, saveSystems, generateId } from '../lib/storage';
+import { Computer, RtspStream } from '../lib/types';
+import { getComputers, saveComputers, generateId } from '../lib/storage';
 import { logger } from '../lib/logger';
 import { useToast } from '../components/Toast';
 import { AnimatedCard, StaggerContainer, StaggerItem } from '../components/AnimatedCard';
 
-export function SystemsPage() {
+export function ComputersPage() {
   const { toast } = useToast();
-  const [systems, setSystems] = useState<System[]>(getSystems());
-  const [showSystemForm, setShowSystemForm] = useState(false);
-  const [editingSystem, setEditingSystem] = useState<System | null>(null);
-  const [expandedSystems, setExpandedSystems] = useState<Set<string>>(new Set());
-  const [showCameraForm, setShowCameraForm] = useState<string | null>(null); // systemId
-  const [editingCamera, setEditingCamera] = useState<Camera | null>(null);
+  const [computers, setComputers] = useState<Computer[]>(getComputers());
+  const [showComputerForm, setShowComputerForm] = useState(false);
+  const [editingComputer, setEditingComputer] = useState<Computer | null>(null);
+  const [expandedComputers, setExpandedComputers] = useState<Set<string>>(new Set());
+  const [showStreamForm, setShowStreamForm] = useState<string | null>(null);
+  const [editingStream, setEditingStream] = useState<RtspStream | null>(null);
   
-  const [systemForm, setSystemForm] = useState({
+  const [computerForm, setComputerForm] = useState({
     name: '', hostname: '', ip: '', description: ''
   });
-  const [cameraForm, setCameraForm] = useState({
+  const [streamForm, setStreamForm] = useState({
     name: '', url: '', sourceLogin: '', sourcePassword: ''
   });
 
-  const resetSystemForm = () => {
-    setSystemForm({ name: '', hostname: '', ip: '', description: '' });
-    setEditingSystem(null);
-    setShowSystemForm(false);
+  const resetComputerForm = () => {
+    setComputerForm({ name: '', hostname: '', ip: '', description: '' });
+    setEditingComputer(null);
+    setShowComputerForm(false);
   };
 
-  const resetCameraForm = () => {
-    setCameraForm({ name: '', url: '', sourceLogin: '', sourcePassword: '' });
-    setEditingCamera(null);
-    setShowCameraForm(null);
+  const resetStreamForm = () => {
+    setStreamForm({ name: '', url: '', sourceLogin: '', sourcePassword: '' });
+    setEditingStream(null);
+    setShowStreamForm(null);
   };
 
-  const handleSaveSystem = () => {
-    if (!systemForm.name || !systemForm.ip) return;
+  const handleSaveComputer = () => {
+    if (!computerForm.name || !computerForm.ip) return;
 
-    let updated: System[];
-    if (editingSystem) {
-      updated = systems.map(s => s.id === editingSystem.id ? {
-        ...s,
-        name: systemForm.name,
-        hostname: systemForm.hostname,
-        ip: systemForm.ip,
-        description: systemForm.description,
-      } : s);
-      logger.admin(`Система обновлена: ${systemForm.name}`);
-      toast('success', `Система "${systemForm.name}" обновлена`);
+    let updated: Computer[];
+    if (editingComputer) {
+      updated = computers.map(c => c.id === editingComputer.id ? {
+        ...c,
+        name: computerForm.name,
+        hostname: computerForm.hostname,
+        ip: computerForm.ip,
+        description: computerForm.description,
+      } : c);
+      logger.admin(`Компьютер обновлён: ${computerForm.name}`);
+      toast('success', `Компьютер "${computerForm.name}" обновлён`);
     } else {
-      const newSystem: System = {
+      const newComputer: Computer = {
         id: generateId(),
-        ...systemForm,
-        cameras: [],
+        ...computerForm,
+        rtspStreams: [],
         isActive: true,
         status: 'online',
         createdAt: new Date().toISOString(),
       };
-      updated = [...systems, newSystem];
-      logger.admin(`Система добавлена: ${systemForm.name}`);
-      toast('success', `Система "${systemForm.name}" добавлена`);
+      updated = [...computers, newComputer];
+      logger.admin(`Компьютер добавлен: ${computerForm.name}`);
+      toast('success', `Компьютер "${computerForm.name}" добавлен`);
     }
 
-    saveSystems(updated);
-    setSystems(updated);
-    resetSystemForm();
+    saveComputers(updated);
+    setComputers(updated);
+    resetComputerForm();
   };
 
-  const handleDeleteSystem = (system: System) => {
-    if (!confirm(`Удалить систему "${system.name}" со всеми камерами?`)) return;
-    const updated = systems.filter(s => s.id !== system.id);
-    saveSystems(updated);
-    setSystems(updated);
-    logger.admin(`Система удалена: ${system.name}`);
-    toast('info', `Система "${system.name}" удалена`);
+  const handleDeleteComputer = (computer: Computer) => {
+    if (!confirm(`Удалить компьютер "${computer.name}" со всеми RTSP-потоками?`)) return;
+    const updated = computers.filter(c => c.id !== computer.id);
+    saveComputers(updated);
+    setComputers(updated);
+    logger.admin(`Компьютер удалён: ${computer.name}`);
+    toast('info', `Компьютер "${computer.name}" удалён`);
   };
 
-  const handleToggleSystem = (system: System) => {
-    const updated = systems.map(s => s.id === system.id ? {
-      ...s,
-      isActive: !s.isActive,
-      status: (!s.isActive ? 'online' : 'offline') as System['status']
-    } : s);
-    saveSystems(updated);
-    setSystems(updated);
-    logger.admin(`Система ${system.isActive ? 'отключена' : 'включена'}: ${system.name}`);
-    toast(system.isActive ? 'warning' : 'success', `Система "${system.name}" ${system.isActive ? 'отключена' : 'включена'}`);
+  const handleToggleComputer = (computer: Computer) => {
+    const updated = computers.map(c => c.id === computer.id ? {
+      ...c,
+      isActive: !c.isActive,
+      status: (!c.isActive ? 'online' : 'offline') as Computer['status']
+    } : c);
+    saveComputers(updated);
+    setComputers(updated);
+    logger.admin(`Компьютер ${computer.isActive ? 'отключён' : 'включён'}: ${computer.name}`);
+    toast(computer.isActive ? 'warning' : 'success', `Компьютер "${computer.name}" ${computer.isActive ? 'отключён' : 'включён'}`);
   };
 
-  const handleSaveCamera = (systemId: string) => {
-    if (!cameraForm.name || !cameraForm.url) return;
+  const handleSaveStream = (computerId: string) => {
+    if (!streamForm.name || !streamForm.url) return;
 
-    const updated = systems.map(s => {
-      if (s.id !== systemId) return s;
+    const updated = computers.map(c => {
+      if (c.id !== computerId) return c;
       
-      let cameras: Camera[];
-      if (editingCamera) {
-        cameras = s.cameras.map(c => c.id === editingCamera.id ? {
-          ...c,
-          name: cameraForm.name,
-          url: cameraForm.url,
-          sourceLogin: cameraForm.sourceLogin,
-          sourcePassword: cameraForm.sourcePassword,
-        } : c);
+      let rtspStreams: RtspStream[];
+      if (editingStream) {
+        rtspStreams = c.rtspStreams.map(s => s.id === editingStream.id ? {
+          ...s,
+          name: streamForm.name,
+          url: streamForm.url,
+          sourceLogin: streamForm.sourceLogin,
+          sourcePassword: streamForm.sourcePassword,
+        } : s);
       } else {
-        const newCamera: Camera = {
+        const newStream: RtspStream = {
           id: generateId(),
-          ...cameraForm,
+          ...streamForm,
           isActive: true,
           status: 'online',
         };
-        cameras = [...s.cameras, newCamera];
+        rtspStreams = [...c.rtspStreams, newStream];
       }
       
-      return { ...s, cameras };
+      return { ...c, rtspStreams };
     });
 
-    saveSystems(updated);
-    setSystems(updated);
+    saveComputers(updated);
+    setComputers(updated);
     
-    if (editingCamera) {
-      toast('success', `Камера "${cameraForm.name}" обновлена`);
-      logger.admin(`Камера обновлена: ${cameraForm.name}`);
+    if (editingStream) {
+      toast('success', `RTSP-поток "${streamForm.name}" обновлён`);
+      logger.admin(`RTSP-поток обновлён: ${streamForm.name}`);
     } else {
-      toast('success', `Камера "${cameraForm.name}" добавлена`);
-      logger.admin(`Камера добавлена: ${cameraForm.name}`);
+      toast('success', `RTSP-поток "${streamForm.name}" добавлен`);
+      logger.admin(`RTSP-поток добавлен: ${streamForm.name}`);
     }
     
-    resetCameraForm();
+    resetStreamForm();
   };
 
-  const handleDeleteCamera = (systemId: string, camera: Camera) => {
-    if (!confirm(`Удалить камеру "${camera.name}"?`)) return;
-    const updated = systems.map(s => {
-      if (s.id !== systemId) return s;
-      return { ...s, cameras: s.cameras.filter(c => c.id !== camera.id) };
+  const handleDeleteStream = (computerId: string, stream: RtspStream) => {
+    if (!confirm(`Удалить RTSP-поток "${stream.name}"?`)) return;
+    const updated = computers.map(c => {
+      if (c.id !== computerId) return c;
+      return { ...c, rtspStreams: c.rtspStreams.filter(s => s.id !== stream.id) };
     });
-    saveSystems(updated);
-    setSystems(updated);
-    toast('info', `Камера "${camera.name}" удалена`);
-    logger.admin(`Камера удалена: ${camera.name}`);
+    saveComputers(updated);
+    setComputers(updated);
+    toast('info', `RTSP-поток "${stream.name}" удалён`);
+    logger.admin(`RTSP-поток удалён: ${stream.name}`);
   };
 
-  const handleToggleCamera = (systemId: string, camera: Camera) => {
-    const updated = systems.map(s => {
-      if (s.id !== systemId) return s;
+  const handleToggleStream = (computerId: string, stream: RtspStream) => {
+    const updated = computers.map(c => {
+      if (c.id !== computerId) return c;
       return {
-        ...s,
-        cameras: s.cameras.map(c => c.id === camera.id ? {
-          ...c,
-          isActive: !c.isActive,
-          status: (!c.isActive ? 'online' : 'offline') as Camera['status']
-        } : c)
+        ...c,
+        rtspStreams: c.rtspStreams.map(s => s.id === stream.id ? {
+          ...s,
+          isActive: !s.isActive,
+          status: (!s.isActive ? 'online' : 'offline') as RtspStream['status']
+        } : s)
       };
     });
-    saveSystems(updated);
-    setSystems(updated);
+    saveComputers(updated);
+    setComputers(updated);
   };
 
-  const toggleExpand = (systemId: string) => {
-    const newExpanded = new Set(expandedSystems);
-    if (newExpanded.has(systemId)) {
-      newExpanded.delete(systemId);
+  const toggleExpand = (computerId: string) => {
+    const newExpanded = new Set(expandedComputers);
+    if (newExpanded.has(computerId)) {
+      newExpanded.delete(computerId);
     } else {
-      newExpanded.add(systemId);
+      newExpanded.add(computerId);
     }
-    setExpandedSystems(newExpanded);
+    setExpandedComputers(newExpanded);
   };
 
-  const startEditCamera = (systemId: string, camera: Camera) => {
-    setCameraForm({
-      name: camera.name,
-      url: camera.url,
-      sourceLogin: camera.sourceLogin,
-      sourcePassword: camera.sourcePassword,
+  const startEditStream = (computerId: string, stream: RtspStream) => {
+    setStreamForm({
+      name: stream.name,
+      url: stream.url,
+      sourceLogin: stream.sourceLogin,
+      sourcePassword: stream.sourcePassword,
     });
-    setEditingCamera(camera);
-    setShowCameraForm(systemId);
+    setEditingStream(stream);
+    setShowStreamForm(computerId);
   };
 
-  const totalCameras = systems.reduce((sum, s) => sum + s.cameras.length, 0);
-  const activeCameras = systems.reduce((sum, s) => sum + s.cameras.filter(c => c.isActive).length, 0);
+  const totalStreams = computers.reduce((sum, c) => sum + c.rtspStreams.length, 0);
+  const activeStreams = computers.reduce((sum, c) => sum + c.rtspStreams.filter(s => s.isActive).length, 0);
 
   return (
     <div className="space-y-6">
@@ -197,37 +197,37 @@ export function SystemsPage() {
         <div>
           <h2 className="text-lg font-semibold text-white flex items-center gap-2">
             <Server className="w-5 h-5 text-blue-400" />
-            Системы
+            Компьютеры
           </h2>
           <p className="text-sm text-gray-500">
-            Удалённые рабочие столы с камерами • {systems.length} систем • {activeCameras}/{totalCameras} камер активно
+            Удалённые компьютеры с RTSP-потоками • {computers.length} компьютеров • {activeStreams}/{totalStreams} потоков активно
           </p>
         </div>
         <motion.button
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
-          onClick={() => setShowSystemForm(true)}
+          onClick={() => setShowComputerForm(true)}
           className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white text-sm font-medium rounded-xl transition-all shadow-lg shadow-blue-500/20"
         >
           <Plus className="w-4 h-4" />
-          Добавить систему
+          Добавить компьютер
         </motion.button>
       </motion.div>
 
-      {/* Systems List */}
+      {/* Computers List */}
       <StaggerContainer className="space-y-3">
-        {systems.map(system => {
-          const isExpanded = expandedSystems.has(system.id);
+        {computers.map(computer => {
+          const isExpanded = expandedComputers.has(computer.id);
           
           return (
-            <StaggerItem key={system.id}>
+            <StaggerItem key={computer.id}>
               <AnimatedCard className="overflow-hidden">
-                {/* System Header */}
+                {/* Computer Header */}
                 <div className="p-4 flex items-center gap-3">
                   <motion.button
                     whileHover={{ scale: 1.1 }}
                     whileTap={{ scale: 0.9 }}
-                    onClick={() => toggleExpand(system.id)}
+                    onClick={() => toggleExpand(computer.id)}
                     className="p-1 rounded-lg hover:bg-gray-800 text-gray-400"
                   >
                     {isExpanded ? (
@@ -238,15 +238,15 @@ export function SystemsPage() {
                   </motion.button>
 
                   <div className={`w-3 h-3 rounded-full ${
-                    system.status === 'online' ? 'bg-green-500 shadow-lg shadow-green-500/50' :
-                    system.status === 'reconnecting' ? 'bg-yellow-500 shadow-lg shadow-yellow-500/50' :
+                    computer.status === 'online' ? 'bg-green-500 shadow-lg shadow-green-500/50' :
+                    computer.status === 'reconnecting' ? 'bg-yellow-500 shadow-lg shadow-yellow-500/50' :
                     'bg-red-500 shadow-lg shadow-red-500/50'
                   }`} />
 
                   <div className="flex-1 min-w-0">
-                    <h3 className="text-sm font-medium text-white">{system.name}</h3>
+                    <h3 className="text-sm font-medium text-white">{computer.name}</h3>
                     <p className="text-xs text-gray-500 font-mono">
-                      {system.hostname} • {system.ip} • {system.cameras.length} камер
+                      {computer.hostname} • {computer.ip} • {computer.rtspStreams.length} RTSP-потоков
                     </p>
                   </div>
 
@@ -254,11 +254,11 @@ export function SystemsPage() {
                     <motion.button
                       whileHover={{ scale: 1.2 }}
                       whileTap={{ scale: 0.9 }}
-                      onClick={() => handleToggleSystem(system)}
+                      onClick={() => handleToggleComputer(computer)}
                       className={`p-1.5 rounded-lg transition-all ${
-                        system.isActive ? 'text-green-400 hover:bg-green-950/30' : 'text-gray-500 hover:bg-gray-800'
+                        computer.isActive ? 'text-green-400 hover:bg-green-950/30' : 'text-gray-500 hover:bg-gray-800'
                       }`}
-                      title={system.isActive ? 'Отключить' : 'Включить'}
+                      title={computer.isActive ? 'Отключить' : 'Включить'}
                     >
                       <Power className="w-4 h-4" />
                     </motion.button>
@@ -266,14 +266,14 @@ export function SystemsPage() {
                       whileHover={{ scale: 1.2 }}
                       whileTap={{ scale: 0.9 }}
                       onClick={() => {
-                        setSystemForm({
-                          name: system.name,
-                          hostname: system.hostname,
-                          ip: system.ip,
-                          description: system.description,
+                        setComputerForm({
+                          name: computer.name,
+                          hostname: computer.hostname,
+                          ip: computer.ip,
+                          description: computer.description,
                         });
-                        setEditingSystem(system);
-                        setShowSystemForm(true);
+                        setEditingComputer(computer);
+                        setShowComputerForm(true);
                       }}
                       className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-800 transition-all"
                       title="Редактировать"
@@ -283,7 +283,7 @@ export function SystemsPage() {
                     <motion.button
                       whileHover={{ scale: 1.2, rotate: 10 }}
                       whileTap={{ scale: 0.9 }}
-                      onClick={() => handleDeleteSystem(system)}
+                      onClick={() => handleDeleteComputer(computer)}
                       className="p-1.5 rounded-lg text-red-400 hover:bg-red-950/30 transition-all"
                       title="Удалить"
                     >
@@ -292,7 +292,7 @@ export function SystemsPage() {
                   </div>
                 </div>
 
-                {/* Cameras List */}
+                {/* Streams List */}
                 <AnimatePresence>
                   {isExpanded && (
                     <motion.div
@@ -303,40 +303,40 @@ export function SystemsPage() {
                       className="border-t border-gray-800/50 overflow-hidden"
                     >
                       <div className="p-4 space-y-2">
-                        {system.description && (
-                          <p className="text-xs text-gray-500 mb-3">{system.description}</p>
+                        {computer.description && (
+                          <p className="text-xs text-gray-500 mb-3">{computer.description}</p>
                         )}
 
-                        {system.cameras.map(camera => (
+                        {computer.rtspStreams.map(stream => (
                           <motion.div
-                            key={camera.id}
+                            key={stream.id}
                             initial={{ opacity: 0, x: -20 }}
                             animate={{ opacity: 1, x: 0 }}
                             className="flex items-center gap-3 p-2.5 bg-gray-800/30 rounded-lg border border-gray-700/30 group hover:border-blue-500/30 transition-all"
                           >
                             <div className={`w-2 h-2 rounded-full ${
-                              camera.status === 'online' ? 'bg-green-500' :
-                              camera.status === 'reconnecting' ? 'bg-yellow-500' :
+                              stream.status === 'online' ? 'bg-green-500' :
+                              stream.status === 'reconnecting' ? 'bg-yellow-500' :
                               'bg-red-500'
                             }`} />
                             <Video className="w-4 h-4 text-gray-500" />
                             <div className="flex-1 min-w-0">
-                              <p className="text-xs font-medium text-white">{camera.name}</p>
-                              <p className="text-[10px] text-gray-500 font-mono truncate">{camera.url}</p>
+                              <p className="text-xs font-medium text-white">{stream.name}</p>
+                              <p className="text-[10px] text-gray-500 font-mono truncate">{stream.url}</p>
                             </div>
                             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                               <motion.button
                                 whileHover={{ scale: 1.2 }}
                                 whileTap={{ scale: 0.9 }}
-                                onClick={() => handleToggleCamera(system.id, camera)}
-                                className={`p-1 rounded ${camera.isActive ? 'text-green-400' : 'text-gray-500'}`}
+                                onClick={() => handleToggleStream(computer.id, stream)}
+                                className={`p-1 rounded ${stream.isActive ? 'text-green-400' : 'text-gray-500'}`}
                               >
                                 <Power className="w-3 h-3" />
                               </motion.button>
                               <motion.button
                                 whileHover={{ scale: 1.2 }}
                                 whileTap={{ scale: 0.9 }}
-                                onClick={() => startEditCamera(system.id, camera)}
+                                onClick={() => startEditStream(computer.id, stream)}
                                 className="p-1 rounded text-gray-400 hover:bg-gray-700"
                               >
                                 <Edit2 className="w-3 h-3" />
@@ -344,7 +344,7 @@ export function SystemsPage() {
                               <motion.button
                                 whileHover={{ scale: 1.2 }}
                                 whileTap={{ scale: 0.9 }}
-                                onClick={() => handleDeleteCamera(system.id, camera)}
+                                onClick={() => handleDeleteStream(computer.id, stream)}
                                 className="p-1 rounded text-red-400 hover:bg-red-950/30"
                               >
                                 <Trash2 className="w-3 h-3" />
@@ -357,14 +357,14 @@ export function SystemsPage() {
                           whileHover={{ scale: 1.02 }}
                           whileTap={{ scale: 0.98 }}
                           onClick={() => {
-                            setCameraForm({ name: '', url: '', sourceLogin: '', sourcePassword: '' });
-                            setEditingCamera(null);
-                            setShowCameraForm(system.id);
+                            setStreamForm({ name: '', url: '', sourceLogin: '', sourcePassword: '' });
+                            setEditingStream(null);
+                            setShowStreamForm(computer.id);
                           }}
                           className="w-full py-2 px-3 bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 text-xs font-medium rounded-lg transition-all border border-blue-500/20 flex items-center justify-center gap-2"
                         >
                           <Plus className="w-3 h-3" />
-                          Добавить камеру
+                          Добавить RTSP-поток
                         </motion.button>
                       </div>
                     </motion.div>
@@ -376,7 +376,7 @@ export function SystemsPage() {
         })}
       </StaggerContainer>
 
-      {systems.length === 0 && (
+      {computers.length === 0 && (
         <motion.div 
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -388,14 +388,14 @@ export function SystemsPage() {
           >
             <Server className="w-16 h-16 mx-auto mb-4 opacity-30" />
           </motion.div>
-          <p className="text-lg">Нет настроенных систем</p>
-          <p className="text-sm mt-2 text-gray-600">Нажмите «Добавить систему» для начала работы</p>
+          <p className="text-lg">Нет настроенных компьютеров</p>
+          <p className="text-sm mt-2 text-gray-600">Нажмите «Добавить компьютер» для начала работы</p>
         </motion.div>
       )}
 
-      {/* Add/Edit System Modal */}
+      {/* Add/Edit Computer Modal */}
       <AnimatePresence>
-        {showSystemForm && (
+        {showComputerForm && (
           <motion.div 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -412,12 +412,12 @@ export function SystemsPage() {
               <div className="flex items-center justify-between mb-5 relative">
                 <h3 className="text-lg font-semibold text-white flex items-center gap-2">
                   <Monitor className="w-5 h-5 text-blue-400" />
-                  {editingSystem ? 'Редактировать систему' : 'Новая система'}
+                  {editingComputer ? 'Редактировать компьютер' : 'Новый компьютер'}
                 </h3>
                 <motion.button 
                   whileHover={{ scale: 1.1, rotate: 90 }}
                   whileTap={{ scale: 0.9 }}
-                  onClick={resetSystemForm} 
+                  onClick={resetComputerForm} 
                   className="p-1.5 rounded-xl hover:bg-gray-800 text-gray-400 transition-colors"
                 >
                   <X className="w-5 h-5" />
@@ -426,11 +426,11 @@ export function SystemsPage() {
 
               <div className="space-y-4 relative">
                 <div>
-                  <label className="block text-sm text-gray-300 mb-1.5">Название системы</label>
+                  <label className="block text-sm text-gray-300 mb-1.5">Название компьютера</label>
                   <input
                     type="text"
-                    value={systemForm.name}
-                    onChange={e => setSystemForm({...systemForm, name: e.target.value})}
+                    value={computerForm.name}
+                    onChange={e => setComputerForm({...computerForm, name: e.target.value})}
                     className="w-full px-4 py-2.5 bg-gray-800/50 border border-gray-700/50 rounded-xl text-white text-sm focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
                     placeholder="КПП-1 (Центральный пост)"
                   />
@@ -440,8 +440,8 @@ export function SystemsPage() {
                     <label className="block text-sm text-gray-300 mb-1.5">Hostname</label>
                     <input
                       type="text"
-                      value={systemForm.hostname}
-                      onChange={e => setSystemForm({...systemForm, hostname: e.target.value})}
+                      value={computerForm.hostname}
+                      onChange={e => setComputerForm({...computerForm, hostname: e.target.value})}
                       className="w-full px-4 py-2.5 bg-gray-800/50 border border-gray-700/50 rounded-xl text-white text-sm font-mono focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
                       placeholder="kpp1-server"
                     />
@@ -450,8 +450,8 @@ export function SystemsPage() {
                     <label className="block text-sm text-gray-300 mb-1.5">IP-адрес</label>
                     <input
                       type="text"
-                      value={systemForm.ip}
-                      onChange={e => setSystemForm({...systemForm, ip: e.target.value})}
+                      value={computerForm.ip}
+                      onChange={e => setComputerForm({...computerForm, ip: e.target.value})}
                       className="w-full px-4 py-2.5 bg-gray-800/50 border border-gray-700/50 rounded-xl text-white text-sm font-mono focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
                       placeholder="192.168.1.10"
                     />
@@ -460,11 +460,11 @@ export function SystemsPage() {
                 <div>
                   <label className="block text-sm text-gray-300 mb-1.5">Описание</label>
                   <textarea
-                    value={systemForm.description}
-                    onChange={e => setSystemForm({...systemForm, description: e.target.value})}
+                    value={computerForm.description}
+                    onChange={e => setComputerForm({...computerForm, description: e.target.value})}
                     rows={2}
                     className="w-full px-4 py-2.5 bg-gray-800/50 border border-gray-700/50 rounded-xl text-white text-sm focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all resize-none"
-                    placeholder="Описание системы..."
+                    placeholder="Описание компьютера..."
                   />
                 </div>
               </div>
@@ -473,7 +473,7 @@ export function SystemsPage() {
                 <motion.button
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
-                  onClick={resetSystemForm}
+                  onClick={resetComputerForm}
                   className="flex-1 py-2.5 px-4 bg-gray-800/50 hover:bg-gray-700/50 text-gray-300 text-sm rounded-xl transition-all border border-gray-700/50"
                 >
                   Отмена
@@ -481,11 +481,11 @@ export function SystemsPage() {
                 <motion.button
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
-                  onClick={handleSaveSystem}
+                  onClick={handleSaveComputer}
                   className="flex-1 py-2.5 px-4 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white text-sm font-medium rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20"
                 >
                   <Check className="w-4 h-4" />
-                  {editingSystem ? 'Сохранить' : 'Добавить'}
+                  {editingComputer ? 'Сохранить' : 'Добавить'}
                 </motion.button>
               </div>
             </motion.div>
@@ -493,9 +493,9 @@ export function SystemsPage() {
         )}
       </AnimatePresence>
 
-      {/* Add/Edit Camera Modal */}
+      {/* Add/Edit Stream Modal */}
       <AnimatePresence>
-        {showCameraForm && (
+        {showStreamForm && (
           <motion.div 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -512,12 +512,12 @@ export function SystemsPage() {
               <div className="flex items-center justify-between mb-5 relative">
                 <h3 className="text-lg font-semibold text-white flex items-center gap-2">
                   <Video className="w-5 h-5 text-purple-400" />
-                  {editingCamera ? 'Редактировать камеру' : 'Новая камера'}
+                  {editingStream ? 'Редактировать RTSP-поток' : 'Новый RTSP-поток'}
                 </h3>
                 <motion.button 
                   whileHover={{ scale: 1.1, rotate: 90 }}
                   whileTap={{ scale: 0.9 }}
-                  onClick={resetCameraForm} 
+                  onClick={resetStreamForm} 
                   className="p-1.5 rounded-xl hover:bg-gray-800 text-gray-400 transition-colors"
                 >
                   <X className="w-5 h-5" />
@@ -526,11 +526,11 @@ export function SystemsPage() {
 
               <div className="space-y-4 relative">
                 <div>
-                  <label className="block text-sm text-gray-300 mb-1.5">Название камеры</label>
+                  <label className="block text-sm text-gray-300 mb-1.5">Название потока</label>
                   <input
                     type="text"
-                    value={cameraForm.name}
-                    onChange={e => setCameraForm({...cameraForm, name: e.target.value})}
+                    value={streamForm.name}
+                    onChange={e => setStreamForm({...streamForm, name: e.target.value})}
                     className="w-full px-4 py-2.5 bg-gray-800/50 border border-gray-700/50 rounded-xl text-white text-sm focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
                     placeholder="Камера въезда"
                   />
@@ -539,8 +539,8 @@ export function SystemsPage() {
                   <label className="block text-sm text-gray-300 mb-1.5">RTSP URL</label>
                   <input
                     type="text"
-                    value={cameraForm.url}
-                    onChange={e => setCameraForm({...cameraForm, url: e.target.value})}
+                    value={streamForm.url}
+                    onChange={e => setStreamForm({...streamForm, url: e.target.value})}
                     className="w-full px-4 py-2.5 bg-gray-800/50 border border-gray-700/50 rounded-xl text-white text-sm font-mono focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
                     placeholder="rtsp://192.168.1.100:554/stream1"
                   />
@@ -550,8 +550,8 @@ export function SystemsPage() {
                     <label className="block text-sm text-gray-300 mb-1.5">Логин</label>
                     <input
                       type="text"
-                      value={cameraForm.sourceLogin}
-                      onChange={e => setCameraForm({...cameraForm, sourceLogin: e.target.value})}
+                      value={streamForm.sourceLogin}
+                      onChange={e => setStreamForm({...streamForm, sourceLogin: e.target.value})}
                       className="w-full px-4 py-2.5 bg-gray-800/50 border border-gray-700/50 rounded-xl text-white text-sm focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
                     />
                   </div>
@@ -559,8 +559,8 @@ export function SystemsPage() {
                     <label className="block text-sm text-gray-300 mb-1.5">Пароль</label>
                     <input
                       type="password"
-                      value={cameraForm.sourcePassword}
-                      onChange={e => setCameraForm({...cameraForm, sourcePassword: e.target.value})}
+                      value={streamForm.sourcePassword}
+                      onChange={e => setStreamForm({...streamForm, sourcePassword: e.target.value})}
                       className="w-full px-4 py-2.5 bg-gray-800/50 border border-gray-700/50 rounded-xl text-white text-sm focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
                     />
                   </div>
@@ -571,7 +571,7 @@ export function SystemsPage() {
                 <motion.button
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
-                  onClick={resetCameraForm}
+                  onClick={resetStreamForm}
                   className="flex-1 py-2.5 px-4 bg-gray-800/50 hover:bg-gray-700/50 text-gray-300 text-sm rounded-xl transition-all border border-gray-700/50"
                 >
                   Отмена
@@ -579,11 +579,11 @@ export function SystemsPage() {
                 <motion.button
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
-                  onClick={() => handleSaveCamera(showCameraForm)}
+                  onClick={() => handleSaveStream(showStreamForm)}
                   className="flex-1 py-2.5 px-4 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white text-sm font-medium rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20"
                 >
                   <Check className="w-4 h-4" />
-                  {editingCamera ? 'Сохранить' : 'Добавить'}
+                  {editingStream ? 'Сохранить' : 'Добавить'}
                 </motion.button>
               </div>
             </motion.div>

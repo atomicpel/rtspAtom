@@ -122,7 +122,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       role: 'admin',
       isAdmin: true,
       allowedCidrs: ['0.0.0.0/0'],
-      allowedSystemIds: [],
+      allowedComputerIds: [],
       isActive: true,
       createdAt: new Date().toISOString(),
     };

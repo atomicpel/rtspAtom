@@ -1,203 +1,187 @@
-import { User, System, Camera, IpRule, LogEntry, Session, Settings } from './types';
+import { User, Computer, RtspStream, IpRule, LogEntry, Session, Settings } from './types';
 
-const KEYS = {
+const STORAGE_KEYS = {
   users: 'rtsp_users',
-  systems: 'rtsp_systems',
+  computers: 'rtsp_computers',
   ipRules: 'rtsp_ip_rules',
   logs: 'rtsp_logs',
   sessions: 'rtsp_sessions',
   settings: 'rtsp_settings',
   loginAttempts: 'rtsp_login_attempts',
-  initialized: 'rtsp_initialized',
 };
 
-function get<T>(key: string, defaultValue: T): T {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return defaultValue;
-    return JSON.parse(raw) as T;
-  } catch {
-    return defaultValue;
+export function initializeStorage() {
+  if (!localStorage.getItem(STORAGE_KEYS.users)) {
+    localStorage.setItem(STORAGE_KEYS.users, JSON.stringify([]));
   }
-}
-
-function set<T>(key: string, value: T): void {
-  localStorage.setItem(key, JSON.stringify(value));
-}
-
-// Simple hash for mock (in production use bcrypt)
-export function hashPassword(password: string): string {
-  let hash = 0;
-  const salt = 'rtsp_salt_2024';
-  const str = salt + password;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash;
+  if (!localStorage.getItem(STORAGE_KEYS.computers)) {
+    localStorage.setItem(STORAGE_KEYS.computers, JSON.stringify([]));
   }
-  return 'hashed_' + Math.abs(hash).toString(36) + '_' + btoa(password).slice(0, 8);
-}
-
-export function verifyPassword(password: string, hash: string): boolean {
-  return hashPassword(password) === hash;
-}
-
-export function generateId(): string {
-  return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
-}
-
-export function generateToken(): string {
-  return Array.from(crypto.getRandomValues(new Uint8Array(32)))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
+  if (!localStorage.getItem(STORAGE_KEYS.ipRules)) {
+    localStorage.setItem(STORAGE_KEYS.ipRules, JSON.stringify([]));
+  }
+  if (!localStorage.getItem(STORAGE_KEYS.logs)) {
+    localStorage.setItem(STORAGE_KEYS.logs, JSON.stringify([]));
+  }
+  if (!localStorage.getItem(STORAGE_KEYS.sessions)) {
+    localStorage.setItem(STORAGE_KEYS.sessions, JSON.stringify([]));
+  }
+  if (!localStorage.getItem(STORAGE_KEYS.settings)) {
+    const defaultSettings: Settings = {
+      tlsEnabled: false,
+      sessionTtl: 3600,
+      maxConnections: 100,
+      logFormat: 'json',
+      rateLimitLogin: 5,
+      rateLimitApi: 60,
+    };
+    localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(defaultSettings));
+  }
+  if (!localStorage.getItem(STORAGE_KEYS.loginAttempts)) {
+    localStorage.setItem(STORAGE_KEYS.loginAttempts, JSON.stringify({}));
+  }
 }
 
 // Users
 export function getUsers(): User[] {
-  return get<User[]>(KEYS.users, []);
+  return JSON.parse(localStorage.getItem(STORAGE_KEYS.users) || '[]');
 }
 
-export function saveUsers(users: User[]): void {
-  set(KEYS.users, users);
+export function saveUsers(users: User[]) {
+  localStorage.setItem(STORAGE_KEYS.users, JSON.stringify(users));
 }
 
 export function getUserByLogin(login: string): User | undefined {
   return getUsers().find(u => u.login === login);
 }
 
-// Systems
-export function getSystems(): System[] {
-  return get<System[]>(KEYS.systems, []);
+// Computers
+export function getComputers(): Computer[] {
+  return JSON.parse(localStorage.getItem(STORAGE_KEYS.computers) || '[]');
 }
 
-export function saveSystems(systems: System[]): void {
-  set(KEYS.systems, systems);
+export function saveComputers(computers: Computer[]) {
+  localStorage.setItem(STORAGE_KEYS.computers, JSON.stringify(computers));
+}
+
+export function getComputerById(id: string): Computer | undefined {
+  return getComputers().find(c => c.id === id);
 }
 
 // IP Rules
 export function getIpRules(): IpRule[] {
-  return get<IpRule[]>(KEYS.ipRules, []);
+  return JSON.parse(localStorage.getItem(STORAGE_KEYS.ipRules) || '[]');
 }
 
-export function saveIpRules(rules: IpRule[]): void {
-  set(KEYS.ipRules, rules);
+export function saveIpRules(rules: IpRule[]) {
+  localStorage.setItem(STORAGE_KEYS.ipRules, JSON.stringify(rules));
 }
 
 // Logs
 export function getLogs(): LogEntry[] {
-  return get<LogEntry[]>(KEYS.logs, []);
+  return JSON.parse(localStorage.getItem(STORAGE_KEYS.logs) || '[]');
 }
 
-export function saveLogs(logs: LogEntry[]): void {
-  set(KEYS.logs, logs);
+export function saveLogs(logs: LogEntry[]) {
+  localStorage.setItem(STORAGE_KEYS.logs, JSON.stringify(logs));
 }
 
-export function addLog(log: Omit<LogEntry, 'id' | 'timestamp'>): void {
+export function addLog(log: Omit<LogEntry, 'id' | 'timestamp'>) {
   const logs = getLogs();
   logs.unshift({
     ...log,
     id: generateId(),
     timestamp: new Date().toISOString(),
   });
-  if (logs.length > 10000) logs.length = 10000;
+  if (logs.length > 10000) logs.pop();
   saveLogs(logs);
 }
 
 // Sessions
 export function getSessions(): Session[] {
-  return get<Session[]>(KEYS.sessions, []);
+  return JSON.parse(localStorage.getItem(STORAGE_KEYS.sessions) || '[]');
 }
 
-export function saveSessions(sessions: Session[]): void {
-  set(KEYS.sessions, sessions);
+export function saveSessions(sessions: Session[]) {
+  localStorage.setItem(STORAGE_KEYS.sessions, JSON.stringify(sessions));
 }
 
 export function getCurrentSession(): Session | null {
   const token = sessionStorage.getItem('rtsp_token');
   if (!token) return null;
-  const session = getSessions().find(s => s.token === token);
+  const sessions = getSessions();
+  const session = sessions.find(s => s.token === token);
   if (!session) return null;
-  if (new Date(session.expiresAt) < new Date()) return null;
+  if (new Date() > new Date(session.expiresAt)) {
+    clearCurrentSession();
+    return null;
+  }
   return session;
 }
 
-export function setCurrentSession(token: string): void {
+export function setCurrentSession(token: string) {
   sessionStorage.setItem('rtsp_token', token);
 }
 
-export function clearCurrentSession(): void {
+export function clearCurrentSession() {
   sessionStorage.removeItem('rtsp_token');
 }
 
 // Settings
 export function getSettings(): Settings {
-  return get<Settings>(KEYS.settings, {
-    tlsEnabled: false,
-    sessionTtl: 3600,
-    maxConnections: 100,
-    logFormat: 'json',
-    rateLimitLogin: 5,
-    rateLimitApi: 60,
-  });
+  return JSON.parse(localStorage.getItem(STORAGE_KEYS.settings) || '{}');
 }
 
-export function saveSettings(settings: Settings): void {
-  set(KEYS.settings, settings);
+export function saveSettings(settings: Settings) {
+  localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(settings));
 }
 
-// Login attempts (rate limiting)
-interface LoginAttempt {
-  ip: string;
-  attempts: number;
-  blockedUntil: string | null;
+// Login Attempts
+export function getLoginAttempts(): Record<string, { count: number; blockedUntil: string | null }> {
+  return JSON.parse(localStorage.getItem(STORAGE_KEYS.loginAttempts) || '{}');
 }
 
-export function getLoginAttempts(): LoginAttempt[] {
-  return get<LoginAttempt[]>(KEYS.loginAttempts, []);
-}
-
-export function saveLoginAttempts(attempts: LoginAttempt[]): void {
-  set(KEYS.loginAttempts, attempts);
+export function saveLoginAttempts(attempts: Record<string, { count: number; blockedUntil: string | null }>) {
+  localStorage.setItem(STORAGE_KEYS.loginAttempts, JSON.stringify(attempts));
 }
 
 export function isBlocked(ip: string): boolean {
   const attempts = getLoginAttempts();
-  const attempt = attempts.find(a => a.ip === ip);
+  const attempt = attempts[ip];
   if (!attempt || !attempt.blockedUntil) return false;
-  return new Date(attempt.blockedUntil) > new Date();
+  return new Date() < new Date(attempt.blockedUntil);
 }
 
-export function recordFailedLogin(ip: string): void {
+export function recordFailedLogin(ip: string) {
   const attempts = getLoginAttempts();
-  let attempt = attempts.find(a => a.ip === ip);
-  if (!attempt) {
-    attempt = { ip, attempts: 0, blockedUntil: null };
-    attempts.push(attempt);
+  if (!attempts[ip]) {
+    attempts[ip] = { count: 0, blockedUntil: null };
   }
-  attempt.attempts++;
-  if (attempt.attempts >= 5) {
-    attempt.blockedUntil = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+  attempts[ip].count++;
+  if (attempts[ip].count >= 5) {
+    attempts[ip].blockedUntil = new Date(Date.now() + 15 * 60 * 1000).toISOString();
   }
   saveLoginAttempts(attempts);
 }
 
-export function clearFailedLogin(ip: string): void {
-  const attempts = getLoginAttempts().filter(a => a.ip !== ip);
+export function clearFailedLogin(ip: string) {
+  const attempts = getLoginAttempts();
+  delete attempts[ip];
   saveLoginAttempts(attempts);
 }
 
-// Helper: get systems available to user
-export function getSystemsForUser(user: User | null): System[] {
-  const allSystems = getSystems();
+// User access to computers
+export function getComputersForUser(user: User | null): Computer[] {
   if (!user) return [];
-  if (user.isAdmin || user.role === 'admin') return allSystems;
-  if (user.allowedSystemIds.length === 0) return allSystems; // пусто = все
-  return allSystems.filter(s => user.allowedSystemIds.includes(s.id));
+  const allComputers = getComputers();
+  if (user.isAdmin) return allComputers;
+  if (user.allowedComputerIds.length === 0) return allComputers;
+  return allComputers.filter(c => user.allowedComputerIds.includes(c.id));
 }
 
-// Initialize with seed data
-export function initializeDb(): void {
-  if (get<boolean>(KEYS.initialized, false)) return;
+// Seed data initialization
+export function initializeSeedData() {
+  if (localStorage.getItem('initialized')) return;
   
   const adminUser: User = {
     id: generateId(),
@@ -206,12 +190,12 @@ export function initializeDb(): void {
     role: 'admin',
     isAdmin: true,
     allowedCidrs: ['0.0.0.0/0'],
-    allowedSystemIds: [],
+    allowedComputerIds: [],
     isActive: true,
     createdAt: new Date().toISOString(),
   };
 
-  const testSystems: System[] = [
+  const testComputers: Computer[] = [
     {
       id: generateId(),
       name: 'КПП-1 (Центральный пост)',
@@ -221,7 +205,7 @@ export function initializeDb(): void {
       isActive: true,
       status: 'online',
       createdAt: new Date().toISOString(),
-      cameras: [
+      rtspStreams: [
         {
           id: generateId(),
           name: 'Камера въезда',
@@ -260,7 +244,7 @@ export function initializeDb(): void {
       isActive: true,
       status: 'online',
       createdAt: new Date().toISOString(),
-      cameras: [
+      rtspStreams: [
         {
           id: generateId(),
           name: 'Камера С-1',
@@ -290,7 +274,7 @@ export function initializeDb(): void {
       isActive: true,
       status: 'online',
       createdAt: new Date().toISOString(),
-      cameras: [
+      rtspStreams: [
         {
           id: generateId(),
           name: 'Ворота склада',
@@ -305,9 +289,24 @@ export function initializeDb(): void {
   ];
 
   saveUsers([adminUser]);
-  saveSystems(testSystems);
-  saveIpRules([]);
-  saveLogs([]);
-  saveSessions([]);
-  set(KEYS.initialized, true);
+  saveComputers(testComputers);
+  localStorage.setItem('initialized', 'true');
+}
+
+// Utilities
+export function generateId(): string {
+  return Date.now().toString(36) + Math.random().toString(36).substr(2);
+}
+
+export function hashPassword(password: string): string {
+  // Mock hash - в продакшене использовать bcrypt
+  return btoa(password + '_salt_123');
+}
+
+export function verifyPassword(password: string, hash: string): boolean {
+  return hashPassword(password) === hash;
+}
+
+export function generateToken(): string {
+  return Math.random().toString(36).substr(2) + Date.now().toString(36);
 }

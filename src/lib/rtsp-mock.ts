@@ -1,91 +1,46 @@
-/**
- * RTSP Mock Module
- * 
- * TODO: В продакшене заменить на реальный FFmpeg-модуль:
- * - Использовать child_process для запуска ffmpeg
- * - Команда: ffmpeg -i rtsp://source -c copy -f rtsp rtsp://output
- * - Или использовать node-rtsp-rtmp-server
- * 
- * TODO: Для HLS/WebRTC трансляции:
- * - HLS: ffmpeg -i rtsp://source -c:v libx264 -preset ultrafast -f hls -hls_time 2 output.m3u8
- * - WebRTC: использовать mediasoup или Janus Gateway
- * 
- * TODO: Мониторинг систем:
- * - Периодически проверять доступность удалённых рабочих столов
- * - Автоматический перезапуск при обрыве
- * - Логирование событий подключения/отключения
- */
+import { Computer } from './types';
 
-import { System } from './types';
-
-export interface SystemStatus {
-  systemId: string;
+export interface ComputerStatus {
+  computerId: string;
   status: 'online' | 'offline' | 'reconnecting';
-  cameraCount: number;
-  activeCameras: number;
+  streamCount: number;
+  activeStreams: number;
   clients: number;
   uptime: number;
 }
 
-// Mock statuses
-const mockStatuses: Record<string, SystemStatus> = {};
+const mockStatuses: Record<string, ComputerStatus> = {};
 
-export function initializeRtspMock(systems: System[]): void {
-  systems.forEach(system => {
-    if (!mockStatuses[system.id]) {
-      const activeCameras = system.cameras.filter(c => c.isActive).length;
-      mockStatuses[system.id] = {
-        systemId: system.id,
-        status: system.isActive ? 'online' : 'offline',
-        cameraCount: system.cameras.length,
-        activeCameras,
-        clients: system.isActive ? Math.floor(Math.random() * 3) : 0,
-        uptime: system.isActive ? Math.floor(Math.random() * 86400) : 0,
+export function initializeRtspMock(computers: Computer[]): void {
+  computers.forEach(computer => {
+    if (!mockStatuses[computer.id]) {
+      const activeStreams = computer.rtspStreams.filter(s => s.isActive).length;
+      mockStatuses[computer.id] = {
+        computerId: computer.id,
+        status: computer.isActive ? 'online' : 'offline',
+        streamCount: computer.rtspStreams.length,
+        activeStreams,
+        clients: computer.isActive ? Math.floor(Math.random() * 3) : 0,
+        uptime: computer.isActive ? Math.floor(Math.random() * 86400) : 0,
       };
     }
   });
 }
 
-export function getSystemStatus(systemId: string): SystemStatus | null {
-  return mockStatuses[systemId] || null;
-}
-
-export function getAllStatuses(): SystemStatus[] {
-  return Object.values(mockStatuses);
-}
-
-export function toggleSystem(systemId: string, active: boolean): void {
-  if (mockStatuses[systemId]) {
-    mockStatuses[systemId].status = active ? 'online' : 'offline';
-    mockStatuses[systemId].clients = active ? Math.floor(Math.random() * 3) : 0;
-    mockStatuses[systemId].activeCameras = active ? mockStatuses[systemId].cameraCount : 0;
-  }
-}
-
-/**
- * TODO: Реальная функция подключения к удалённому рабочему столу
- * 
- * async function connectToRemoteSystem(system: System): Promise<void> {
- *   // Подключение к удалённому хосту
- *   // Получение списка камер
- *   // Запуск ретрансляции для каждой камеры
- * }
- */
-
 export function getMockMetrics() {
-  const statuses = getAllStatuses();
-  const activeSystems = statuses.filter(s => s.status === 'online').length;
+  const statuses = Object.values(mockStatuses);
+  const activeComputers = statuses.filter(s => s.status === 'online').length;
   const totalClients = statuses.reduce((sum, s) => sum + s.clients, 0);
-  const totalCameras = statuses.reduce((sum, s) => sum + s.activeCameras, 0);
+  const totalStreams = statuses.reduce((sum, s) => sum + s.activeStreams, 0);
   
   return {
     cpu: Math.floor(Math.random() * 30) + 10,
     ram: Math.floor(Math.random() * 40) + 30,
     networkIn: Math.floor(Math.random() * 50) + 20,
     networkOut: Math.floor(Math.random() * 100) + 50,
-    activeSystems,
+    activeComputers,
     connectedClients: totalClients,
-    totalCameras,
+    totalStreams,
     uptime: 86400 + Math.floor(Math.random() * 10000),
   };
 }

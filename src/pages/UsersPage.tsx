@@ -4,7 +4,7 @@ import {
   Plus, Edit2, Trash2, UserCheck, UserX, Key, X, Check, Users as UsersIcon, Shield, ShieldCheck
 } from 'lucide-react';
 import { User, UserRole } from '../lib/types';
-import { getUsers, saveUsers, generateId, hashPassword, getSystems } from '../lib/storage';
+import { getUsers, saveUsers, generateId, hashPassword, getComputers } from '../lib/storage';
 import { logger } from '../lib/logger';
 import { useToast } from '../components/Toast';
 import { useAuth } from '../contexts/AuthContext';
@@ -14,13 +14,12 @@ export function UsersPage() {
   const { toast } = useToast();
   const { refreshUser, user: currentUser } = useAuth();
   
-  // Безопасная загрузка пользователей с default значениями
   const [users, setUsers] = useState<User[]>(() => {
     const rawUsers = getUsers();
     return rawUsers.map(u => ({
       ...u,
       isAdmin: u.isAdmin ?? false,
-      allowedSystemIds: u.allowedSystemIds ?? [],
+      allowedComputerIds: u.allowedComputerIds ?? [],
       allowedCidrs: u.allowedCidrs ?? [],
     }));
   });
@@ -34,14 +33,14 @@ export function UsersPage() {
     role: 'viewer' as UserRole, 
     isAdmin: false,
     allowedCidrs: '', 
-    allowedSystemIds: [] as string[],
+    allowedComputerIds: [] as string[],
     isActive: true 
   });
 
-  const allSystems = getSystems();
+  const allComputers = getComputers();
 
   const resetForm = () => {
-    setForm({ login: '', role: 'viewer', isAdmin: false, allowedCidrs: '', allowedSystemIds: [], isActive: true });
+    setForm({ login: '', role: 'viewer', isAdmin: false, allowedCidrs: '', allowedComputerIds: [], isActive: true });
     setEditingUser(null);
     setShowForm(false);
   };
@@ -57,7 +56,7 @@ export function UsersPage() {
         role: form.isAdmin ? 'admin' : form.role,
         isAdmin: form.isAdmin,
         allowedCidrs: form.allowedCidrs.split(',').map(s => s.trim()).filter(Boolean),
-        allowedSystemIds: form.allowedSystemIds,
+        allowedComputerIds: form.allowedComputerIds,
         isActive: form.isActive,
       } : u);
       logger.admin(`Пользователь обновлён: ${form.login}`, form.login);
@@ -70,7 +69,7 @@ export function UsersPage() {
         role: form.isAdmin ? 'admin' : form.role,
         isAdmin: form.isAdmin,
         allowedCidrs: form.allowedCidrs.split(',').map(s => s.trim()).filter(Boolean),
-        allowedSystemIds: form.allowedSystemIds,
+        allowedComputerIds: form.allowedComputerIds,
         isActive: form.isActive,
         createdAt: new Date().toISOString(),
       };
@@ -81,7 +80,6 @@ export function UsersPage() {
 
     saveUsers(updated);
     setUsers(updated);
-    // Обновляем текущего пользователя если изменили его данные
     if (editingUser?.id === currentUser?.id || (!editingUser && form.login === currentUser?.login)) {
       refreshUser();
     }
@@ -130,7 +128,7 @@ export function UsersPage() {
       role: user.role,
       isAdmin: user.isAdmin ?? false,
       allowedCidrs: (user.allowedCidrs ?? []).join(', '),
-      allowedSystemIds: user.allowedSystemIds ?? [],
+      allowedComputerIds: user.allowedComputerIds ?? [],
       isActive: user.isActive,
     });
     setEditingUser(user);
@@ -157,17 +155,16 @@ export function UsersPage() {
     }
   };
 
-  const toggleSystemAccess = (systemId: string) => {
-    if (form.allowedSystemIds.includes(systemId)) {
-      setForm({...form, allowedSystemIds: form.allowedSystemIds.filter(id => id !== systemId)});
+  const toggleComputerAccess = (computerId: string) => {
+    if (form.allowedComputerIds.includes(computerId)) {
+      setForm({...form, allowedComputerIds: form.allowedComputerIds.filter(id => id !== computerId)});
     } else {
-      setForm({...form, allowedSystemIds: [...form.allowedSystemIds, systemId]});
+      setForm({...form, allowedComputerIds: [...form.allowedComputerIds, computerId]});
     }
   };
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <motion.div 
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -178,7 +175,7 @@ export function UsersPage() {
             <UsersIcon className="w-5 h-5 text-blue-400" />
             Пользователи
           </h2>
-          <p className="text-sm text-gray-500">Управление учётными записями, ролями и доступом к системам</p>
+          <p className="text-sm text-gray-500">Управление учётными записями, ролями и доступом к компьютерам</p>
         </div>
         <motion.button
           whileHover={{ scale: 1.05 }}
@@ -191,7 +188,6 @@ export function UsersPage() {
         </motion.button>
       </motion.div>
 
-      {/* Users Table */}
       <AnimatedCard className="overflow-hidden" delay={0.1}>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -199,7 +195,7 @@ export function UsersPage() {
               <tr className="border-b border-gray-800/50 bg-gray-800/20">
                 <th className="text-left p-3 text-gray-400 font-medium">Логин</th>
                 <th className="text-left p-3 text-gray-400 font-medium">Роль</th>
-                <th className="text-left p-3 text-gray-400 font-medium">Доступ к системам</th>
+                <th className="text-left p-3 text-gray-400 font-medium">Доступ к компьютерам</th>
                 <th className="text-left p-3 text-gray-400 font-medium">Статус</th>
                 <th className="text-right p-3 text-gray-400 font-medium">Действия</th>
               </tr>
@@ -238,9 +234,9 @@ export function UsersPage() {
                   </td>
                   <td className="p-3">
                     <span className="text-xs text-gray-400">
-                      {(user.isAdmin ?? false) || (user.allowedSystemIds?.length ?? 0) === 0 
-                        ? 'Все системы' 
-                        : `${user.allowedSystemIds?.length ?? 0} систем`}
+                      {(user.isAdmin ?? false) || (user.allowedComputerIds?.length ?? 0) === 0 
+                        ? 'Все компьютеры' 
+                        : `${user.allowedComputerIds?.length ?? 0} компьютеров`}
                     </span>
                   </td>
                   <td className="p-3">
@@ -262,7 +258,6 @@ export function UsersPage() {
                         className={`p-1.5 rounded-lg transition-all ${
                           user.isActive ? 'text-yellow-400 hover:bg-yellow-950/30' : 'text-green-400 hover:bg-green-950/30'
                         }`}
-                        title={user.isActive ? 'Деактивировать' : 'Активировать'}
                       >
                         {user.isActive ? <UserX className="w-4 h-4" /> : <UserCheck className="w-4 h-4" />}
                       </motion.button>
@@ -271,7 +266,6 @@ export function UsersPage() {
                         whileTap={{ scale: 0.9 }}
                         onClick={() => { setShowPasswordChange(user.id); setNewPassword(''); }}
                         className="p-1.5 rounded-lg text-purple-400 hover:bg-purple-950/30 transition-all"
-                        title="Сменить пароль"
                       >
                         <Key className="w-4 h-4" />
                       </motion.button>
@@ -280,7 +274,6 @@ export function UsersPage() {
                         whileTap={{ scale: 0.9 }}
                         onClick={() => startEdit(user)}
                         className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-800 transition-all"
-                        title="Редактировать"
                       >
                         <Edit2 className="w-4 h-4" />
                       </motion.button>
@@ -290,7 +283,6 @@ export function UsersPage() {
                           whileTap={{ scale: 0.9 }}
                           onClick={() => handleDelete(user)}
                           className="p-1.5 rounded-lg text-red-400 hover:bg-red-950/30 transition-all"
-                          title="Удалить"
                         >
                           <Trash2 className="w-4 h-4" />
                         </motion.button>
@@ -304,7 +296,6 @@ export function UsersPage() {
         </div>
       </AnimatedCard>
 
-      {/* Add/Edit Form Modal */}
       <AnimatePresence>
         {showForm && (
           <motion.div 
@@ -387,39 +378,38 @@ export function UsersPage() {
                   />
                 </div>
 
-                {/* System Access */}
                 <div>
                   <label className="block text-sm text-gray-300 mb-1.5 flex items-center gap-2">
                     <Shield className="w-4 h-4" />
-                    Доступ к системам
-                    {!form.isAdmin && form.allowedSystemIds.length === 0 && (
-                      <span className="text-xs text-green-400">(все системы)</span>
+                    Доступ к компьютерам
+                    {!form.isAdmin && form.allowedComputerIds.length === 0 && (
+                      <span className="text-xs text-green-400">(все компьютеры)</span>
                     )}
                   </label>
                   {form.isAdmin ? (
                     <p className="text-xs text-gray-500 bg-gray-800/30 p-3 rounded-xl border border-gray-700/30">
-                      Администратор имеет доступ ко всем системам
+                      Администратор имеет доступ ко всем компьютерам
                     </p>
                   ) : (
                     <div className="bg-gray-800/30 border border-gray-700/30 rounded-xl p-3 space-y-2 max-h-48 overflow-y-auto">
-                      {allSystems.length === 0 ? (
-                        <p className="text-xs text-gray-500 text-center py-2">Нет систем. Добавьте их на странице «Системы»</p>
+                      {allComputers.length === 0 ? (
+                        <p className="text-xs text-gray-500 text-center py-2">Нет компьютеров. Добавьте их на странице «Компьютеры»</p>
                       ) : (
-                        allSystems.map(system => (
-                          <label key={system.id} className="flex items-center gap-2 cursor-pointer hover:bg-gray-700/30 p-1.5 rounded-lg transition-colors">
+                        allComputers.map(computer => (
+                          <label key={computer.id} className="flex items-center gap-2 cursor-pointer hover:bg-gray-700/30 p-1.5 rounded-lg transition-colors">
                             <input
                               type="checkbox"
-                              checked={form.allowedSystemIds.includes(system.id)}
-                              onChange={() => toggleSystemAccess(system.id)}
+                              checked={form.allowedComputerIds.includes(computer.id)}
+                              onChange={() => toggleComputerAccess(computer.id)}
                               className="rounded"
                             />
-                            <span className="text-xs text-white">{system.name}</span>
-                            <span className="text-[10px] text-gray-500 ml-auto">{system.cameras.length} камер</span>
+                            <span className="text-xs text-white">{computer.name}</span>
+                            <span className="text-[10px] text-gray-500 ml-auto">{computer.rtspStreams.length} RTSP-потоков</span>
                           </label>
                         ))
                       )}
                       <p className="text-[10px] text-gray-500 pt-1 border-t border-gray-700/30">
-                        Если ничего не выбрано — доступ ко всем системам
+                        Если ничего не выбрано — доступ ко всем компьютерам
                       </p>
                     </div>
                   )}
@@ -467,7 +457,6 @@ export function UsersPage() {
         )}
       </AnimatePresence>
 
-      {/* Password Change Modal */}
       <AnimatePresence>
         {showPasswordChange && (
           <motion.div 

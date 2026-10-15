@@ -1,6 +1,6 @@
 export type UserRole = 'admin' | 'operator' | 'viewer';
 
-export interface Camera {
+export interface RtspStream {
   id: string;
   name: string;
   url: string;
@@ -10,13 +10,13 @@ export interface Camera {
   status: 'online' | 'offline' | 'reconnecting';
 }
 
-export interface System {
+export interface Computer {
   id: string;
   name: string;
   hostname: string;
   ip: string;
   description: string;
-  cameras: Camera[];
+  rtspStreams: RtspStream[];
   isActive: boolean;
   status: 'online' | 'offline' | 'reconnecting';
   createdAt: string;
@@ -29,7 +29,7 @@ export interface User {
   role: UserRole;
   isAdmin: boolean; // Явные права администратора
   allowedCidrs: string[];
-  allowedSystemIds: string[]; // Разрешённые системы (пусто = все)
+  allowedComputerIds: string[]; // Разрешённые компьютеры (пусто = все)
   isActive: boolean;
   createdAt: string;
 }

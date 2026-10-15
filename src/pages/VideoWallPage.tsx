@@ -1,18 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
-  Grid3x3, LayoutGrid, Maximize2, Minimize2, Plus, X, Save, 
-  Video, Radio, Settings, Server, ChevronDown, ChevronRight, RefreshCw, Clock
+  LayoutGrid, Maximize2, Minimize2, Plus, X, Save, 
+  Video, Settings, Server, ChevronDown, ChevronRight, RefreshCw
 } from 'lucide-react';
-import { System, Camera } from '../lib/types';
-import { getSystemsForUser } from '../lib/storage';
+import { Computer, RtspStream } from '../lib/types';
+import { getComputersForUser } from '../lib/storage';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../components/Toast';
 import { AnimatedCard, StaggerContainer, StaggerItem } from '../components/AnimatedCard';
 
 type LayoutType = '1x1' | '2x2' | '3x3' | '4x4';
 
-// Интервалы автоперезагрузки в секундах
 const REFRESH_INTERVALS = [
   { value: 0, label: 'Выкл' },
   { value: 15, label: '15 сек' },
@@ -29,10 +28,9 @@ const REFRESH_INTERVALS = [
   { value: 18000, label: '5 часов' },
 ];
 
-// Cell data: systemId + cameraId (or null)
 interface CellData {
-  systemId: string | null;
-  cameraId: string | null;
+  computerId: string | null;
+  streamId: string | null;
 }
 
 interface VideoWallConfig {
@@ -46,17 +44,17 @@ interface VideoWallConfig {
 export function VideoWallPage() {
   const { toast } = useToast();
   const { user } = useAuth();
-  const availableSystems = getSystemsForUser(user);
+  const availableComputers = getComputersForUser(user);
   
   const [layout, setLayout] = useState<LayoutType>('2x2');
   const [cells, setCells] = useState<CellData[]>(() => {
     const arr: CellData[] = [];
-    for (let i = 0; i < 16; i++) arr.push({ systemId: null, cameraId: null });
+    for (let i = 0; i < 16; i++) arr.push({ computerId: null, streamId: null });
     return arr;
   });
   const [showPicker, setShowPicker] = useState<number | null>(null);
-  const [expandedSystems, setExpandedSystems] = useState<Set<string>>(
-    new Set(availableSystems.map(s => s.id))
+  const [expandedComputers, setExpandedComputers] = useState<Set<string>>(
+    new Set(availableComputers.map(c => c.id))
   );
   const [fullscreenCell, setFullscreenCell] = useState<number | null>(null);
   const [isWallFullscreen, setIsWallFullscreen] = useState(false);
@@ -66,63 +64,48 @@ export function VideoWallPage() {
   });
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
   const [configs, setConfigs] = useState<VideoWallConfig[]>(() => {
-    const saved = localStorage.getItem('rtsp_video_wall_configs_v2');
+    const saved = localStorage.getItem('rtsp_video_wall_configs_v3');
     return saved ? JSON.parse(saved) : [];
   });
 
-  // Автоперезагрузка потоков
   useEffect(() => {
     if (refreshInterval === 0) return;
-
     const interval = setInterval(() => {
       setLastRefresh(new Date());
-      // В реальной реализации здесь будет перезагрузка RTSP потоков
-      // TODO: В продакшене вызвать API для перезагрузки потоков
       console.log('Автоперезагрузка потоков:', new Date().toLocaleTimeString());
     }, refreshInterval * 1000);
-
     return () => clearInterval(interval);
   }, [refreshInterval]);
 
-  // Сохранение интервала в localStorage
   useEffect(() => {
     localStorage.setItem('rtsp_video_wall_refresh', refreshInterval.toString());
   }, [refreshInterval]);
 
-  // Полноэкранный режим
   useEffect(() => {
     if (isWallFullscreen) {
-      document.documentElement.requestFullscreen?.().catch(() => {
-        console.log('Fullscreen API не поддерживается');
-      });
-      // Уведомляем App.tsx о входе в полноэкранный режим
+      document.documentElement.requestFullscreen?.().catch(() => {});
       window.dispatchEvent(new CustomEvent('videowall:fullscreen:start'));
     } else {
       if (document.fullscreenElement) {
         document.exitFullscreen?.().catch(() => {});
       }
-      // Уведомляем App.tsx о выходе из полноэкранного режима
       window.dispatchEvent(new CustomEvent('videowall:fullscreen:end'));
     }
   }, [isWallFullscreen]);
 
-  // Обработка выхода из полноэкранного режима через Escape
   useEffect(() => {
     const handleFullscreenChange = () => {
       if (!document.fullscreenElement && isWallFullscreen) {
         setIsWallFullscreen(false);
       }
     };
-
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isWallFullscreen) {
         setIsWallFullscreen(false);
       }
     };
-
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     document.addEventListener('keydown', handleKeyDown);
-    
     return () => {
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
       document.removeEventListener('keydown', handleKeyDown);
@@ -149,37 +132,37 @@ export function VideoWallPage() {
     }
   };
 
-  const getCellData = (index: number): { system: System | null; camera: Camera | null } => {
+  const getCellData = (index: number): { computer: Computer | null; stream: RtspStream | null } => {
     const cell = cells[index];
-    if (!cell || !cell.systemId || !cell.cameraId) {
-      return { system: null, camera: null };
+    if (!cell || !cell.computerId || !cell.streamId) {
+      return { computer: null, stream: null };
     }
-    const system = availableSystems.find(s => s.id === cell.systemId) || null;
-    const camera = system?.cameras.find(c => c.id === cell.cameraId) || null;
-    return { system, camera };
+    const computer = availableComputers.find(c => c.id === cell.computerId) || null;
+    const stream = computer?.rtspStreams.find(s => s.id === cell.streamId) || null;
+    return { computer, stream };
   };
 
   const handleCellClick = (index: number) => {
     setShowPicker(index);
   };
 
-  const handleCameraSelect = (systemId: string, cameraId: string) => {
+  const handleStreamSelect = (computerId: string, streamId: string) => {
     if (showPicker !== null) {
       const updated: CellData[] = [...cells];
-      updated[showPicker] = { systemId, cameraId };
+      updated[showPicker] = { computerId, streamId };
       setCells(updated);
       setShowPicker(null);
       
-      const system = availableSystems.find(s => s.id === systemId);
-      const camera = system?.cameras.find(c => c.id === cameraId);
-      toast('success', `${system?.name} → ${camera?.name}`);
+      const computer = availableComputers.find(c => c.id === computerId);
+      const stream = computer?.rtspStreams.find(s => s.id === streamId);
+      toast('success', `${computer?.name} → ${stream?.name}`);
     }
   };
 
   const handleClearCell = (index: number, e: React.MouseEvent) => {
     e.stopPropagation();
     const updated = [...cells];
-    updated[index] = { systemId: null, cameraId: null };
+    updated[index] = { computerId: null, streamId: null };
     setCells(updated);
     toast('info', 'Ячейка очищена');
   };
@@ -187,7 +170,6 @@ export function VideoWallPage() {
   const handleSaveConfig = () => {
     const name = prompt('Название конфигурации:');
     if (!name) return;
-
     const config: VideoWallConfig = {
       id: Date.now().toString(36),
       name,
@@ -195,17 +177,16 @@ export function VideoWallPage() {
       cells: cells.slice(0, getCellCount()),
       createdAt: new Date().toISOString(),
     };
-
     const updated = [...configs, config];
     setConfigs(updated);
-    localStorage.setItem('rtsp_video_wall_configs_v2', JSON.stringify(updated));
+    localStorage.setItem('rtsp_video_wall_configs_v3', JSON.stringify(updated));
     toast('success', `Конфигурация "${name}" сохранена`);
   };
 
   const handleLoadConfig = (config: VideoWallConfig) => {
     setLayout(config.layout);
     const newCells: CellData[] = [];
-    for (let i = 0; i < 16; i++) newCells.push({ systemId: null, cameraId: null });
+    for (let i = 0; i < 16; i++) newCells.push({ computerId: null, streamId: null });
     config.cells.forEach((c, i) => {
       if (i < 16) newCells[i] = c;
     });
@@ -218,43 +199,45 @@ export function VideoWallPage() {
     if (!confirm('Удалить конфигурацию?')) return;
     const updated = configs.filter(c => c.id !== configId);
     setConfigs(updated);
-    localStorage.setItem('rtsp_video_wall_configs_v2', JSON.stringify(updated));
+    localStorage.setItem('rtsp_video_wall_configs_v3', JSON.stringify(updated));
     toast('info', 'Конфигурация удалена');
   };
 
   const handleAutoFill = () => {
-    const allCameras: { systemId: string; camera: Camera }[] = [];
-    availableSystems.forEach(system => {
-      system.cameras.filter(c => c.isActive && c.status === 'online').forEach(camera => {
-        allCameras.push({ systemId: system.id, camera });
+    const allStreams: { computerId: string; stream: RtspStream }[] = [];
+    availableComputers.forEach(computer => {
+      computer.rtspStreams.filter(s => s.isActive && s.status === 'online').forEach(stream => {
+        allStreams.push({ computerId: computer.id, stream });
       });
     });
 
     const newCells: CellData[] = [];
-    for (let i = 0; i < 16; i++) newCells.push({ systemId: null, cameraId: null });
-    allCameras.slice(0, getCellCount()).forEach((item, i) => {
-      newCells[i] = { systemId: item.systemId, cameraId: item.camera.id };
+    for (let i = 0; i < 16; i++) newCells.push({ computerId: null, streamId: null });
+    allStreams.slice(0, getCellCount()).forEach((item, i) => {
+      newCells[i] = { computerId: item.computerId, streamId: item.stream.id };
     });
     setCells(newCells);
-    toast('success', `Автоматически заполнено ${Math.min(allCameras.length, getCellCount())} ячеек`);
+    toast('success', `Автоматически заполнено ${Math.min(allStreams.length, getCellCount())} ячеек`);
   };
 
   const handleClearAll = () => {
-    setCells(Array(16).fill(null).map(() => ({ systemId: null, cameraId: null })));
+    const newCells: CellData[] = [];
+    for (let i = 0; i < 16; i++) newCells.push({ computerId: null, streamId: null });
+    setCells(newCells);
     toast('info', 'Все ячейки очищены');
   };
 
-  const toggleExpand = (systemId: string) => {
-    const newExpanded = new Set(expandedSystems);
-    if (newExpanded.has(systemId)) {
-      newExpanded.delete(systemId);
+  const toggleExpand = (computerId: string) => {
+    const newExpanded = new Set(expandedComputers);
+    if (newExpanded.has(computerId)) {
+      newExpanded.delete(computerId);
     } else {
-      newExpanded.add(systemId);
+      newExpanded.add(computerId);
     }
-    setExpandedSystems(newExpanded);
+    setExpandedComputers(newExpanded);
   };
 
-  // Полноэкранная версия видеостены
+  // Полноэкранная версия
   if (isWallFullscreen) {
     return (
       <motion.div
@@ -263,14 +246,10 @@ export function VideoWallPage() {
         exit={{ opacity: 0 }}
         className="fixed inset-0 z-[100] bg-black flex flex-col"
       >
-        {/* Полноэкранная панель управления */}
         <div className="flex items-center justify-between px-4 py-2 bg-gray-900/90 backdrop-blur-sm border-b border-gray-800">
           <div className="flex items-center gap-3">
             <LayoutGrid className="w-5 h-5 text-blue-400" />
             <span className="text-sm font-medium text-white">Видеостена</span>
-            <span className="text-xs text-gray-500">
-              {availableSystems.length} систем • {availableSystems.reduce((s, sys) => s + sys.cameras.length, 0)} камер
-            </span>
             {refreshInterval > 0 && (
               <div className="flex items-center gap-1.5 text-xs text-gray-400">
                 <RefreshCw className="w-3 h-3 animate-spin" style={{ animationDuration: '3s' }} />
@@ -278,9 +257,7 @@ export function VideoWallPage() {
               </div>
             )}
           </div>
-
           <div className="flex items-center gap-2">
-            {/* Layout Selector */}
             <div className="flex items-center gap-1 bg-gray-800/50 border border-gray-700/50 rounded-lg p-0.5">
               {[
                 { id: '1x1' as LayoutType, label: '1×1' },
@@ -303,59 +280,21 @@ export function VideoWallPage() {
                 </motion.button>
               ))}
             </div>
-
-            {/* Автоперезагрузка */}
-            <div className="flex items-center gap-1 bg-gray-800/50 border border-gray-700/50 rounded-lg px-2 py-1">
-              <RefreshCw className={`w-3 h-3 text-gray-400 ${refreshInterval > 0 ? 'animate-spin' : ''}`} style={{ animationDuration: '3s' }} />
-              <select
-                value={refreshInterval}
-                onChange={(e) => setRefreshInterval(parseInt(e.target.value))}
-                className="bg-transparent text-xs text-gray-300 focus:outline-none cursor-pointer"
-              >
-                {REFRESH_INTERVALS.map(interval => (
-                  <option key={interval.value} value={interval.value} className="bg-gray-900">
-                    {interval.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <motion.button
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={handleAutoFill}
-              className="px-2.5 py-1.5 bg-green-600/20 hover:bg-green-600/30 text-green-400 text-xs font-medium rounded-lg transition-all border border-green-700/30"
-            >
-              Авто
-            </motion.button>
-
-            <motion.button
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={handleClearAll}
-              className="px-2.5 py-1.5 bg-red-600/20 hover:bg-red-600/30 text-red-400 text-xs font-medium rounded-lg transition-all border border-red-700/30"
-            >
-              Очистить
-            </motion.button>
-
             <motion.button
               whileHover={{ scale: 1.1, rotate: 90 }}
               whileTap={{ scale: 0.9 }}
               onClick={() => setIsWallFullscreen(false)}
               className="p-2 bg-gray-800/80 hover:bg-gray-700 text-white rounded-lg transition-colors"
-              title="Выйти из полноэкранного режима (Esc)"
+              title="Выйти (Esc)"
             >
               <Minimize2 className="w-4 h-4" />
             </motion.button>
           </div>
         </div>
-
-        {/* Полноэкранная сетка */}
         <div className="flex-1 p-2">
           <div className={`grid ${getGridClass()} gap-2 h-full`}>
             {Array.from({ length: getCellCount() }).map((_, index) => {
-              const { system, camera } = getCellData(index);
-
+              const { computer, stream } = getCellData(index);
               return (
                 <motion.div
                   key={index}
@@ -365,21 +304,19 @@ export function VideoWallPage() {
                   onClick={() => handleCellClick(index)}
                   className="relative bg-black/80 border border-gray-700/30 rounded-lg overflow-hidden cursor-pointer group"
                 >
-                  {camera && system ? (
+                  {stream && computer ? (
                     <>
                       <div className="absolute inset-0 bg-gradient-to-br from-gray-900 to-gray-800">
                         <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.1)_0%,transparent_70%)]" />
                       </div>
-
                       <div className="absolute inset-0 flex items-center justify-center">
                         <div className="text-center px-2">
                           <Video className="w-12 h-12 mx-auto text-gray-600 mb-2" />
-                          <p className="text-sm text-gray-400 font-medium">{camera.name}</p>
-                          <p className="text-xs text-gray-600 mt-1">{system.name}</p>
+                          <p className="text-sm text-gray-400 font-medium">{stream.name}</p>
+                          <p className="text-xs text-gray-600 mt-1">{computer.name}</p>
                         </div>
                       </div>
-
-                      {camera.status === 'online' && (
+                      {stream.status === 'online' && (
                         <div className="absolute top-2 left-2 flex items-center gap-1 bg-black/60 px-2 py-0.5 rounded backdrop-blur-sm border border-red-500/30">
                           <motion.div
                             animate={{ scale: [1, 1.3, 1], opacity: [1, 0.5, 1] }}
@@ -389,13 +326,11 @@ export function VideoWallPage() {
                           <span className="text-[10px] text-white font-medium">LIVE</span>
                         </div>
                       )}
-
                       <div className={`absolute top-2 right-2 w-2 h-2 rounded-full ${
-                        camera.status === 'online' ? 'bg-green-500 shadow-lg shadow-green-500/50' :
-                        camera.status === 'reconnecting' ? 'bg-yellow-500' :
+                        stream.status === 'online' ? 'bg-green-500' :
+                        stream.status === 'reconnecting' ? 'bg-yellow-500' :
                         'bg-red-500'
                       }`} />
-
                       <motion.button
                         whileHover={{ scale: 1.2 }}
                         whileTap={{ scale: 0.9 }}
@@ -403,15 +338,6 @@ export function VideoWallPage() {
                         className="absolute bottom-2 right-2 p-1.5 bg-red-600/80 hover:bg-red-600 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity"
                       >
                         <X className="w-3 h-3" />
-                      </motion.button>
-
-                      <motion.button
-                        whileHover={{ scale: 1.2 }}
-                        whileTap={{ scale: 0.9 }}
-                        onClick={(e) => { e.stopPropagation(); setFullscreenCell(index); }}
-                        className="absolute bottom-2 left-2 p-1.5 bg-blue-600/80 hover:bg-blue-600 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        <Maximize2 className="w-3 h-3" />
                       </motion.button>
                     </>
                   ) : (
@@ -422,17 +348,14 @@ export function VideoWallPage() {
                       </div>
                     </div>
                   )}
-
                   <div className="absolute inset-0 bg-blue-500/0 group-hover:bg-blue-500/5 transition-colors" />
                 </motion.div>
               );
             })}
           </div>
         </div>
-
-        {/* Подсказка */}
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-xs text-gray-600 bg-gray-900/80 px-3 py-1.5 rounded-lg backdrop-blur-sm">
-          Нажмите Esc для выхода из полноэкранного режима
+          Нажмите Esc для выхода
         </div>
       </motion.div>
     );
@@ -440,7 +363,6 @@ export function VideoWallPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <motion.div 
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -452,7 +374,7 @@ export function VideoWallPage() {
             Видеостена
           </h2>
           <p className="text-sm text-gray-500 flex items-center gap-2">
-            <span>{availableSystems.length} систем доступно • {availableSystems.reduce((s, sys) => s + sys.cameras.length, 0)} камер</span>
+            <span>{availableComputers.length} компьютеров доступно • {availableComputers.reduce((s, c) => s + c.rtspStreams.length, 0)} RTSP-потоков</span>
             {refreshInterval > 0 && (
               <span className="flex items-center gap-1 text-xs text-blue-400">
                 <motion.div
@@ -468,7 +390,6 @@ export function VideoWallPage() {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Layout Selector */}
           <div className="flex items-center gap-1 bg-gray-900/50 border border-gray-800/50 rounded-xl p-1">
             {[
               { id: '1x1' as LayoutType, label: '1×1' },
@@ -492,7 +413,6 @@ export function VideoWallPage() {
             ))}
           </div>
 
-          {/* Автоперезагрузка */}
           <div className="flex items-center gap-1 bg-gray-900/50 border border-gray-800/50 rounded-xl px-2 py-1">
             <RefreshCw className={`w-3.5 h-3.5 text-gray-400 ${refreshInterval > 0 ? 'animate-spin' : ''}`} style={{ animationDuration: '3s' }} />
             <select
@@ -536,13 +456,11 @@ export function VideoWallPage() {
             Сохранить
           </motion.button>
 
-          {/* Полноэкранный режим */}
           <motion.button
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             onClick={() => setIsWallFullscreen(true)}
             className="px-3 py-2 bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-400 text-xs font-medium rounded-xl transition-all border border-cyan-700/30 flex items-center gap-1.5"
-            title="Полноэкранный режим"
           >
             <Maximize2 className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">На весь экран</span>
@@ -550,7 +468,6 @@ export function VideoWallPage() {
         </div>
       </motion.div>
 
-      {/* Saved Configs */}
       {configs.length > 0 && (
         <AnimatedCard className="p-4" delay={0.1}>
           <h3 className="text-sm font-medium text-gray-300 mb-3 flex items-center gap-2">
@@ -570,7 +487,6 @@ export function VideoWallPage() {
                 >
                   <LayoutGrid className="w-3.5 h-3.5" />
                   {config.name}
-                  <span className="text-gray-500">({config.layout})</span>
                 </button>
                 <motion.button
                   whileHover={{ scale: 1.2 }}
@@ -586,7 +502,6 @@ export function VideoWallPage() {
         </AnimatedCard>
       )}
 
-      {/* Video Wall Grid */}
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
@@ -594,8 +509,7 @@ export function VideoWallPage() {
         className={`grid ${getGridClass()} gap-3 aspect-video bg-gray-900/30 border border-gray-800/50 rounded-2xl p-3 backdrop-blur-sm`}
       >
         {Array.from({ length: getCellCount() }).map((_, index) => {
-          const { system, camera } = getCellData(index);
-
+          const { computer, stream } = getCellData(index);
           return (
             <motion.div
               key={`${index}-${lastRefresh.getTime()}`}
@@ -606,14 +520,11 @@ export function VideoWallPage() {
               onClick={() => handleCellClick(index)}
               className="relative bg-black/50 border border-gray-700/30 rounded-xl overflow-hidden cursor-pointer group"
             >
-              {camera && system ? (
+              {stream && computer ? (
                 <>
-                  {/* Video placeholder */}
                   <div className="absolute inset-0 bg-gradient-to-br from-gray-900 to-gray-800">
                     <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.1)_0%,transparent_70%)]" />
                   </div>
-
-                  {/* Stream info */}
                   <div className="absolute inset-0 flex items-center justify-center">
                     <div className="text-center px-2">
                       <motion.div
@@ -622,13 +533,11 @@ export function VideoWallPage() {
                       >
                         <Video className="w-8 h-8 mx-auto text-gray-600 mb-2" />
                       </motion.div>
-                      <p className="text-xs text-gray-400 font-medium">{camera.name}</p>
-                      <p className="text-[10px] text-gray-600 mt-0.5">{system.name}</p>
+                      <p className="text-xs text-gray-400 font-medium">{stream.name}</p>
+                      <p className="text-[10px] text-gray-600 mt-0.5">{computer.name}</p>
                     </div>
                   </div>
-
-                  {/* LIVE indicator */}
-                  {camera.status === 'online' && (
+                  {stream.status === 'online' && (
                     <motion.div
                       initial={{ opacity: 0, x: -10 }}
                       animate={{ opacity: 1, x: 0 }}
@@ -642,15 +551,11 @@ export function VideoWallPage() {
                       <span className="text-[10px] text-white font-medium">LIVE</span>
                     </motion.div>
                   )}
-
-                  {/* Status indicator */}
                   <div className={`absolute top-2 right-2 w-2 h-2 rounded-full ${
-                    camera.status === 'online' ? 'bg-green-500 shadow-lg shadow-green-500/50' :
-                    camera.status === 'reconnecting' ? 'bg-yellow-500 shadow-lg shadow-yellow-500/50' :
+                    stream.status === 'online' ? 'bg-green-500 shadow-lg shadow-green-500/50' :
+                    stream.status === 'reconnecting' ? 'bg-yellow-500 shadow-lg shadow-yellow-500/50' :
                     'bg-red-500 shadow-lg shadow-red-500/50'
                   }`} />
-
-                  {/* Clear button */}
                   <motion.button
                     whileHover={{ scale: 1.2 }}
                     whileTap={{ scale: 0.9 }}
@@ -659,8 +564,6 @@ export function VideoWallPage() {
                   >
                     <X className="w-3 h-3" />
                   </motion.button>
-
-                  {/* Fullscreen button */}
                   <motion.button
                     whileHover={{ scale: 1.2 }}
                     whileTap={{ scale: 0.9 }}
@@ -671,7 +574,6 @@ export function VideoWallPage() {
                   </motion.button>
                 </>
               ) : (
-                /* Empty cell */
                 <div className="absolute inset-0 flex items-center justify-center">
                   <motion.div
                     animate={{ opacity: [0.3, 0.6, 0.3] }}
@@ -684,14 +586,12 @@ export function VideoWallPage() {
                   </motion.div>
                 </div>
               )}
-
               <div className="absolute inset-0 bg-blue-500/0 group-hover:bg-blue-500/5 transition-colors" />
             </motion.div>
           );
         })}
       </motion.div>
 
-      {/* Camera Picker Modal — grouped by system */}
       <AnimatePresence>
         {showPicker !== null && (
           <motion.div
@@ -711,7 +611,7 @@ export function VideoWallPage() {
               <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-purple-500/5 pointer-events-none" />
               <div className="flex items-center justify-between mb-4 relative shrink-0">
                 <h3 className="text-lg font-semibold text-white">
-                  Выберите камеру — ячейка {showPicker + 1}
+                  Выберите RTSP-поток — ячейка {showPicker + 1}
                 </h3>
                 <motion.button
                   whileHover={{ scale: 1.1, rotate: 90 }}
@@ -724,22 +624,19 @@ export function VideoWallPage() {
               </div>
 
               <div className="space-y-3 overflow-y-auto flex-1 relative pr-1">
-                {availableSystems.length === 0 ? (
+                {availableComputers.length === 0 ? (
                   <div className="text-center py-12 text-gray-500">
                     <Server className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                    <p>Нет доступных систем</p>
-                    <p className="text-xs mt-1">Обратитесь к администратору для предоставления доступа</p>
+                    <p>Нет доступных компьютеров</p>
                   </div>
                 ) : (
-                  availableSystems.map(system => {
-                    const isExpanded = expandedSystems.has(system.id);
-                    
+                  availableComputers.map(computer => {
+                    const isExpanded = expandedComputers.has(computer.id);
                     return (
-                      <div key={system.id} className="bg-gray-800/30 rounded-xl border border-gray-700/30 overflow-hidden">
-                        {/* System Header */}
+                      <div key={computer.id} className="bg-gray-800/30 rounded-xl border border-gray-700/30 overflow-hidden">
                         <motion.button
                           whileHover={{ backgroundColor: 'rgba(59, 130, 246, 0.05)' }}
-                          onClick={() => toggleExpand(system.id)}
+                          onClick={() => toggleExpand(computer.id)}
                           className="w-full flex items-center gap-3 p-3 text-left"
                         >
                           {isExpanded ? (
@@ -748,18 +645,17 @@ export function VideoWallPage() {
                             <ChevronRight className="w-4 h-4 text-gray-400 shrink-0" />
                           )}
                           <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${
-                            system.status === 'online' ? 'bg-green-500 shadow-lg shadow-green-500/50' :
-                            system.status === 'reconnecting' ? 'bg-yellow-500' :
+                            computer.status === 'online' ? 'bg-green-500 shadow-lg shadow-green-500/50' :
+                            computer.status === 'reconnecting' ? 'bg-yellow-500' :
                             'bg-red-500'
                           }`} />
                           <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-white truncate">{system.name}</p>
-                            <p className="text-[10px] text-gray-500 font-mono">{system.ip} • {system.cameras.length} камер</p>
+                            <p className="text-sm font-medium text-white truncate">{computer.name}</p>
+                            <p className="text-[10px] text-gray-500 font-mono">{computer.ip} • {computer.rtspStreams.length} RTSP-потоков</p>
                           </div>
                           <Server className="w-4 h-4 text-gray-600 shrink-0" />
                         </motion.button>
 
-                        {/* Cameras */}
                         <AnimatePresence>
                           {isExpanded && (
                             <motion.div
@@ -770,29 +666,30 @@ export function VideoWallPage() {
                               className="border-t border-gray-700/30 overflow-hidden"
                             >
                               <div className="p-2 space-y-1">
-                                {system.cameras.length === 0 ? (
-                                  <p className="text-xs text-gray-500 text-center py-2">Нет камер</p>
+                                {computer.rtspStreams.length === 0 ? (
+                                  <p className="text-xs text-gray-500 text-center py-2">Нет RTSP-потоков</p>
                                 ) : (
-                                  system.cameras.map(camera => (
+                                  computer.rtspStreams.map(stream => (
                                     <motion.button
-                                      key={camera.id}
+                                      key={stream.id}
                                       whileHover={{ scale: 1.01, x: 2 }}
                                       whileTap={{ scale: 0.99 }}
-                                      onClick={() => handleCameraSelect(system.id, camera.id)}
+                                      onClick={() => handleStreamSelect(computer.id, stream.id)}
                                       className="w-full flex items-center gap-2 p-2 rounded-lg hover:bg-gray-700/30 transition-all text-left group"
                                     >
                                       <div className={`w-2 h-2 rounded-full shrink-0 ${
-                                        camera.status === 'online' ? 'bg-green-500' :
-                                        camera.status === 'reconnecting' ? 'bg-yellow-500' :
+                                        stream.status === 'online' ? 'bg-green-500' :
+                                        stream.status === 'reconnecting' ? 'bg-yellow-500' :
                                         'bg-red-500'
                                       }`} />
                                       <Video className="w-3.5 h-3.5 text-gray-500 shrink-0" />
                                       <div className="flex-1 min-w-0">
                                         <p className="text-xs font-medium text-white group-hover:text-blue-400 transition-colors truncate">
-                                          {camera.name}
+                                          {stream.name}
                                         </p>
+                                        <p className="text-[10px] text-gray-600 font-mono truncate">{stream.url}</p>
                                       </div>
-                                      {camera.status === 'online' && (
+                                      {stream.status === 'online' && (
                                         <span className="text-[9px] text-green-400 bg-green-950/30 px-1.5 py-0.5 rounded">ONLINE</span>
                                       )}
                                     </motion.button>
@@ -808,7 +705,7 @@ export function VideoWallPage() {
                 )}
               </div>
 
-              {cells[showPicker]?.systemId && (
+              {cells[showPicker]?.computerId && (
                 <motion.button
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -816,13 +713,13 @@ export function VideoWallPage() {
                   whileTap={{ scale: 0.98 }}
                   onClick={() => {
                     const updated = [...cells];
-                    updated[showPicker] = { systemId: null, cameraId: null };
+                    updated[showPicker] = { computerId: null, streamId: null };
                     setCells(updated);
                     setShowPicker(null);
                   }}
                   className="w-full mt-3 py-2.5 px-4 bg-red-600/20 hover:bg-red-600/30 text-red-400 text-sm font-medium rounded-xl transition-all border border-red-700/30 relative shrink-0"
                 >
-                  Убрать камеру из ячейки
+                  Убрать поток из ячейки
                 </motion.button>
               )}
             </motion.div>
@@ -830,12 +727,10 @@ export function VideoWallPage() {
         )}
       </AnimatePresence>
 
-      {/* Fullscreen Modal */}
       <AnimatePresence>
         {fullscreenCell !== null && (() => {
-          const { system, camera } = getCellData(fullscreenCell);
-          if (!system || !camera) return null;
-
+          const { computer, stream } = getCellData(fullscreenCell);
+          if (!computer || !stream) return null;
           return (
             <motion.div
               initial={{ opacity: 0 }}
@@ -853,7 +748,6 @@ export function VideoWallPage() {
                 <div className="absolute inset-0 bg-gradient-to-br from-gray-900 to-gray-800">
                   <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.1)_0%,transparent_70%)]" />
                 </div>
-
                 <div className="absolute inset-0 flex items-center justify-center">
                   <div className="text-center">
                     <motion.div
@@ -862,13 +756,12 @@ export function VideoWallPage() {
                     >
                       <Video className="w-24 h-24 mx-auto text-gray-600 mb-4" />
                     </motion.div>
-                    <p className="text-xl text-gray-400 font-medium">{camera.name}</p>
-                    <p className="text-sm text-gray-600 mt-1">{system.name} • {system.ip}</p>
-                    <p className="text-xs text-gray-700 font-mono mt-2">{camera.url}</p>
+                    <p className="text-xl text-gray-400 font-medium">{stream.name}</p>
+                    <p className="text-sm text-gray-600 mt-1">{computer.name} • {computer.ip}</p>
+                    <p className="text-xs text-gray-700 font-mono mt-2">{stream.url}</p>
                   </div>
                 </div>
-
-                {camera.status === 'online' && (
+                {stream.status === 'online' && (
                   <motion.div
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
@@ -882,7 +775,6 @@ export function VideoWallPage() {
                     <span className="text-sm text-white font-medium">LIVE</span>
                   </motion.div>
                 )}
-
                 <motion.button
                   whileHover={{ scale: 1.1, rotate: 90 }}
                   whileTap={{ scale: 0.9 }}
