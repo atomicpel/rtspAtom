@@ -47,7 +47,7 @@ export function ComputersPage() {
   const [streamForm, setStreamForm] = useState({
     name: '', url: '', protocol: 'hls' as StreamProtocol, sourceLogin: '', sourcePassword: ''
   });
-  const [streamCheckStatus, setStreamCheckStatus] = useState<'idle' | 'checking' | 'success' | 'error'>('idle');
+  const [streamCheckStatus, setStreamCheckStatus] = useState<'idle' | 'checking' | 'success' | 'error' | 'warning'>('idle');
   const [streamCheckMessage, setStreamCheckMessage] = useState('');
 
   const resetComputerForm = () => {
@@ -62,41 +62,6 @@ export function ComputersPage() {
     setShowStreamForm(null);
     setStreamCheckStatus('idle');
     setStreamCheckMessage('');
-  };
-
-  const checkStream = async () => {
-    if (!streamForm.url) {
-      toast('error', 'Введите URL потока');
-      return;
-    }
-
-    setStreamCheckStatus('checking');
-    setStreamCheckMessage('Проверка потока...');
-
-    const protocol = detectProtocolFromUrl(streamForm.url);
-
-    try {
-      // HLS потоки
-      if (protocol === 'hls' || protocol === 'm3u8' || streamForm.url.includes('.m3u8')) {
-        const response = await fetch(streamForm.url, { method: 'HEAD', mode: 'no-cors' });
-        setStreamCheckStatus('success');
-        setStreamCheckMessage('✓ HLS поток доступен');
-      }
-      // HTTP/HTTPS видео
-      else if (protocol === 'http' || protocol === 'https') {
-        const response = await fetch(streamForm.url, { method: 'HEAD', mode: 'no-cors' });
-        setStreamCheckStatus('success');
-        setStreamCheckMessage('✓ HTTP поток доступен');
-      }
-      // RTSP/RTMP/FLV
-      else {
-        setStreamCheckStatus('error');
-        setStreamCheckMessage(`⚠ ${protocol.toUpperCase()} требует сервер-конвертер`);
-      }
-    } catch (error) {
-      setStreamCheckStatus('error');
-      setStreamCheckMessage('✗ Поток недоступен или заблокирован CORS');
-    }
   };
 
   const handleSaveComputer = () => {
@@ -194,6 +159,52 @@ export function ComputersPage() {
     } catch (error) {
       console.error('Error saving stream:', error);
       toast('error', 'Ошибка при сохранении потока');
+    }
+  };
+
+  const checkStream = async () => {
+    if (!streamForm.url) {
+      setStreamCheckStatus('error');
+      setStreamCheckMessage('Введите URL потока');
+      return;
+    }
+
+    setStreamCheckStatus('checking');
+    setStreamCheckMessage('Проверка потока...');
+
+    const detectedProtocol = detectProtocolFromUrl(streamForm.url);
+    setStreamForm(prev => ({ ...prev, protocol: detectedProtocol }));
+
+    try {
+      // Для HLS потоков проверяем доступность m3u8 файла
+      if (detectedProtocol === 'hls' || detectedProtocol === 'm3u8') {
+        const response = await fetch(streamForm.url, { 
+          method: 'GET',
+          mode: 'no-cors'
+        });
+        
+        // no-cors возвращает opaque response, но если нет ошибки - значит URL доступен
+        setStreamCheckStatus('success');
+        setStreamCheckMessage('✓ HLS поток доступен');
+      }
+      // Для HTTP/HTTPS проверяем доступность
+      else if (detectedProtocol === 'http' || detectedProtocol === 'https') {
+        const response = await fetch(streamForm.url, { 
+          method: 'HEAD',
+          mode: 'no-cors'
+        });
+        setStreamCheckStatus('success');
+        setStreamCheckMessage('✓ HTTP поток доступен');
+      }
+      // Для RTSP/RTMP/FLV предупреждаем о необходимости конвертера
+      else {
+        setStreamCheckStatus('warning');
+        setStreamCheckMessage(`⚠ ${detectedProtocol.toUpperCase()} требует сервер-конвертер`);
+      }
+    } catch (error) {
+      console.error('Stream check error:', error);
+      setStreamCheckStatus('error');
+      setStreamCheckMessage('✗ Поток недоступен или заблокирован CORS');
     }
   };
 
@@ -573,6 +584,7 @@ export function ComputersPage() {
                     <div className={`mt-2 p-2 rounded-lg text-xs ${
                       streamCheckStatus === 'success' ? 'bg-green-950/30 text-green-400 border border-green-700/30' :
                       streamCheckStatus === 'error' ? 'bg-red-950/30 text-red-400 border border-red-700/30' :
+                      streamCheckStatus === 'warning' ? 'bg-yellow-950/30 text-yellow-400 border border-yellow-700/30' :
                       'bg-blue-950/30 text-blue-400 border border-blue-700/30'
                     }`}>
                       {streamCheckMessage}

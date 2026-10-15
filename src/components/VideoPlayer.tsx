@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState } from 'react';
 import Hls from 'hls.js';
 import { StreamProtocol } from '../lib/types';
-import { AlertCircle, Video, Radio, Globe, Film } from 'lucide-react';
+import { AlertCircle, Video, Radio, Globe, Film, RefreshCw } from 'lucide-react';
 
 interface VideoPlayerProps {
   url: string;
@@ -66,6 +66,7 @@ export function VideoPlayer({ url, protocol, name, className = '', autoPlay = tr
   const videoRef = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -73,78 +74,98 @@ export function VideoPlayer({ url, protocol, name, className = '', autoPlay = tr
 
     let hls: Hls | null = null;
     setError(null);
+    setRetryCount(0);
 
-    try {
-      // HLS/m3u8 потоки
-      if (protocol === 'hls' || protocol === 'm3u8' || url.includes('.m3u8')) {
-        if (Hls.isSupported()) {
-          hls = new Hls({
-            enableWorker: true,
-            lowLatencyMode: true,
-          });
-          hls.loadSource(url);
-          hls.attachMedia(video);
-          hls.on(Hls.Events.MANIFEST_PARSED, () => {
+    const loadVideo = () => {
+      try {
+        // HLS/m3u8 потоки
+        if (protocol === 'hls' || protocol === 'm3u8' || url.includes('.m3u8')) {
+          if (Hls.isSupported()) {
+            hls = new Hls({
+              enableWorker: true,
+              lowLatencyMode: true,
+              maxBufferLength: 30,
+              maxMaxBufferLength: 60,
+            });
+            
+            hls.loadSource(url);
+            hls.attachMedia(video);
+            
+            hls.on(Hls.Events.MANIFEST_PARSED, () => {
+              console.log('HLS manifest loaded for:', url);
+              if (autoPlay) {
+                video.play().catch(e => {
+                  console.log('Autoplay prevented:', e);
+                });
+              }
+            });
+            
+            hls.on(Hls.Events.ERROR, (event, data) => {
+              console.error('HLS error:', data);
+              if (data.fatal && hls) {
+                switch (data.type) {
+                  case Hls.ErrorTypes.NETWORK_ERROR:
+                    console.log('Network error, trying to recover...');
+                    hls.startLoad();
+                    break;
+                  case Hls.ErrorTypes.MEDIA_ERROR:
+                    console.log('Media error, trying to recover...');
+                    hls.recoverMediaError();
+                    break;
+                  default:
+                    setError('Ошибка загрузки потока');
+                    break;
+                }
+              }
+            });
+          } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            // Safari native HLS
+            video.src = url;
+            if (autoPlay) {
+              video.play().catch(e => console.log('Autoplay prevented:', e));
+            }
+          } else {
+            setError('HLS не поддерживается в этом браузере');
+          }
+        }
+        // HTTP/HTTPS потоки (MP4, WebM)
+        else if (protocol === 'http' || protocol === 'https') {
+          video.src = url;
+          video.addEventListener('loadeddata', () => {
             if (autoPlay) {
               video.play().catch(e => console.log('Autoplay prevented:', e));
             }
           });
-          hls.on(Hls.Events.ERROR, (event, data) => {
-            console.error('HLS error:', data);
-            if (data.fatal && hls) {
-              switch (data.type) {
-                case Hls.ErrorTypes.NETWORK_ERROR:
-                  setError('Сетевая ошибка: поток недоступен');
-                  hls.startLoad();
-                  break;
-                case Hls.ErrorTypes.MEDIA_ERROR:
-                  setError('Ошибка медиа: попробуйте перезагрузить');
-                  hls.recoverMediaError();
-                  break;
-                default:
-                  setError('Ошибка загрузки потока');
-                  break;
-              }
-            }
-          });
-        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-          // Safari native HLS
-          video.src = url;
-          if (autoPlay) {
-            video.play().catch(e => console.log('Autoplay prevented:', e));
-          }
-        } else {
-          setError('HLS не поддерживается в этом браузере');
         }
+        // Неподдерживаемые протоколы
+        else {
+          setError(`${protocol.toUpperCase()} требует конвертер`);
+        }
+      } catch (err) {
+        console.error('Video player error:', err);
+        setError('Ошибка воспроизведения');
       }
-      // HTTP/HTTPS потоки (MP4, WebM)
-      else if (protocol === 'http' || protocol === 'https') {
-        video.src = url;
-        video.addEventListener('loadeddata', () => {
-          if (autoPlay) {
-            video.play().catch(e => console.log('Autoplay prevented:', e));
-          }
-        });
-      }
-      // Неподдерживаемые протоколы
-      else {
-        setError(`${protocol.toUpperCase()} требует конвертер`);
-      }
-    } catch (err) {
-      console.error('Video player error:', err);
-      setError('Ошибка воспроизведения');
-    }
+    };
+
+    loadVideo();
 
     return () => {
       if (hls) {
         hls.destroy();
       }
     };
-  }, [url, protocol, autoPlay]);
+  }, [url, protocol, autoPlay, retryCount]);
 
   const handlePlay = () => setIsPlaying(true);
   const handlePause = () => setIsPlaying(false);
-  const handleError = () => setError('Ошибка загрузки видео');
+  const handleError = () => {
+    setError('Ошибка загрузки видео');
+  };
+
+  const handleRetry = () => {
+    setRetryCount(prev => prev + 1);
+    setError(null);
+  };
 
   // Если есть ошибка или неподдерживаемый протокол
   if (error) {
@@ -154,12 +175,23 @@ export function VideoPlayer({ url, protocol, name, className = '', autoPlay = tr
           <AlertCircle className="w-12 h-12 mx-auto text-yellow-500 mb-3" />
           <p className="text-sm text-white font-medium mb-2">{name}</p>
           <p className="text-xs text-yellow-400 mb-3">{error}</p>
+          
           {(protocol === 'rtsp' || protocol === 'rtmp' || protocol === 'flv') && (
-            <div className="text-[10px] text-gray-500 space-y-1">
+            <div className="text-[10px] text-gray-500 space-y-1 mb-3">
               <p>Для воспроизведения {protocol.toUpperCase()} нужен:</p>
               <p>• MediaMTX, SRS или FFmpeg сервер</p>
               <p>• Конвертация в HLS/WebRTC</p>
             </div>
+          )}
+          
+          {(protocol === 'hls' || protocol === 'http' || protocol === 'https') && (
+            <button
+              onClick={handleRetry}
+              className="flex items-center gap-2 mx-auto px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 text-xs rounded-lg transition-all"
+            >
+              <RefreshCw className="w-3 h-3" />
+              Повторить
+            </button>
           )}
         </div>
       </div>
