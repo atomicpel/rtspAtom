@@ -2,7 +2,10 @@ import React, { useRef, useEffect, useState } from 'react';
 import Hls from 'hls.js';
 import mpegts from 'mpegts.js';
 import { StreamProtocol } from '../lib/types';
-import { AlertCircle, Video, Radio, Globe, Film, RefreshCw } from 'lucide-react';
+import { AlertCircle, Video, Radio, Globe, Film, RefreshCw, Loader } from 'lucide-react';
+
+// Встроенное видео для демонстрации (работает всегда)
+const FALLBACK_VIDEO_URL = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
 
 interface VideoPlayerProps {
   url: string;
@@ -69,21 +72,30 @@ export function VideoPlayer({ url, protocol, name, className = '', autoPlay = tr
   const videoRef = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [useFallback, setUseFallback] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !url) return;
+    if (!video) return;
 
     let hls: Hls | null = null;
     let mpegtsPlayer: any = null;
     setError(null);
+    setIsLoading(true);
+    setUseFallback(false);
     setRetryCount(0);
+
+    const actualUrl = useFallback ? FALLBACK_VIDEO_URL : url;
+    const actualProtocol = useFallback ? 'http' : protocol;
+
+    console.log(`[VideoPlayer] Loading: ${actualUrl} (protocol: ${actualProtocol}, fallback: ${useFallback})`);
 
     const loadVideo = () => {
       try {
         // HLS/m3u8 потоки
-        if (protocol === 'hls' || protocol === 'm3u8' || url.includes('.m3u8')) {
+        if (actualProtocol === 'hls' || actualProtocol === 'm3u8' || actualUrl.includes('.m3u8')) {
           if (Hls.isSupported()) {
             hls = new Hls({
               enableWorker: true,
@@ -92,52 +104,61 @@ export function VideoPlayer({ url, protocol, name, className = '', autoPlay = tr
               maxMaxBufferLength: 60,
             });
             
-            hls.loadSource(url);
+            hls.loadSource(actualUrl);
             hls.attachMedia(video);
             
             hls.on(Hls.Events.MANIFEST_PARSED, () => {
-              console.log('HLS manifest loaded for:', url);
+              console.log('[VideoPlayer] HLS manifest loaded');
+              setIsLoading(false);
               if (autoPlay) {
                 video.play().catch(e => {
-                  console.log('Autoplay prevented:', e);
+                  console.log('[VideoPlayer] Autoplay prevented:', e);
                 });
               }
             });
             
             hls.on(Hls.Events.ERROR, (event, data) => {
-              console.error('HLS error:', data);
+              console.error('[VideoPlayer] HLS error:', data);
               if (data.fatal && hls) {
                 switch (data.type) {
                   case Hls.ErrorTypes.NETWORK_ERROR:
-                    console.log('Network error, trying to recover...');
-                    hls.startLoad();
+                    console.log('[VideoPlayer] Network error, trying to recover...');
+                    if (retryCount < 2) {
+                      setRetryCount(prev => prev + 1);
+                      hls.startLoad();
+                    } else {
+                      console.log('[VideoPlayer] Switching to fallback video');
+                      setUseFallback(true);
+                    }
                     break;
                   case Hls.ErrorTypes.MEDIA_ERROR:
-                    console.log('Media error, trying to recover...');
+                    console.log('[VideoPlayer] Media error, trying to recover...');
                     hls.recoverMediaError();
                     break;
                   default:
-                    setError('Ошибка загрузки потока');
+                    console.log('[VideoPlayer] Fatal error, switching to fallback');
+                    setUseFallback(true);
                     break;
                 }
               }
             });
           } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
             // Safari native HLS
-            video.src = url;
+            video.src = actualUrl;
             if (autoPlay) {
-              video.play().catch(e => console.log('Autoplay prevented:', e));
+              video.play().catch(e => console.log('[VideoPlayer] Autoplay prevented:', e));
             }
           } else {
-            setError('HLS не поддерживается в этом браузере');
+            console.log('[VideoPlayer] HLS not supported, using fallback');
+            setUseFallback(true);
           }
         }
         // HTTP-FLV и MPEG-TS потоки (через mpegts.js)
-        else if (protocol === 'flv' || protocol === 'ts' || url.includes('.flv') || url.includes('.ts')) {
+        else if (actualProtocol === 'flv' || actualProtocol === 'ts' || actualUrl.includes('.flv') || actualUrl.includes('.ts')) {
           if (mpegts.isSupported()) {
             mpegtsPlayer = mpegts.createPlayer({
-              type: protocol === 'flv' ? 'flv' : 'mpegts',
-              url: url,
+              type: actualProtocol === 'flv' ? 'flv' : 'mpegts',
+              url: actualUrl,
               isLive: true,
             }, {
               enableWorker: false,
@@ -155,43 +176,59 @@ export function VideoPlayer({ url, protocol, name, className = '', autoPlay = tr
               const playPromise = mpegtsPlayer.play();
               if (playPromise && playPromise.catch) {
                 playPromise.catch((e: any) => {
-                  console.log('Autoplay prevented:', e);
+                  console.log('[VideoPlayer] Autoplay prevented:', e);
                 });
               }
             }
             
             mpegtsPlayer.on(mpegts.Events.ERROR, (errorType: any, errorDetail: any, errorInfo: any) => {
-              console.error('MPEGTS error:', errorType, errorDetail, errorInfo);
-              setError(`Ошибка ${errorType}: ${errorDetail}`);
+              console.error('[VideoPlayer] MPEGTS error:', errorType, errorDetail, errorInfo);
+              if (retryCount < 2) {
+                setRetryCount(prev => prev + 1);
+              } else {
+                console.log('[VideoPlayer] Switching to fallback video');
+                setUseFallback(true);
+              }
             });
           } else {
-            setError('MPEG-TS/FLV не поддерживается в этом браузере');
+            console.log('[VideoPlayer] MPEGTS not supported, using fallback');
+            setUseFallback(true);
           }
         }
         // HTTP/HTTPS потоки (MP4, WebM)
-        else if (protocol === 'http' || protocol === 'https') {
-          video.src = url;
+        else if (actualProtocol === 'http' || actualProtocol === 'https') {
+          video.src = actualUrl;
           video.addEventListener('loadeddata', () => {
+            console.log('[VideoPlayer] Video loaded');
+            setIsLoading(false);
             if (autoPlay) {
-              video.play().catch(e => console.log('Autoplay prevented:', e));
+              video.play().catch(e => console.log('[VideoPlayer] Autoplay prevented:', e));
             }
+          });
+          video.addEventListener('error', () => {
+            console.log('[VideoPlayer] Video error, using fallback');
+            setUseFallback(true);
           });
         }
         // RTSP потоки - показываем инструкцию
-        else if (protocol === 'rtsp') {
+        else if (actualProtocol === 'rtsp') {
           setError('RTSP требует конвертер в HTTP-FLV/HLS');
+          setIsLoading(false);
         }
         // RTMP потоки
-        else if (protocol === 'rtmp') {
+        else if (actualProtocol === 'rtmp') {
           setError('RTMP требует конвертер в HTTP-FLV/HLS');
+          setIsLoading(false);
         }
         // WebRTC
-        else if (protocol === 'webrtc') {
+        else if (actualProtocol === 'webrtc') {
           setError('WebRTC требует специальный сервер');
+          setIsLoading(false);
         }
       } catch (err) {
-        console.error('Video player error:', err);
+        console.error('[VideoPlayer] Error:', err);
         setError('Ошибка воспроизведения');
+        setIsLoading(false);
       }
     };
 
@@ -205,17 +242,41 @@ export function VideoPlayer({ url, protocol, name, className = '', autoPlay = tr
         mpegtsPlayer.destroy();
       }
     };
-  }, [url, protocol, autoPlay, retryCount]);
+  }, [url, protocol, autoPlay, retryCount, useFallback]);
 
-  const handlePlay = () => setIsPlaying(true);
-  const handlePause = () => setIsPlaying(false);
-  const handleError = () => {
-    setError('Ошибка загрузки видео');
+  const handlePlay = () => {
+    console.log('[VideoPlayer] Video playing');
+    setIsPlaying(true);
+    setIsLoading(false);
+  };
+  
+  const handlePause = () => {
+    console.log('[VideoPlayer] Video paused');
+    setIsPlaying(false);
+  };
+  
+  const handleError = (e: any) => {
+    console.error('[VideoPlayer] Video error:', e);
+    if (!useFallback) {
+      console.log('[VideoPlayer] Switching to fallback video');
+      setUseFallback(true);
+    } else {
+      setError('Ошибка загрузки видео');
+      setIsLoading(false);
+    }
+  };
+
+  const handleLoadedData = () => {
+    console.log('[VideoPlayer] Data loaded');
+    setIsLoading(false);
   };
 
   const handleRetry = () => {
+    console.log('[VideoPlayer] Manual retry');
+    setUseFallback(false);
     setRetryCount(prev => prev + 1);
     setError(null);
+    setIsLoading(true);
   };
 
   // Если есть ошибка или неподдерживаемый протокол
@@ -274,19 +335,42 @@ export function VideoPlayer({ url, protocol, name, className = '', autoPlay = tr
         onPlay={handlePlay}
         onPause={handlePause}
         onError={handleError}
+        onLoadedData={handleLoadedData}
       />
       
+      {/* Индикатор загрузки */}
+      {isLoading && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+          <div className="text-center">
+            <Loader className="w-8 h-8 mx-auto text-blue-400 animate-spin mb-2" />
+            <p className="text-xs text-gray-300">
+              {useFallback ? 'Загрузка демо видео...' : 'Загрузка потока...'}
+            </p>
+          </div>
+        </div>
+      )}
+      
       {/* Индикатор LIVE */}
-      {isPlaying && (
+      {isPlaying && !useFallback && (
         <div className="absolute top-2 left-2 flex items-center gap-1 bg-black/60 px-2 py-0.5 rounded backdrop-blur-sm">
           <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
           <span className="text-[10px] text-white font-medium">LIVE</span>
         </div>
       )}
 
+      {/* Индикатор демо режима */}
+      {isPlaying && useFallback && (
+        <div className="absolute top-2 left-2 flex items-center gap-1 bg-black/60 px-2 py-0.5 rounded backdrop-blur-sm">
+          <div className="w-1.5 h-1.5 rounded-full bg-yellow-500" />
+          <span className="text-[10px] text-white font-medium">ДЕМО</span>
+        </div>
+      )}
+
       {/* Протокол */}
       <div className="absolute top-2 right-2 bg-black/60 px-2 py-0.5 rounded backdrop-blur-sm">
-        <span className="text-[10px] text-purple-400 uppercase font-medium">{protocol}</span>
+        <span className="text-[10px] text-purple-400 uppercase font-medium">
+          {useFallback ? 'ДЕМО' : protocol}
+        </span>
       </div>
     </div>
   );

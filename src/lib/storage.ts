@@ -357,7 +357,7 @@ export function initializeSeedData() {
         {
           id: generateId(),
           name: 'Камера выезда',
-          url: 'https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_adv_fmp4_case/master.m3u8',
+          url: 'https://test-streams.mux.dev/pts_shift/master.m3u8',
           protocol: 'hls',
           sourceLogin: '',
           sourcePassword: '',
@@ -367,7 +367,7 @@ export function initializeSeedData() {
         {
           id: generateId(),
           name: 'Камера КПП (внутр.)',
-          url: 'https://storage.googleapis.com/shaka-demo-assets/angel-one-hls/hls.m3u8',
+          url: 'https://demo.unified-streaming.com/kvs/scte35/scte35.m3u8',
           protocol: 'hls',
           sourceLogin: '',
           sourcePassword: '',
@@ -389,7 +389,7 @@ export function initializeSeedData() {
         {
           id: generateId(),
           name: 'Камера С-1',
-          url: 'https://bitdash-a.akamaihd.net/content/sintel/hls/playlist.m3u8',
+          url: 'https://cph-p2p-msl.akamaized.net/hls/live/2000341/test/master.m3u8',
           protocol: 'hls',
           sourceLogin: '',
           sourcePassword: '',
@@ -399,7 +399,7 @@ export function initializeSeedData() {
         {
           id: generateId(),
           name: 'Камера С-2',
-          url: 'https://bitdash-a.akamaihd.net/content/MI201109210084_1/m3u8s/f08e80da-bf1d-4e3d-8899-f0f6155f6efa.m3u8',
+          url: 'https://live-par-2-cdn.livepush.io/live/bigbuckbunnyclip/index.m3u8',
           protocol: 'hls',
           sourceLogin: '',
           sourcePassword: '',
@@ -421,7 +421,7 @@ export function initializeSeedData() {
         {
           id: generateId(),
           name: 'Ворота склада',
-          url: 'https://demo.unified-streaming.com/kvs/scte35/scte35.m3u8',
+          url: 'https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_ts/master.m3u8',
           protocol: 'hls',
           sourceLogin: '',
           sourcePassword: '',
