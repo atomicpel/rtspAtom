@@ -1,4 +1,4 @@
-import { User, Computer, RtspStream, IpRule, LogEntry, Session, Settings } from './types';
+import { User, Computer, Stream, IpRule, LogEntry, Session, Settings, StreamProtocol } from './types';
 
 const STORAGE_KEYS = {
   users: 'rtsp_users',
@@ -8,6 +8,7 @@ const STORAGE_KEYS = {
   sessions: 'rtsp_sessions',
   settings: 'rtsp_settings',
   loginAttempts: 'rtsp_login_attempts',
+  videoWallState: 'rtsp_video_wall_state',
 };
 
 export function initializeStorage() {
@@ -179,6 +180,39 @@ export function getComputersForUser(user: User | null): Computer[] {
   return allComputers.filter(c => user.allowedComputerIds.includes(c.id));
 }
 
+// Video Wall State persistence
+export interface VideoWallState {
+  layout: string;
+  cells: Array<{ computerId: string | null; streamId: string | null }>;
+  refreshInterval: number;
+}
+
+export function saveVideoWallState(state: VideoWallState) {
+  localStorage.setItem(STORAGE_KEYS.videoWallState, JSON.stringify(state));
+}
+
+export function getVideoWallState(): VideoWallState | null {
+  const saved = localStorage.getItem(STORAGE_KEYS.videoWallState);
+  return saved ? JSON.parse(saved) : null;
+}
+
+// Utilities
+export function generateId(): string {
+  return Date.now().toString(36) + Math.random().toString(36).substr(2);
+}
+
+export function hashPassword(password: string): string {
+  return btoa(password + '_salt_123');
+}
+
+export function verifyPassword(password: string, hash: string): boolean {
+  return hashPassword(password) === hash;
+}
+
+export function generateToken(): string {
+  return Math.random().toString(36).substr(2) + Date.now().toString(36);
+}
+
 // Seed data initialization
 export function initializeSeedData() {
   if (localStorage.getItem('initialized')) return;
@@ -205,11 +239,12 @@ export function initializeSeedData() {
       isActive: true,
       status: 'online',
       createdAt: new Date().toISOString(),
-      rtspStreams: [
+      streams: [
         {
           id: generateId(),
           name: 'Камера въезда',
           url: 'rtsp://192.168.1.100:554/stream1',
+          protocol: 'rtsp',
           sourceLogin: 'cam_admin',
           sourcePassword: 'cam_pass123',
           isActive: true,
@@ -219,6 +254,7 @@ export function initializeSeedData() {
           id: generateId(),
           name: 'Камера выезда',
           url: 'rtsp://192.168.1.101:554/stream1',
+          protocol: 'rtsp',
           sourceLogin: 'cam_admin',
           sourcePassword: 'cam_pass123',
           isActive: true,
@@ -228,6 +264,7 @@ export function initializeSeedData() {
           id: generateId(),
           name: 'Камера КПП (внутр.)',
           url: 'rtsp://192.168.1.102:554/stream1',
+          protocol: 'rtsp',
           sourceLogin: 'cam_admin',
           sourcePassword: 'cam_pass123',
           isActive: true,
@@ -244,11 +281,12 @@ export function initializeSeedData() {
       isActive: true,
       status: 'online',
       createdAt: new Date().toISOString(),
-      rtspStreams: [
+      streams: [
         {
           id: generateId(),
           name: 'Камера С-1',
           url: 'rtsp://192.168.1.110:554/stream1',
+          protocol: 'rtsp',
           sourceLogin: 'cam_admin',
           sourcePassword: 'cam_pass456',
           isActive: true,
@@ -257,7 +295,8 @@ export function initializeSeedData() {
         {
           id: generateId(),
           name: 'Камера С-2',
-          url: 'rtsp://192.168.1.111:554/stream1',
+          url: 'http://192.168.1.111:8080/stream',
+          protocol: 'http',
           sourceLogin: 'cam_admin',
           sourcePassword: 'cam_pass456',
           isActive: true,
@@ -274,11 +313,12 @@ export function initializeSeedData() {
       isActive: true,
       status: 'online',
       createdAt: new Date().toISOString(),
-      rtspStreams: [
+      streams: [
         {
           id: generateId(),
           name: 'Ворота склада',
-          url: 'rtsp://192.168.1.120:554/stream1',
+          url: 'https://192.168.1.120/hls/stream.m3u8',
+          protocol: 'hls',
           sourceLogin: 'cam_admin',
           sourcePassword: 'cam_pass789',
           isActive: true,
@@ -291,22 +331,4 @@ export function initializeSeedData() {
   saveUsers([adminUser]);
   saveComputers(testComputers);
   localStorage.setItem('initialized', 'true');
-}
-
-// Utilities
-export function generateId(): string {
-  return Date.now().toString(36) + Math.random().toString(36).substr(2);
-}
-
-export function hashPassword(password: string): string {
-  // Mock hash - в продакшене использовать bcrypt
-  return btoa(password + '_salt_123');
-}
-
-export function verifyPassword(password: string, hash: string): boolean {
-  return hashPassword(password) === hash;
-}
-
-export function generateToken(): string {
-  return Math.random().toString(36).substr(2) + Date.now().toString(36);
 }

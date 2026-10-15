@@ -404,7 +404,7 @@ export function UsersPage() {
                               className="rounded"
                             />
                             <span className="text-xs text-white">{computer.name}</span>
-                            <span className="text-[10px] text-gray-500 ml-auto">{computer.rtspStreams.length} RTSP-потоков</span>
+                            <span className="text-[10px] text-gray-500 ml-auto">{computer.streams.length} потоков</span>
                           </label>
                         ))
                       )}

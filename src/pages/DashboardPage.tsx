@@ -6,6 +6,7 @@ import {
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
 import { getMockMetrics } from '../lib/rtsp-mock';
 import { getComputers } from '../lib/storage';
+import { Computer } from '../lib/types';
 import { AnimatedCard, StaggerContainer, StaggerItem } from '../components/AnimatedCard';
 
 interface MetricCardProps {
@@ -82,7 +83,7 @@ export function DashboardPage() {
     return `${days}д ${hours}ч ${mins}м`;
   };
 
-  const totalStreams = computers.reduce((sum, c) => sum + c.rtspStreams.length, 0);
+  const totalStreams = computers.reduce((sum: number, c: Computer) => sum + c.streams.length, 0);
 
   return (
     <div className="space-y-6">
@@ -283,7 +284,7 @@ export function DashboardPage() {
                 />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-white truncate group-hover:text-blue-400 transition-colors">{computer.name}</p>
-                  <p className="text-xs text-gray-500">{computer.rtspStreams.length} RTSP-потоков • {computer.ip}</p>
+                  <p className="text-xs text-gray-500">{computer.streams.length} потоков • {computer.ip}</p>
                 </div>
               </motion.div>
             </StaggerItem>

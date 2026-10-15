@@ -14,11 +14,11 @@ const mockStatuses: Record<string, ComputerStatus> = {};
 export function initializeRtspMock(computers: Computer[]): void {
   computers.forEach(computer => {
     if (!mockStatuses[computer.id]) {
-      const activeStreams = computer.rtspStreams.filter(s => s.isActive).length;
+      const activeStreams = computer.streams.filter((s: any) => s.isActive).length;
       mockStatuses[computer.id] = {
         computerId: computer.id,
         status: computer.isActive ? 'online' : 'offline',
-        streamCount: computer.rtspStreams.length,
+        streamCount: computer.streams.length,
         activeStreams,
         clients: computer.isActive ? Math.floor(Math.random() * 3) : 0,
         uptime: computer.isActive ? Math.floor(Math.random() * 86400) : 0,

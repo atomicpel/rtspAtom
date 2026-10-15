@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   LayoutGrid, Maximize2, Minimize2, Plus, X, Save, 
   Video, Settings, Server, ChevronDown, ChevronRight, RefreshCw
 } from 'lucide-react';
-import { Computer, RtspStream } from '../lib/types';
-import { getComputersForUser } from '../lib/storage';
+import { Computer, Stream } from '../lib/types';
+import { getComputersForUser, saveVideoWallState, getVideoWallState } from '../lib/storage';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../components/Toast';
 import { AnimatedCard, StaggerContainer, StaggerItem } from '../components/AnimatedCard';
@@ -41,76 +41,79 @@ interface VideoWallConfig {
   createdAt: string;
 }
 
+const createEmptyCells = (): CellData[] => {
+  const arr: CellData[] = [];
+  for (let i = 0; i < 16; i++) arr.push({ computerId: null, streamId: null });
+  return arr;
+};
+
 export function VideoWallPage() {
   const { toast } = useToast();
   const { user } = useAuth();
   const availableComputers = getComputersForUser(user);
   
-  const [layout, setLayout] = useState<LayoutType>('2x2');
-  const [cells, setCells] = useState<CellData[]>(() => {
-    const arr: CellData[] = [];
-    for (let i = 0; i < 16; i++) arr.push({ computerId: null, streamId: null });
-    return arr;
-  });
+  // Load saved state from localStorage
+  const savedState = getVideoWallState();
+  
+  const [layout, setLayout] = useState<LayoutType>(
+    (savedState?.layout as LayoutType) || '2x2'
+  );
+  const [cells, setCells] = useState<CellData[]>(
+    savedState?.cells || createEmptyCells()
+  );
   const [showPicker, setShowPicker] = useState<number | null>(null);
   const [expandedComputers, setExpandedComputers] = useState<Set<string>>(
     new Set(availableComputers.map(c => c.id))
   );
   const [fullscreenCell, setFullscreenCell] = useState<number | null>(null);
   const [isWallFullscreen, setIsWallFullscreen] = useState(false);
-  const [refreshInterval, setRefreshInterval] = useState<number>(() => {
-    const saved = localStorage.getItem('rtsp_video_wall_refresh');
-    return saved ? parseInt(saved) : 0;
-  });
+  const [refreshInterval, setRefreshInterval] = useState<number>(
+    savedState?.refreshInterval ?? 0
+  );
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
   const [configs, setConfigs] = useState<VideoWallConfig[]>(() => {
-    const saved = localStorage.getItem('rtsp_video_wall_configs_v3');
+    const saved = localStorage.getItem('rtsp_video_wall_configs_v4');
     return saved ? JSON.parse(saved) : [];
   });
 
+  // Save state to localStorage whenever it changes
+  useEffect(() => {
+    saveVideoWallState({ layout, cells, refreshInterval });
+  }, [layout, cells, refreshInterval]);
+
+  // Auto-refresh
   useEffect(() => {
     if (refreshInterval === 0) return;
     const interval = setInterval(() => {
       setLastRefresh(new Date());
-      console.log('Автоперезагрузка потоков:', new Date().toLocaleTimeString());
+      // Force re-render of cells
+      setCells(prev => [...prev]);
     }, refreshInterval * 1000);
     return () => clearInterval(interval);
   }, [refreshInterval]);
 
-  useEffect(() => {
-    localStorage.setItem('rtsp_video_wall_refresh', refreshInterval.toString());
-  }, [refreshInterval]);
+  // Fullscreen handling - NO page reload
+  const enterFullscreen = useCallback(() => {
+    setIsWallFullscreen(true);
+    // Use CSS fullscreen instead of Fullscreen API to avoid page reload
+    document.body.style.overflow = 'hidden';
+  }, []);
 
-  useEffect(() => {
-    if (isWallFullscreen) {
-      document.documentElement.requestFullscreen?.().catch(() => {});
-      window.dispatchEvent(new CustomEvent('videowall:fullscreen:start'));
-    } else {
-      if (document.fullscreenElement) {
-        document.exitFullscreen?.().catch(() => {});
-      }
-      window.dispatchEvent(new CustomEvent('videowall:fullscreen:end'));
-    }
-  }, [isWallFullscreen]);
+  const exitFullscreen = useCallback(() => {
+    setIsWallFullscreen(false);
+    document.body.style.overflow = '';
+  }, []);
 
+  // Handle Escape key
   useEffect(() => {
-    const handleFullscreenChange = () => {
-      if (!document.fullscreenElement && isWallFullscreen) {
-        setIsWallFullscreen(false);
-      }
-    };
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isWallFullscreen) {
-        setIsWallFullscreen(false);
+        exitFullscreen();
       }
     };
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
     document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('fullscreenchange', handleFullscreenChange);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [isWallFullscreen]);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isWallFullscreen, exitFullscreen]);
 
   const getGridClass = () => {
     switch (layout) {
@@ -132,17 +135,18 @@ export function VideoWallPage() {
     }
   };
 
-  const getCellData = (index: number): { computer: Computer | null; stream: RtspStream | null } => {
+  const getCellData = (index: number): { computer: Computer | null; stream: Stream | null } => {
     const cell = cells[index];
     if (!cell || !cell.computerId || !cell.streamId) {
       return { computer: null, stream: null };
     }
     const computer = availableComputers.find(c => c.id === cell.computerId) || null;
-    const stream = computer?.rtspStreams.find(s => s.id === cell.streamId) || null;
+    const stream = computer?.streams.find(s => s.id === cell.streamId) || null;
     return { computer, stream };
   };
 
   const handleCellClick = (index: number) => {
+    if (isWallFullscreen) return; // Don't allow editing in fullscreen
     setShowPicker(index);
   };
 
@@ -154,7 +158,7 @@ export function VideoWallPage() {
       setShowPicker(null);
       
       const computer = availableComputers.find(c => c.id === computerId);
-      const stream = computer?.rtspStreams.find(s => s.id === streamId);
+      const stream = computer?.streams.find(s => s.id === streamId);
       toast('success', `${computer?.name} → ${stream?.name}`);
     }
   };
@@ -179,14 +183,13 @@ export function VideoWallPage() {
     };
     const updated = [...configs, config];
     setConfigs(updated);
-    localStorage.setItem('rtsp_video_wall_configs_v3', JSON.stringify(updated));
+    localStorage.setItem('rtsp_video_wall_configs_v4', JSON.stringify(updated));
     toast('success', `Конфигурация "${name}" сохранена`);
   };
 
   const handleLoadConfig = (config: VideoWallConfig) => {
     setLayout(config.layout);
-    const newCells: CellData[] = [];
-    for (let i = 0; i < 16; i++) newCells.push({ computerId: null, streamId: null });
+    const newCells = createEmptyCells();
     config.cells.forEach((c, i) => {
       if (i < 16) newCells[i] = c;
     });
@@ -199,20 +202,19 @@ export function VideoWallPage() {
     if (!confirm('Удалить конфигурацию?')) return;
     const updated = configs.filter(c => c.id !== configId);
     setConfigs(updated);
-    localStorage.setItem('rtsp_video_wall_configs_v3', JSON.stringify(updated));
+    localStorage.setItem('rtsp_video_wall_configs_v4', JSON.stringify(updated));
     toast('info', 'Конфигурация удалена');
   };
 
   const handleAutoFill = () => {
-    const allStreams: { computerId: string; stream: RtspStream }[] = [];
+    const allStreams: { computerId: string; stream: Stream }[] = [];
     availableComputers.forEach(computer => {
-      computer.rtspStreams.filter(s => s.isActive && s.status === 'online').forEach(stream => {
+      computer.streams.filter(s => s.isActive && s.status === 'online').forEach(stream => {
         allStreams.push({ computerId: computer.id, stream });
       });
     });
 
-    const newCells: CellData[] = [];
-    for (let i = 0; i < 16; i++) newCells.push({ computerId: null, streamId: null });
+    const newCells = createEmptyCells();
     allStreams.slice(0, getCellCount()).forEach((item, i) => {
       newCells[i] = { computerId: item.computerId, streamId: item.stream.id };
     });
@@ -221,151 +223,171 @@ export function VideoWallPage() {
   };
 
   const handleClearAll = () => {
-    const newCells: CellData[] = [];
-    for (let i = 0; i < 16; i++) newCells.push({ computerId: null, streamId: null });
-    setCells(newCells);
+    setCells(createEmptyCells());
     toast('info', 'Все ячейки очищены');
   };
 
   const toggleExpand = (computerId: string) => {
     const newExpanded = new Set(expandedComputers);
-    if (newExpanded.has(computerId)) {
-      newExpanded.delete(computerId);
-    } else {
-      newExpanded.add(computerId);
-    }
+    if (newExpanded.has(computerId)) newExpanded.delete(computerId);
+    else newExpanded.add(computerId);
     setExpandedComputers(newExpanded);
   };
 
-  // Полноэкранная версия
-  if (isWallFullscreen) {
+  // Render a single cell
+  const renderCell = (index: number, isFullscreenMode: boolean) => {
+    const { computer, stream } = getCellData(index);
     return (
       <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        className="fixed inset-0 z-[100] bg-black flex flex-col"
+        key={`${index}-${lastRefresh.getTime()}`}
+        initial={{ opacity: 0, scale: 0.8 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ delay: 0.02 * index, duration: 0.3 }}
+        whileHover={!isFullscreenMode ? { scale: 1.02 } : undefined}
+        onClick={() => handleCellClick(index)}
+        className={`relative border border-gray-700/30 rounded-xl overflow-hidden cursor-pointer group ${
+          isFullscreenMode ? 'bg-black/80 rounded-lg' : 'bg-black/50'
+        }`}
       >
-        <div className="flex items-center justify-between px-4 py-2 bg-gray-900/90 backdrop-blur-sm border-b border-gray-800">
+        {stream && computer ? (
+          <>
+            <div className="absolute inset-0 bg-gradient-to-br from-gray-900 to-gray-800">
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.1)_0%,transparent_70%)]" />
+            </div>
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="text-center px-2">
+                <motion.div
+                  animate={{ y: [0, -5, 0] }}
+                  transition={{ duration: 3, repeat: Infinity }}
+                >
+                  <Video className={`${isFullscreenMode ? 'w-12 h-12' : 'w-8 h-8'} mx-auto text-gray-600 mb-2`} />
+                </motion.div>
+                <p className={`${isFullscreenMode ? 'text-sm' : 'text-xs'} text-gray-400 font-medium`}>{stream.name}</p>
+                <p className={`${isFullscreenMode ? 'text-xs' : 'text-[10px]'} text-gray-600 mt-0.5`}>{computer.name}</p>
+                <p className="text-[9px] text-purple-500 mt-0.5 uppercase">{stream.protocol}</p>
+              </div>
+            </div>
+            {stream.status === 'online' && (
+              <motion.div
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                className="absolute top-2 left-2 flex items-center gap-1 bg-black/60 px-2 py-0.5 rounded-lg backdrop-blur-sm border border-red-500/30"
+              >
+                <motion.div
+                  animate={{ scale: [1, 1.3, 1], opacity: [1, 0.5, 1] }}
+                  transition={{ duration: 1, repeat: Infinity }}
+                  className="w-1.5 h-1.5 rounded-full bg-red-500"
+                />
+                <span className="text-[10px] text-white font-medium">LIVE</span>
+              </motion.div>
+            )}
+            <div className={`absolute top-2 right-2 w-2 h-2 rounded-full ${
+              stream.status === 'online' ? 'bg-green-500 shadow-lg shadow-green-500/50' :
+              stream.status === 'reconnecting' ? 'bg-yellow-500' : 'bg-red-500'
+            }`} />
+            {!isFullscreenMode && (
+              <>
+                <motion.button
+                  whileHover={{ scale: 1.2 }} whileTap={{ scale: 0.9 }}
+                  onClick={(e) => handleClearCell(index, e)}
+                  className="absolute bottom-2 right-2 p-1.5 bg-red-600/80 hover:bg-red-600 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm"
+                >
+                  <X className="w-3 h-3" />
+                </motion.button>
+                <motion.button
+                  whileHover={{ scale: 1.2 }} whileTap={{ scale: 0.9 }}
+                  onClick={(e) => { e.stopPropagation(); setFullscreenCell(index); }}
+                  className="absolute bottom-2 left-2 p-1.5 bg-blue-600/80 hover:bg-blue-600 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm"
+                >
+                  <Maximize2 className="w-3 h-3" />
+                </motion.button>
+              </>
+            )}
+          </>
+        ) : (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <motion.div
+              animate={{ opacity: [0.3, 0.6, 0.3] }}
+              transition={{ duration: 2, repeat: Infinity }}
+              className="text-center"
+            >
+              <Plus className={`${isFullscreenMode ? 'w-10 h-10' : 'w-8 h-8'} mx-auto text-gray-600 mb-2`} />
+              <p className={`${isFullscreenMode ? 'text-xs' : 'text-[10px]'} text-gray-600`}>
+                {isFullscreenMode ? '' : `Ячейка ${index + 1}`}
+              </p>
+            </motion.div>
+          </div>
+        )}
+        <div className="absolute inset-0 bg-blue-500/0 group-hover:bg-blue-500/5 transition-colors" />
+      </motion.div>
+    );
+  };
+
+  // Fullscreen wall view (CSS-based, no page reload)
+  if (isWallFullscreen) {
+    return (
+      <div className="fixed inset-0 z-[200] bg-black flex flex-col">
+        {/* Compact toolbar */}
+        <div className="flex items-center justify-between px-3 py-1.5 bg-gray-900/95 backdrop-blur-sm border-b border-gray-800 shrink-0">
           <div className="flex items-center gap-3">
-            <LayoutGrid className="w-5 h-5 text-blue-400" />
-            <span className="text-sm font-medium text-white">Видеостена</span>
+            <LayoutGrid className="w-4 h-4 text-blue-400" />
+            <span className="text-xs font-medium text-white">Видеостена</span>
             {refreshInterval > 0 && (
-              <div className="flex items-center gap-1.5 text-xs text-gray-400">
-                <RefreshCw className="w-3 h-3 animate-spin" style={{ animationDuration: '3s' }} />
-                <span>Авто: {REFRESH_INTERVALS.find(i => i.value === refreshInterval)?.label}</span>
+              <div className="flex items-center gap-1 text-[10px] text-gray-400">
+                <RefreshCw className="w-2.5 h-2.5 animate-spin" style={{ animationDuration: '3s' }} />
+                <span>{REFRESH_INTERVALS.find(i => i.value === refreshInterval)?.label}</span>
               </div>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1 bg-gray-800/50 border border-gray-700/50 rounded-lg p-0.5">
-              {[
-                { id: '1x1' as LayoutType, label: '1×1' },
-                { id: '2x2' as LayoutType, label: '2×2' },
-                { id: '3x3' as LayoutType, label: '3×3' },
-                { id: '4x4' as LayoutType, label: '4×4' },
-              ].map(item => (
-                <motion.button
-                  key={item.id}
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  onClick={() => setLayout(item.id)}
-                  className={`px-2.5 py-1.5 rounded text-xs font-medium transition-all ${
-                    layout === item.id
-                      ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg'
-                      : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+          <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-0.5 bg-gray-800/50 rounded-lg p-0.5">
+              {(['1x1', '2x2', '3x3', '4x4'] as LayoutType[]).map(id => (
+                <button key={id} onClick={() => setLayout(id)}
+                  className={`px-2 py-1 rounded text-[10px] font-medium transition-all ${
+                    layout === id ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'
                   }`}
                 >
-                  {item.label}
-                </motion.button>
+                  {id.replace('x', '×')}
+                </button>
               ))}
             </div>
-            <motion.button
-              whileHover={{ scale: 1.1, rotate: 90 }}
-              whileTap={{ scale: 0.9 }}
-              onClick={() => setIsWallFullscreen(false)}
-              className="p-2 bg-gray-800/80 hover:bg-gray-700 text-white rounded-lg transition-colors"
+            <select value={refreshInterval} onChange={e => setRefreshInterval(parseInt(e.target.value))}
+              className="bg-gray-800/50 text-[10px] text-gray-300 rounded-lg px-1.5 py-1 border-none focus:outline-none"
+            >
+              {REFRESH_INTERVALS.map(i => (
+                <option key={i.value} value={i.value}>{i.label}</option>
+              ))}
+            </select>
+            <button onClick={handleAutoFill} className="px-2 py-1 bg-green-600/20 text-green-400 text-[10px] rounded-lg">
+              Авто
+            </button>
+            <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}
+              onClick={exitFullscreen}
+              className="p-1.5 bg-gray-800/80 hover:bg-gray-700 text-white rounded-lg"
               title="Выйти (Esc)"
             >
-              <Minimize2 className="w-4 h-4" />
+              <Minimize2 className="w-3.5 h-3.5" />
             </motion.button>
           </div>
         </div>
-        <div className="flex-1 p-2">
-          <div className={`grid ${getGridClass()} gap-2 h-full`}>
-            {Array.from({ length: getCellCount() }).map((_, index) => {
-              const { computer, stream } = getCellData(index);
-              return (
-                <motion.div
-                  key={index}
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ delay: 0.02 * index }}
-                  onClick={() => handleCellClick(index)}
-                  className="relative bg-black/80 border border-gray-700/30 rounded-lg overflow-hidden cursor-pointer group"
-                >
-                  {stream && computer ? (
-                    <>
-                      <div className="absolute inset-0 bg-gradient-to-br from-gray-900 to-gray-800">
-                        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.1)_0%,transparent_70%)]" />
-                      </div>
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <div className="text-center px-2">
-                          <Video className="w-12 h-12 mx-auto text-gray-600 mb-2" />
-                          <p className="text-sm text-gray-400 font-medium">{stream.name}</p>
-                          <p className="text-xs text-gray-600 mt-1">{computer.name}</p>
-                        </div>
-                      </div>
-                      {stream.status === 'online' && (
-                        <div className="absolute top-2 left-2 flex items-center gap-1 bg-black/60 px-2 py-0.5 rounded backdrop-blur-sm border border-red-500/30">
-                          <motion.div
-                            animate={{ scale: [1, 1.3, 1], opacity: [1, 0.5, 1] }}
-                            transition={{ duration: 1, repeat: Infinity }}
-                            className="w-1.5 h-1.5 rounded-full bg-red-500"
-                          />
-                          <span className="text-[10px] text-white font-medium">LIVE</span>
-                        </div>
-                      )}
-                      <div className={`absolute top-2 right-2 w-2 h-2 rounded-full ${
-                        stream.status === 'online' ? 'bg-green-500' :
-                        stream.status === 'reconnecting' ? 'bg-yellow-500' :
-                        'bg-red-500'
-                      }`} />
-                      <motion.button
-                        whileHover={{ scale: 1.2 }}
-                        whileTap={{ scale: 0.9 }}
-                        onClick={(e) => handleClearCell(index, e)}
-                        className="absolute bottom-2 right-2 p-1.5 bg-red-600/80 hover:bg-red-600 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        <X className="w-3 h-3" />
-                      </motion.button>
-                    </>
-                  ) : (
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <div className="text-center">
-                        <Plus className="w-10 h-10 mx-auto text-gray-700 mb-2" />
-                        <p className="text-xs text-gray-700">Ячейка {index + 1}</p>
-                      </div>
-                    </div>
-                  )}
-                  <div className="absolute inset-0 bg-blue-500/0 group-hover:bg-blue-500/5 transition-colors" />
-                </motion.div>
-              );
-            })}
+
+        {/* Grid */}
+        <div className="flex-1 p-1.5 min-h-0">
+          <div className={`grid ${getGridClass()} gap-1.5 h-full`}>
+            {Array.from({ length: getCellCount() }).map((_, index) => renderCell(index, true))}
           </div>
         </div>
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-xs text-gray-600 bg-gray-900/80 px-3 py-1.5 rounded-lg backdrop-blur-sm">
-          Нажмите Esc для выхода
+
+        <div className="absolute bottom-2 left-1/2 -translate-x-1/2 text-[10px] text-gray-600 bg-gray-900/80 px-2 py-1 rounded backdrop-blur-sm">
+          Esc — выйти
         </div>
-      </motion.div>
+      </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <motion.div 
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
+      <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }}
         className="flex items-center justify-between flex-wrap gap-4"
       >
         <div>
@@ -374,14 +396,11 @@ export function VideoWallPage() {
             Видеостена
           </h2>
           <p className="text-sm text-gray-500 flex items-center gap-2">
-            <span>{availableComputers.length} компьютеров доступно • {availableComputers.reduce((s, c) => s + c.rtspStreams.length, 0)} RTSP-потоков</span>
+            <span>{availableComputers.length} компьютеров • {availableComputers.reduce((s, c) => s + c.streams.length, 0)} потоков</span>
             {refreshInterval > 0 && (
               <span className="flex items-center gap-1 text-xs text-blue-400">
-                <motion.div
-                  key={lastRefresh.getTime()}
-                  initial={{ scale: 0, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
-                  className="w-1.5 h-1.5 rounded-full bg-blue-400"
+                <motion.div key={lastRefresh.getTime()} initial={{ scale: 0, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }} className="w-1.5 h-1.5 rounded-full bg-blue-400"
                 />
                 Обновлено: {lastRefresh.toLocaleTimeString('ru-RU')}
               </span>
@@ -391,75 +410,53 @@ export function VideoWallPage() {
 
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex items-center gap-1 bg-gray-900/50 border border-gray-800/50 rounded-xl p-1">
-            {[
-              { id: '1x1' as LayoutType, label: '1×1' },
-              { id: '2x2' as LayoutType, label: '2×2' },
-              { id: '3x3' as LayoutType, label: '3×3' },
-              { id: '4x4' as LayoutType, label: '4×4' },
-            ].map(item => (
-              <motion.button
-                key={item.id}
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                onClick={() => setLayout(item.id)}
+            {(['1x1', '2x2', '3x3', '4x4'] as LayoutType[]).map(item => (
+              <motion.button key={item} whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+                onClick={() => setLayout(item)}
                 className={`px-3 py-2 rounded-lg text-xs font-medium transition-all ${
-                  layout === item.id
-                    ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg'
-                    : 'text-gray-400 hover:text-white hover:bg-gray-800/50'
+                  layout === item ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800/50'
                 }`}
               >
-                {item.label}
+                {item.replace('x', '×')}
               </motion.button>
             ))}
           </div>
 
           <div className="flex items-center gap-1 bg-gray-900/50 border border-gray-800/50 rounded-xl px-2 py-1">
             <RefreshCw className={`w-3.5 h-3.5 text-gray-400 ${refreshInterval > 0 ? 'animate-spin' : ''}`} style={{ animationDuration: '3s' }} />
-            <select
-              value={refreshInterval}
-              onChange={(e) => setRefreshInterval(parseInt(e.target.value))}
+            <select value={refreshInterval} onChange={e => setRefreshInterval(parseInt(e.target.value))}
               className="bg-transparent text-xs text-gray-300 focus:outline-none cursor-pointer"
             >
-              {REFRESH_INTERVALS.map(interval => (
-                <option key={interval.value} value={interval.value} className="bg-gray-900">
-                  {interval.label}
-                </option>
+              {REFRESH_INTERVALS.map(i => (
+                <option key={i.value} value={i.value} className="bg-gray-900">{i.label}</option>
               ))}
             </select>
           </div>
 
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
+          <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
             onClick={handleAutoFill}
             className="px-3 py-2 bg-green-600/20 hover:bg-green-600/30 text-green-400 text-xs font-medium rounded-xl transition-all border border-green-700/30"
           >
             Авто
           </motion.button>
 
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
+          <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
             onClick={handleClearAll}
             className="px-3 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 text-xs font-medium rounded-xl transition-all border border-red-700/30"
           >
             Очистить
           </motion.button>
 
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
+          <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
             onClick={handleSaveConfig}
-            className="px-3 py-2 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white text-xs font-medium rounded-xl transition-all shadow-lg shadow-blue-500/20 flex items-center gap-1.5"
+            className="px-3 py-2 bg-gradient-to-r from-blue-600 to-purple-600 text-white text-xs font-medium rounded-xl transition-all shadow-lg shadow-blue-500/20 flex items-center gap-1.5"
           >
             <Save className="w-3.5 h-3.5" />
             Сохранить
           </motion.button>
 
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            onClick={() => setIsWallFullscreen(true)}
+          <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+            onClick={enterFullscreen}
             className="px-3 py-2 bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-400 text-xs font-medium rounded-xl transition-all border border-cyan-700/30 flex items-center gap-1.5"
           >
             <Maximize2 className="w-3.5 h-3.5" />
@@ -476,21 +473,14 @@ export function VideoWallPage() {
           </h3>
           <div className="flex gap-2 flex-wrap">
             {configs.map(config => (
-              <motion.div
-                key={config.id}
-                whileHover={{ scale: 1.05 }}
-                className="relative group"
-              >
-                <button
-                  onClick={() => handleLoadConfig(config)}
+              <motion.div key={config.id} whileHover={{ scale: 1.05 }} className="relative group">
+                <button onClick={() => handleLoadConfig(config)}
                   className="px-3 py-2 bg-gray-800/50 hover:bg-gray-700/50 text-gray-300 text-xs rounded-xl transition-all border border-gray-700/50 flex items-center gap-2"
                 >
                   <LayoutGrid className="w-3.5 h-3.5" />
                   {config.name}
                 </button>
-                <motion.button
-                  whileHover={{ scale: 1.2 }}
-                  whileTap={{ scale: 0.9 }}
+                <motion.button whileHover={{ scale: 1.2 }} whileTap={{ scale: 0.9 }}
                   onClick={(e) => handleDeleteConfig(config.id, e)}
                   className="absolute -top-1 -right-1 p-1 bg-red-600 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
                 >
@@ -502,128 +492,36 @@ export function VideoWallPage() {
         </AnimatedCard>
       )}
 
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ delay: 0.2 }}
+      <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.2 }}
         className={`grid ${getGridClass()} gap-3 aspect-video bg-gray-900/30 border border-gray-800/50 rounded-2xl p-3 backdrop-blur-sm`}
       >
-        {Array.from({ length: getCellCount() }).map((_, index) => {
-          const { computer, stream } = getCellData(index);
-          return (
-            <motion.div
-              key={`${index}-${lastRefresh.getTime()}`}
-              initial={{ opacity: 0, scale: 0.8 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ delay: 0.05 * index, duration: 0.3 }}
-              whileHover={{ scale: 1.02 }}
-              onClick={() => handleCellClick(index)}
-              className="relative bg-black/50 border border-gray-700/30 rounded-xl overflow-hidden cursor-pointer group"
-            >
-              {stream && computer ? (
-                <>
-                  <div className="absolute inset-0 bg-gradient-to-br from-gray-900 to-gray-800">
-                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.1)_0%,transparent_70%)]" />
-                  </div>
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="text-center px-2">
-                      <motion.div
-                        animate={{ y: [0, -5, 0] }}
-                        transition={{ duration: 3, repeat: Infinity }}
-                      >
-                        <Video className="w-8 h-8 mx-auto text-gray-600 mb-2" />
-                      </motion.div>
-                      <p className="text-xs text-gray-400 font-medium">{stream.name}</p>
-                      <p className="text-[10px] text-gray-600 mt-0.5">{computer.name}</p>
-                    </div>
-                  </div>
-                  {stream.status === 'online' && (
-                    <motion.div
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      className="absolute top-2 left-2 flex items-center gap-1 bg-black/60 px-2 py-0.5 rounded-lg backdrop-blur-sm border border-red-500/30"
-                    >
-                      <motion.div
-                        animate={{ scale: [1, 1.3, 1], opacity: [1, 0.5, 1] }}
-                        transition={{ duration: 1, repeat: Infinity }}
-                        className="w-1.5 h-1.5 rounded-full bg-red-500"
-                      />
-                      <span className="text-[10px] text-white font-medium">LIVE</span>
-                    </motion.div>
-                  )}
-                  <div className={`absolute top-2 right-2 w-2 h-2 rounded-full ${
-                    stream.status === 'online' ? 'bg-green-500 shadow-lg shadow-green-500/50' :
-                    stream.status === 'reconnecting' ? 'bg-yellow-500 shadow-lg shadow-yellow-500/50' :
-                    'bg-red-500 shadow-lg shadow-red-500/50'
-                  }`} />
-                  <motion.button
-                    whileHover={{ scale: 1.2 }}
-                    whileTap={{ scale: 0.9 }}
-                    onClick={(e) => handleClearCell(index, e)}
-                    className="absolute bottom-2 right-2 p-1.5 bg-red-600/80 hover:bg-red-600 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm"
-                  >
-                    <X className="w-3 h-3" />
-                  </motion.button>
-                  <motion.button
-                    whileHover={{ scale: 1.2 }}
-                    whileTap={{ scale: 0.9 }}
-                    onClick={(e) => { e.stopPropagation(); setFullscreenCell(index); }}
-                    className="absolute bottom-2 left-2 p-1.5 bg-blue-600/80 hover:bg-blue-600 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm"
-                  >
-                    <Maximize2 className="w-3 h-3" />
-                  </motion.button>
-                </>
-              ) : (
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <motion.div
-                    animate={{ opacity: [0.3, 0.6, 0.3] }}
-                    transition={{ duration: 2, repeat: Infinity }}
-                    className="text-center"
-                  >
-                    <Plus className="w-8 h-8 mx-auto text-gray-600 mb-2" />
-                    <p className="text-xs text-gray-600">Ячейка {index + 1}</p>
-                    <p className="text-[10px] text-gray-700 mt-1">Нажмите для выбора</p>
-                  </motion.div>
-                </div>
-              )}
-              <div className="absolute inset-0 bg-blue-500/0 group-hover:bg-blue-500/5 transition-colors" />
-            </motion.div>
-          );
-        })}
+        {Array.from({ length: getCellCount() }).map((_, index) => renderCell(index, false))}
       </motion.div>
 
+      {/* Stream Picker Modal */}
       <AnimatePresence>
         {showPicker !== null && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
             onClick={() => setShowPicker(null)}
           >
-            <motion.div
-              initial={{ scale: 0.9, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.9, y: 20 }}
+            <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
               onClick={(e) => e.stopPropagation()}
               className="glass-strong rounded-2xl w-full max-w-lg p-6 relative overflow-hidden max-h-[80vh] flex flex-col"
             >
-              <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-purple-500/5 pointer-events-none" />
-              <div className="flex items-center justify-between mb-4 relative shrink-0">
+              <div className="flex items-center justify-between mb-4 shrink-0">
                 <h3 className="text-lg font-semibold text-white">
-                  Выберите RTSP-поток — ячейка {showPicker + 1}
+                  Выберите поток — ячейка {showPicker + 1}
                 </h3>
-                <motion.button
-                  whileHover={{ scale: 1.1, rotate: 90 }}
-                  whileTap={{ scale: 0.9 }}
+                <motion.button whileHover={{ scale: 1.1, rotate: 90 }} whileTap={{ scale: 0.9 }}
                   onClick={() => setShowPicker(null)}
-                  className="p-1.5 rounded-xl hover:bg-gray-800 text-gray-400 transition-colors"
+                  className="p-1.5 rounded-xl hover:bg-gray-800 text-gray-400"
                 >
                   <X className="w-5 h-5" />
                 </motion.button>
               </div>
 
-              <div className="space-y-3 overflow-y-auto flex-1 relative pr-1">
+              <div className="space-y-3 overflow-y-auto flex-1 pr-1">
                 {availableComputers.length === 0 ? (
                   <div className="text-center py-12 text-gray-500">
                     <Server className="w-12 h-12 mx-auto mb-3 opacity-30" />
@@ -639,55 +537,47 @@ export function VideoWallPage() {
                           onClick={() => toggleExpand(computer.id)}
                           className="w-full flex items-center gap-3 p-3 text-left"
                         >
-                          {isExpanded ? (
-                            <ChevronDown className="w-4 h-4 text-gray-400 shrink-0" />
-                          ) : (
-                            <ChevronRight className="w-4 h-4 text-gray-400 shrink-0" />
-                          )}
+                          {isExpanded ? <ChevronDown className="w-4 h-4 text-gray-400 shrink-0" /> : <ChevronRight className="w-4 h-4 text-gray-400 shrink-0" />}
                           <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${
                             computer.status === 'online' ? 'bg-green-500 shadow-lg shadow-green-500/50' :
-                            computer.status === 'reconnecting' ? 'bg-yellow-500' :
-                            'bg-red-500'
+                            computer.status === 'reconnecting' ? 'bg-yellow-500' : 'bg-red-500'
                           }`} />
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-white truncate">{computer.name}</p>
-                            <p className="text-[10px] text-gray-500 font-mono">{computer.ip} • {computer.rtspStreams.length} RTSP-потоков</p>
+                            <p className="text-[10px] text-gray-500 font-mono">{computer.ip} • {computer.streams.length} потоков</p>
                           </div>
                           <Server className="w-4 h-4 text-gray-600 shrink-0" />
                         </motion.button>
 
                         <AnimatePresence>
                           {isExpanded && (
-                            <motion.div
-                              initial={{ height: 0, opacity: 0 }}
-                              animate={{ height: 'auto', opacity: 1 }}
-                              exit={{ height: 0, opacity: 0 }}
-                              transition={{ duration: 0.2 }}
+                            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }}
+                              exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }}
                               className="border-t border-gray-700/30 overflow-hidden"
                             >
                               <div className="p-2 space-y-1">
-                                {computer.rtspStreams.length === 0 ? (
-                                  <p className="text-xs text-gray-500 text-center py-2">Нет RTSP-потоков</p>
+                                {computer.streams.length === 0 ? (
+                                  <p className="text-xs text-gray-500 text-center py-2">Нет потоков</p>
                                 ) : (
-                                  computer.rtspStreams.map(stream => (
-                                    <motion.button
-                                      key={stream.id}
-                                      whileHover={{ scale: 1.01, x: 2 }}
-                                      whileTap={{ scale: 0.99 }}
+                                  computer.streams.map(stream => (
+                                    <motion.button key={stream.id}
+                                      whileHover={{ scale: 1.01, x: 2 }} whileTap={{ scale: 0.99 }}
                                       onClick={() => handleStreamSelect(computer.id, stream.id)}
                                       className="w-full flex items-center gap-2 p-2 rounded-lg hover:bg-gray-700/30 transition-all text-left group"
                                     >
                                       <div className={`w-2 h-2 rounded-full shrink-0 ${
                                         stream.status === 'online' ? 'bg-green-500' :
-                                        stream.status === 'reconnecting' ? 'bg-yellow-500' :
-                                        'bg-red-500'
+                                        stream.status === 'reconnecting' ? 'bg-yellow-500' : 'bg-red-500'
                                       }`} />
                                       <Video className="w-3.5 h-3.5 text-gray-500 shrink-0" />
                                       <div className="flex-1 min-w-0">
                                         <p className="text-xs font-medium text-white group-hover:text-blue-400 transition-colors truncate">
                                           {stream.name}
                                         </p>
-                                        <p className="text-[10px] text-gray-600 font-mono truncate">{stream.url}</p>
+                                        <div className="flex items-center gap-1">
+                                          <span className="text-[9px] text-purple-400 uppercase">{stream.protocol}</span>
+                                          <span className="text-[9px] text-gray-600 font-mono truncate">{stream.url}</span>
+                                        </div>
                                       </div>
                                       {stream.status === 'online' && (
                                         <span className="text-[9px] text-green-400 bg-green-950/30 px-1.5 py-0.5 rounded">ONLINE</span>
@@ -706,18 +596,15 @@ export function VideoWallPage() {
               </div>
 
               {cells[showPicker]?.computerId && (
-                <motion.button
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
+                <motion.button initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+                  whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
                   onClick={() => {
                     const updated = [...cells];
                     updated[showPicker] = { computerId: null, streamId: null };
                     setCells(updated);
                     setShowPicker(null);
                   }}
-                  className="w-full mt-3 py-2.5 px-4 bg-red-600/20 hover:bg-red-600/30 text-red-400 text-sm font-medium rounded-xl transition-all border border-red-700/30 relative shrink-0"
+                  className="w-full mt-3 py-2.5 px-4 bg-red-600/20 hover:bg-red-600/30 text-red-400 text-sm font-medium rounded-xl transition-all border border-red-700/30 shrink-0"
                 >
                   Убрать поток из ячейки
                 </motion.button>
@@ -727,22 +614,17 @@ export function VideoWallPage() {
         )}
       </AnimatePresence>
 
+      {/* Single cell fullscreen */}
       <AnimatePresence>
         {fullscreenCell !== null && (() => {
           const { computer, stream } = getCellData(fullscreenCell);
           if (!computer || !stream) return null;
           return (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-8"
               onClick={() => setFullscreenCell(null)}
             >
-              <motion.div
-                initial={{ scale: 0.8 }}
-                animate={{ scale: 1 }}
-                exit={{ scale: 0.8 }}
+              <motion.div initial={{ scale: 0.8 }} animate={{ scale: 1 }} exit={{ scale: 0.8 }}
                 className="relative w-full h-full max-w-6xl max-h-[80vh] bg-black rounded-2xl overflow-hidden border border-gray-700/50"
               >
                 <div className="absolute inset-0 bg-gradient-to-br from-gray-900 to-gray-800">
@@ -750,36 +632,26 @@ export function VideoWallPage() {
                 </div>
                 <div className="absolute inset-0 flex items-center justify-center">
                   <div className="text-center">
-                    <motion.div
-                      animate={{ y: [0, -10, 0] }}
-                      transition={{ duration: 3, repeat: Infinity }}
-                    >
-                      <Video className="w-24 h-24 mx-auto text-gray-600 mb-4" />
-                    </motion.div>
+                    <Video className="w-24 h-24 mx-auto text-gray-600 mb-4" />
                     <p className="text-xl text-gray-400 font-medium">{stream.name}</p>
                     <p className="text-sm text-gray-600 mt-1">{computer.name} • {computer.ip}</p>
+                    <p className="text-xs text-purple-500 mt-1 uppercase">{stream.protocol}</p>
                     <p className="text-xs text-gray-700 font-mono mt-2">{stream.url}</p>
                   </div>
                 </div>
                 {stream.status === 'online' && (
-                  <motion.div
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
+                  <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}
                     className="absolute top-4 left-4 flex items-center gap-2 bg-black/60 px-3 py-1.5 rounded-xl backdrop-blur-sm border border-red-500/30"
                   >
-                    <motion.div
-                      animate={{ scale: [1, 1.3, 1], opacity: [1, 0.5, 1] }}
-                      transition={{ duration: 1, repeat: Infinity }}
-                      className="w-2 h-2 rounded-full bg-red-500"
+                    <motion.div animate={{ scale: [1, 1.3, 1], opacity: [1, 0.5, 1] }}
+                      transition={{ duration: 1, repeat: Infinity }} className="w-2 h-2 rounded-full bg-red-500"
                     />
                     <span className="text-sm text-white font-medium">LIVE</span>
                   </motion.div>
                 )}
-                <motion.button
-                  whileHover={{ scale: 1.1, rotate: 90 }}
-                  whileTap={{ scale: 0.9 }}
+                <motion.button whileHover={{ scale: 1.1, rotate: 90 }} whileTap={{ scale: 0.9 }}
                   onClick={() => setFullscreenCell(null)}
-                  className="absolute top-4 right-4 p-2 bg-gray-800/80 hover:bg-gray-700 text-white rounded-xl backdrop-blur-sm transition-colors"
+                  className="absolute top-4 right-4 p-2 bg-gray-800/80 hover:bg-gray-700 text-white rounded-xl backdrop-blur-sm"
                 >
                   <Minimize2 className="w-5 h-5" />
                 </motion.button>

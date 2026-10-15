@@ -1,9 +1,12 @@
 export type UserRole = 'admin' | 'operator' | 'viewer';
 
-export interface RtspStream {
+export type StreamProtocol = 'rtsp' | 'http' | 'https' | 'hls' | 'm3u8' | 'ts' | 'flv' | 'rtmp' | 'webrtc';
+
+export interface Stream {
   id: string;
   name: string;
   url: string;
+  protocol: StreamProtocol;
   sourceLogin: string;
   sourcePassword: string;
   isActive: boolean;
@@ -16,7 +19,7 @@ export interface Computer {
   hostname: string;
   ip: string;
   description: string;
-  rtspStreams: RtspStream[];
+  streams: Stream[];
   isActive: boolean;
   status: 'online' | 'offline' | 'reconnecting';
   createdAt: string;
