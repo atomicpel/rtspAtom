@@ -123,9 +123,13 @@ curl -sf -b "$J" "$B/hls/$STREAM/$VARIANT" -o "$W/variant.m3u8" || fail "$VARIAN
 echo "----- $VARIANT (начало) -----"; head -n 20 "$W/variant.m3u8"
 SEG=$(grep -v '^#' "$W/variant.m3u8" | grep -m1 -E '\.(mp4|ts)$' || true)
 INIT=$(grep -oE 'URI="[^"]+"' "$W/variant.m3u8" | head -1 | cut -d'"' -f2 || true)
-[ -n "$INIT" ] && { curl -sf -b "$J" "$B/hls/$STREAM/$INIT" -o "$W/init.bin" || fail "init-сегмент не получен"; }
+if [ -n "$INIT" ]; then
+  CODE=$(curl -s -b "$J" -o "$W/init.bin" -w '%{http_code}' "$B/hls/$STREAM/$INIT" || true)
+  [ "$CODE" = "200" ] || fail "init-сегмент $INIT не получен: код $CODE, ответ: $(head -c 300 "$W/init.bin" | tr -cd '[:print:] ')"
+fi
 [ -n "$SEG" ] || fail "в плейлисте нет сегментов"
-curl -sf -b "$J" "$B/hls/$STREAM/$SEG" -o "$W/seg.bin" || fail "сегмент не получен"
+CODE=$(curl -s -b "$J" -o "$W/seg.bin" -w '%{http_code}' "$B/hls/$STREAM/$SEG" || true)
+[ "$CODE" = "200" ] || fail "сегмент $SEG не получен: код $CODE, ответ: $(head -c 300 "$W/seg.bin" | tr -cd '[:print:] '); плейлист: $(head -n 25 "$W/variant.m3u8" | tr '\n' '|')"
 SIZE=$(stat -c %s "$W/seg.bin")
 [ "$SIZE" -gt 1000 ] || fail "сегмент слишком мал ($SIZE байт)"
 echo "Сегмент $SEG: $SIZE байт"
