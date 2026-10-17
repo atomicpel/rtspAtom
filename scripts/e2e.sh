@@ -103,11 +103,16 @@ done
 echo "Статус потока: $STATUS"
 
 # HLS через прокси панели: мастер-плейлист -> плейлист потока -> сегмент
+CODE=""
 for i in $(seq 1 30); do
-  curl -sf -b "$J" "$B/hls/$STREAM/index.m3u8" -o "$W/master.m3u8" && break
+  CODE=$(curl -s -b "$J" -D "$W/master.hdr" -o "$W/master.m3u8" -w '%{http_code}' "$B/hls/$STREAM/index.m3u8" || true)
+  [ "$CODE" = "200" ] && [ -s "$W/master.m3u8" ] && break
   sleep 1
 done
-[ -s "$W/master.m3u8" ] || fail "index.m3u8 не получен"
+if ! { [ "$CODE" = "200" ] && [ -s "$W/master.m3u8" ]; }; then
+  DIRECT=$(curl -s -D - "http://127.0.0.1:8888/s_$STREAM/index.m3u8" | head -c 600 | tr '\r\n' '  ')
+  fail "index.m3u8 не получен: код $CODE; заголовки: $(tr '\r\n' '  ' < "$W/master.hdr"); тело: $(head -c 300 "$W/master.m3u8" | tr '\r\n' '  '); напрямую из MediaMTX: $DIRECT"
+fi
 echo "----- index.m3u8 -----"; cat "$W/master.m3u8"
 grep -q '#EXTM3U' "$W/master.m3u8" || fail "некорректный плейлист"
 VARIANT=$(grep -v '^#' "$W/master.m3u8" | grep -m1 '\.m3u8')
