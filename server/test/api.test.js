@@ -43,7 +43,7 @@ before(async () => {
   const log = new EventLog(db, { quiet: true });
   const config = {
     publicDir: tmp, trustProxy: true, tls: { enabled: false },
-    mediamtx: { apiUrl: fakeUrl, hlsUrl: fakeUrl },
+    mediamtx: { apiUrl: fakeUrl, hlsUrl: fakeUrl, cdnSecret: 'test-cdn-secret' },
   };
   const sync = new StreamSync({ db, client: new MediaMtxClient(fakeUrl), log, settings: () => getSettings(db) });
   app = { db, config, log, sync, metrics: null, startedAt: Date.now() };
@@ -243,6 +243,14 @@ test('защита последнего администратора и само
   assert.equal(r.status, 400);
   r = await admin.put(`/api/users/${me.id}`, { isActive: false });
   assert.equal(r.status, 400);
+});
+
+test('без общего секрета MediaMTX прокси сообщает понятную ошибку', async () => {
+  app.config.mediamtx.cdnSecret = '';
+  const r = await admin.get(`/hls/${streamId}/index.m3u8`);
+  assert.equal(r.status, 502);
+  assert.match(r.data.error, /hlsCDNSecret/);
+  app.config.mediamtx.cdnSecret = 'test-cdn-secret';
 });
 
 test('лимит одновременных подключений к видео', async () => {

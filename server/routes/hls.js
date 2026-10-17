@@ -47,11 +47,19 @@ export async function handleHls(app, req, res, url, session, ip) {
   app.viewers.set(key, now);
 
   const target = new URL(`/${pathNameFor(streamId)}/${file}${url.search}`, app.config.mediamtx.hlsUrl);
+  const headers = { 'user-agent': 'rtspatom-proxy' };
+  // Запрос «от CDN»: MediaMTX ведёт одну общую сессию на поток без cookie и редиректов.
+  if (app.config.mediamtx.cdnSecret) headers.authorization = `Bearer ${app.config.mediamtx.cdnSecret}`;
   await new Promise((resolve, reject) => {
     const upstream = http.request(
       target,
-      { method: req.method, headers: { 'user-agent': 'rtspatom-proxy' } },
+      { method: req.method, headers },
       (up) => {
+        if (up.statusCode >= 300 && up.statusCode < 400) {
+          up.resume();
+          reject(new HttpError(502, 'MediaMTX требует cookie-сессию: задайте одинаковый секрет hlsCDNSecret в mediamtx.yml и mediamtx.cdnSecret в config.json'));
+          return;
+        }
         const headers = {};
         for (const h of PASS_HEADERS) if (up.headers[h]) headers[h] = up.headers[h];
         if (!headers['cache-control']) headers['cache-control'] = 'no-cache';

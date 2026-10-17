@@ -100,15 +100,6 @@ say "Каталоги данных и настроек"
 install -d -m 750 -o "$SVC_USER" -g "$SVC_USER" "$DATA_DIR"
 install -d -m 755 "$CONF_DIR"
 
-if [ -f "$CONF_DIR/mediamtx.yml" ]; then
-  if ! cmp -s "$SRC/deploy/mediamtx.yml" "$CONF_DIR/mediamtx.yml"; then
-    install -m 644 "$SRC/deploy/mediamtx.yml" "$CONF_DIR/mediamtx.yml.new"
-    warn "Ваш $CONF_DIR/mediamtx.yml изменён и оставлен как есть; новая версия — mediamtx.yml.new"
-  fi
-else
-  install -m 644 "$SRC/deploy/mediamtx.yml" "$CONF_DIR/mediamtx.yml"
-fi
-
 NODE="$PREFIX/node/bin/node"
 CONF="$CONF_DIR/config.json"
 if [ ! -f "$CONF" ]; then
@@ -125,9 +116,40 @@ if [ ! -f "$CONF" ]; then
     };
     fs.writeFileSync(process.argv[1], JSON.stringify(cfg, null, 2) + "\n");
   ' "$CONF"
-  chmod 640 "$CONF"
-  chown root:"$SVC_USER" "$CONF"
 fi
+chmod 640 "$CONF"
+chown root:"$SVC_USER" "$CONF"
+
+# Общий секрет панели и MediaMTX (hlsCDNSecret): создаётся один раз и хранится в config.json
+SECRET="$("$NODE" -e '
+  const fs = require("fs"), crypto = require("crypto");
+  const file = process.argv[1];
+  const cfg = JSON.parse(fs.readFileSync(file, "utf8"));
+  cfg.mediamtx = cfg.mediamtx || {};
+  if (!cfg.mediamtx.cdnSecret) {
+    cfg.mediamtx.cdnSecret = crypto.randomBytes(24).toString("hex");
+    fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + "\n");
+  }
+  console.log(cfg.mediamtx.cdnSecret);
+' "$CONF")"
+
+YML="$CONF_DIR/mediamtx.yml"
+RENDERED="$(mktemp)"
+sed "s/@CDN_SECRET@/$SECRET/" "$SRC/deploy/mediamtx.yml" > "$RENDERED"
+if [ -f "$YML" ]; then
+  if ! grep -q '^hlsCDNSecret:' "$YML"; then
+    printf '\n# Добавлено установщиком RTSP Atom\nhlsCDNSecret: "%s"\n' "$SECRET" >> "$YML"
+  fi
+  if ! cmp -s "$RENDERED" "$YML"; then
+    install -m 640 -o root -g "$SVC_USER" "$RENDERED" "$YML.new"
+    warn "Ваш $YML изменён и оставлен как есть; новая версия — mediamtx.yml.new"
+  fi
+else
+  install -m 640 -o root -g "$SVC_USER" "$RENDERED" "$YML"
+fi
+chown root:"$SVC_USER" "$YML"
+chmod 640 "$YML"
+rm -f "$RENDERED"
 
 if [ $TLS -eq 1 ]; then
   install -d -m 750 -o root -g "$SVC_USER" "$CONF_DIR/tls"

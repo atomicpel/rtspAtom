@@ -32,5 +32,8 @@ hlsVariant: lowLatency
 hlsSegmentCount: 7
 hlsSegmentDuration: 1s
 hlsPartDuration: 200ms
+# Панель обращается к HLS как доверенный прокси (без cookie-сессий MediaMTX),
+# подписывая запросы этим секретом. Значение подставляет установщик.
+hlsCDNSecret: "@CDN_SECRET@"
 
 paths: {}

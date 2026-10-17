@@ -48,13 +48,15 @@ ffmpeg -hide_banner -loglevel error -re -f lavfi -i testsrc=size=640x360:rate=25
   -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:18554/cam > "$W/ffmpeg.log" 2>&1 & PIDS+=($!)
 
 # 2. MediaMTX панели с боевой конфигурацией
-"$MTX" "$ROOT/deploy/mediamtx.yml" > "$W/mediamtx.log" 2>&1 & PIDS+=($!)
+SECRET=e2e-cdn-secret-$RANDOM$RANDOM
+sed "s/@CDN_SECRET@/$SECRET/" "$ROOT/deploy/mediamtx.yml" > "$W/mediamtx.yml"
+"$MTX" "$W/mediamtx.yml" > "$W/mediamtx.log" 2>&1 & PIDS+=($!)
 MTX_PID=$!
 
 # 3. Сервер панели
 cat > "$W/config.json" <<EOF
 { "host": "127.0.0.1", "port": 18080, "dataDir": "$W/data", "publicDir": "$APP/public",
-  "mediamtx": { "apiUrl": "http://127.0.0.1:9997", "hlsUrl": "http://127.0.0.1:8888" } }
+  "mediamtx": { "apiUrl": "http://127.0.0.1:9997", "hlsUrl": "http://127.0.0.1:8888", "cdnSecret": "$SECRET" } }
 EOF
 export RTSPATOM_CONFIG="$W/config.json"
 echo 'e2e-password' | "$NODE" --disable-warning=ExperimentalWarning "$APP/server/cli.js" create-admin admin --password-stdin
@@ -110,7 +112,7 @@ for i in $(seq 1 30); do
   sleep 1
 done
 if ! { [ "$CODE" = "200" ] && [ -s "$W/master.m3u8" ]; }; then
-  DIRECT=$(curl -s -D - "http://127.0.0.1:8888/s_$STREAM/index.m3u8" | head -c 600 | tr '\r\n' '  ')
+  DIRECT=$(curl -s -D - -H "Authorization: Bearer $SECRET" "http://127.0.0.1:8888/s_$STREAM/index.m3u8" | head -c 600 | tr '\r\n' '  ')
   fail "index.m3u8 не получен: код $CODE; заголовки: $(tr '\r\n' '  ' < "$W/master.hdr"); тело: $(head -c 300 "$W/master.m3u8" | tr '\r\n' '  '); напрямую из MediaMTX: $DIRECT"
 fi
 echo "----- index.m3u8 -----"; cat "$W/master.m3u8"
@@ -127,6 +129,10 @@ curl -sf -b "$J" "$B/hls/$STREAM/$SEG" -o "$W/seg.bin" || fail "сегмент �
 SIZE=$(stat -c %s "$W/seg.bin")
 [ "$SIZE" -gt 1000 ] || fail "сегмент слишком мал ($SIZE байт)"
 echo "Сегмент $SEG: $SIZE байт"
+
+# Напрямую из MediaMTX без секрета видео не отдаётся (cookie-проверка/сессия)
+CODE=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8888/s_$STREAM/$VARIANT")
+[ "$CODE" != "200" ] || fail "MediaMTX отдал плейлист без секрета"
 
 # Без сессии видео недоступно
 CODE=$(curl -s -o /dev/null -w '%{http_code}' "$B/hls/$STREAM/index.m3u8")

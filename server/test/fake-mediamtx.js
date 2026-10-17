@@ -44,6 +44,11 @@ export function startFakeMediaMtx() {
       return json(200, { name: m[1], ready: ready.has(m[1]), tracks: ready.has(m[1]) ? ['H264', 'MPEG-4 Audio'] : [] });
     }
     if ((m = /^\/(s_[^/]+)\/(.+)$/.exec(url.pathname))) {
+      // Как MediaMTX 1.21: без секрета CDN — cookie-проверка через редирект.
+      if (fake.cdnSecret && req.headers.authorization !== `Bearer ${fake.cdnSecret}`) {
+        res.writeHead(302, { Location: `${url.pathname}?cookieCheck=1` });
+        return res.end();
+      }
       if (!ready.has(m[1])) {
         res.writeHead(404);
         return res.end();
@@ -54,7 +59,7 @@ export function startFakeMediaMtx() {
     json(404, { error: 'unknown' });
   });
   const fake = {
-    paths, ready, calls, server, legacyTransport: false, probeReady: true,
+    paths, ready, calls, server, legacyTransport: false, probeReady: true, cdnSecret: 'test-cdn-secret',
     listen: () => new Promise((r) => server.listen(0, '127.0.0.1', () => r(`http://127.0.0.1:${server.address().port}`))),
     close: () => new Promise((r) => server.close(r)),
   };
