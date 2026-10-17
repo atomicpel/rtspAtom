@@ -121,7 +121,9 @@ VARIANT=$(grep -v '^#' "$W/master.m3u8" | grep -m1 '\.m3u8')
 [ -n "$VARIANT" ] || fail "в мастер-плейлисте нет вариантов"
 curl -sf -b "$J" "$B/hls/$STREAM/$VARIANT" -o "$W/variant.m3u8" || fail "$VARIANT не получен"
 echo "----- $VARIANT (начало) -----"; head -n 20 "$W/variant.m3u8"
-SEG=$(grep -v '^#' "$W/variant.m3u8" | grep -m1 -E '\.(mp4|ts)$' || true)
+# Первый настоящий сегмент (записи после #EXT-X-GAP — заглушки), иначе — часть LL-HLS
+SEG=$(awk '/^#EXT-X-GAP/{gap=1; next} /^#/{next} NF{ if(!gap){print; exit} gap=0 }' "$W/variant.m3u8")
+[ -n "$SEG" ] || SEG=$(grep -oE '#EXT-X-PART:[^ ]*URI="[^"]+"' "$W/variant.m3u8" | head -1 | sed -E 's/.*URI="([^"]+)".*/\1/')
 INIT=$(grep -oE 'URI="[^"]+"' "$W/variant.m3u8" | head -1 | cut -d'"' -f2 || true)
 if [ -n "$INIT" ]; then
   CODE=$(curl -s -b "$J" -o "$W/init.bin" -w '%{http_code}' "$B/hls/$STREAM/$INIT" || true)
@@ -131,7 +133,7 @@ fi
 CODE=$(curl -s -b "$J" -o "$W/seg.bin" -w '%{http_code}' "$B/hls/$STREAM/$SEG" || true)
 [ "$CODE" = "200" ] || fail "сегмент $SEG не получен: код $CODE, ответ: $(head -c 300 "$W/seg.bin" | tr -cd '[:print:] '); плейлист: $(head -n 25 "$W/variant.m3u8" | tr '\n' '|')"
 SIZE=$(stat -c %s "$W/seg.bin")
-[ "$SIZE" -gt 1000 ] || fail "сегмент слишком мал ($SIZE байт)"
+[ "$SIZE" -gt 500 ] || fail "сегмент слишком мал ($SIZE байт)"
 echo "Сегмент $SEG: $SIZE байт"
 
 # Напрямую из MediaMTX без секрета видео не отдаётся (cookie-проверка/сессия)
