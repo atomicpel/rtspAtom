@@ -1,7 +1,7 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { ScrollText, Download, Filter, Search } from 'lucide-react';
-import { getLogs } from '../lib/storage';
+import { api, errorMessage, LogQuery } from '../lib/api';
 import { LogEntry, LogCategory, LogLevel } from '../lib/types';
 import { useToast } from '../components/Toast';
 import { AnimatedCard, StaggerContainer, StaggerItem } from '../components/AnimatedCard';
@@ -18,54 +18,44 @@ export function LogsPage() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
 
-  const allLogs = getLogs();
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const PAGE = 200;
 
-  const filteredLogs = useMemo(() => {
-    let logs = allLogs;
+  const query = useCallback((): LogQuery => ({
+    category: activeTab === 'all' ? undefined : activeTab,
+    level: filterLevel || undefined,
+    user: filterUser || undefined,
+    q: searchQuery || undefined,
+    from: dateFrom || undefined,
+    to: dateTo || undefined,
+  }), [activeTab, filterLevel, filterUser, searchQuery, dateFrom, dateTo]);
 
-    if (activeTab !== 'all') {
-      logs = logs.filter(l => l.category === activeTab);
+  const load = useCallback(async (append = false) => {
+    setLoading(true);
+    try {
+      const r = await api.logs({ ...query(), limit: PAGE, offset: append ? logs.length : 0 });
+      setTotal(r.total);
+      setLogs(prev => (append ? [...prev, ...r.items] : r.items));
+    } catch (err) {
+      toast('error', errorMessage(err));
+    } finally {
+      setLoading(false);
     }
-    if (filterLevel) {
-      logs = logs.filter(l => l.level === filterLevel);
-    }
-    if (filterUser) {
-      logs = logs.filter(l => l.user.toLowerCase().includes(filterUser.toLowerCase()));
-    }
-    if (searchQuery) {
-      logs = logs.filter(l => l.message.toLowerCase().includes(searchQuery.toLowerCase()));
-    }
-    if (dateFrom) {
-      logs = logs.filter(l => l.timestamp >= dateFrom);
-    }
-    if (dateTo) {
-      logs = logs.filter(l => l.timestamp <= dateTo + 'T23:59:59');
-    }
+  }, [query, logs.length]);
 
-    return logs;
-  }, [allLogs, activeTab, filterLevel, filterUser, searchQuery, dateFrom, dateTo]);
+  // Перезагрузка при смене фильтров (с задержкой для полей ввода)
+  useEffect(() => {
+    const t = setTimeout(() => load(false), 300);
+    return () => clearTimeout(t);
+  }, [activeTab, filterLevel, filterUser, searchQuery, dateFrom, dateTo]);
 
   const exportCsv = () => {
-    const headers = ['Дата/Время', 'Уровень', 'Категория', 'Пользователь', 'IP', 'Поток', 'Сообщение'];
-    const rows = filteredLogs.map(l => [
-      new Date(l.timestamp).toLocaleString('ru-RU'),
-      l.level,
-      l.category,
-      l.user,
-      l.ip,
-      l.stream,
-      `"${l.message.replace(/"/g, '""')}"`,
-    ]);
-
-    const csv = [headers.join(';'), ...rows.map(r => r.join(';'))].join('\n');
-    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
-    a.download = `logs_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.href = api.logsExportUrl(query());
     a.click();
-    URL.revokeObjectURL(url);
-    toast('success', `Экспортировано ${filteredLogs.length} записей`);
+    toast('info', `Выгрузка ${total} записей…`);
   };
 
   const getLevelColor = (level: LogLevel) => {
@@ -87,12 +77,11 @@ export function LogsPage() {
     }
   };
 
-  const tabs: { id: LogCategory | 'all'; label: string; count: number }[] = [
-    { id: 'all', label: 'Все', count: allLogs.length },
+  const tabs: { id: LogCategory | 'all'; label: string }[] = [
+    { id: 'all', label: 'Все' },
     ...categories.map(cat => ({
       id: cat,
       label: cat === 'auth' ? 'Авторизация' : cat === 'access' ? 'Доступ' : cat === 'stream' ? 'Потоки' : cat === 'error' ? 'Ошибки' : 'Админ',
-      count: allLogs.filter(l => l.category === cat).length,
     })),
   ];
 
@@ -109,7 +98,7 @@ export function LogsPage() {
             <ScrollText className="w-5 h-5 text-blue-400" />
             Журналы событий
           </h2>
-          <p className="text-sm text-gray-500">auth.log, access.log, stream.log, error.log</p>
+          <p className="text-sm text-gray-500">Найдено записей: {total}{loading ? ' • загрузка…' : ''}</p>
         </div>
         <motion.button
           whileHover={{ scale: 1.05 }}
@@ -145,7 +134,6 @@ export function LogsPage() {
             }`}
           >
             {tab.label}
-            <span className="ml-1.5 text-xs opacity-60">{tab.count}</span>
           </motion.button>
         ))}
       </motion.div>
@@ -217,7 +205,7 @@ export function LogsPage() {
               </tr>
             </thead>
             <tbody>
-              {filteredLogs.length === 0 ? (
+              {logs.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="p-8 text-center text-gray-500">
                     <motion.div
@@ -230,12 +218,12 @@ export function LogsPage() {
                   </td>
                 </tr>
               ) : (
-                filteredLogs.slice(0, 200).map((log, index) => (
+                logs.map((log, index) => (
                   <motion.tr 
                     key={log.id}
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: index * 0.02 }}
+                    transition={{ delay: Math.min(index, 20) * 0.02 }}
                     className="border-b border-gray-800/30 hover:bg-gray-800/20 transition-colors group"
                   >
                     <td className="p-3 text-gray-400 text-xs font-mono">
@@ -263,9 +251,12 @@ export function LogsPage() {
             </tbody>
           </table>
         </div>
-        {filteredLogs.length > 200 && (
+        {logs.length < total && (
           <div className="p-3 text-center text-xs text-gray-500 border-t border-gray-800/50 bg-gray-800/20">
-            Показано 200 из {filteredLogs.length} записей. Используйте фильтры для уточнения.
+            Показано {logs.length} из {total}.{' '}
+            <button onClick={() => load(true)} disabled={loading} className="text-blue-400 hover:underline disabled:opacity-50">
+              Показать ещё
+            </button>
           </div>
         )}
       </AnimatedCard>

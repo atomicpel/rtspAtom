@@ -1,0 +1,33 @@
+# Конфигурация MediaMTX для RTSP Atom.
+# Все порты слушаются только на 127.0.0.1: камеры забирает MediaMTX,
+# а браузеры получают видео через панель (порт 8080) с проверкой прав.
+# Пути (камеры) панель добавляет сама через API — вручную их сюда не пишут.
+
+logLevel: info
+logDestinations: [stdout]
+
+# Управляющий API — им пользуется панель.
+api: yes
+apiAddress: 127.0.0.1:9997
+
+metrics: no
+pprof: no
+playback: no
+
+# Собственные серверы протоколов не нужны: MediaMTX только забирает
+# видео с камер и отдаёт его по HLS панели.
+rtsp: no
+rtmp: no
+webrtc: no
+srt: no
+
+hls: yes
+hlsAddress: 127.0.0.1:8888
+# Держать HLS готовым, чтобы видеостена открывалась без задержки.
+hlsAlwaysRemux: yes
+hlsVariant: lowLatency
+hlsSegmentCount: 7
+hlsSegmentDuration: 1s
+hlsPartDuration: 200ms
+
+paths: {}

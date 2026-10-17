@@ -2,47 +2,42 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, Trash2, X, Check, Shield, ShieldAlert, ShieldCheck } from 'lucide-react';
 import { IpRule } from '../lib/types';
-import { getIpRules, saveIpRules, generateId } from '../lib/storage';
-import { validateCidr } from '../lib/ip-check';
-import { logger } from '../lib/logger';
+import { api, errorMessage } from '../lib/api';
+import { usePolling } from '../lib/usePolling';
 import { useToast } from '../components/Toast';
 import { AnimatedCard, StaggerContainer, StaggerItem } from '../components/AnimatedCard';
 
 export function IpFilterPage() {
   const { toast } = useToast();
-  const [rules, setRules] = useState<IpRule[]>(getIpRules());
+  const { data, setData } = usePolling(api.ipRules);
+  const rules: IpRule[] = data?.rules || [];
+  const yourIp = data?.yourIp || '';
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ cidr: '', type: 'white' as 'white' | 'black', priority: 1, comment: '' });
   const [error, setError] = useState('');
 
-  const handleSave = () => {
+  const handleSave = async () => {
     setError('');
-    if (!form.cidr) { setError('Укажите CIDR'); return; }
-    if (!validateCidr(form.cidr)) { setError('Неверный формат CIDR (пример: 192.168.1.0/24)'); return; }
+    if (!form.cidr) { setError('Укажите IP или CIDR'); return; }
     if (!form.comment) { setError('Добавьте комментарий'); return; }
-
-    const newRule: IpRule = {
-      id: generateId(),
-      ...form,
-      createdAt: new Date().toISOString(),
-    };
-
-    const updated = [...rules, newRule].sort((a, b) => a.priority - b.priority);
-    saveIpRules(updated);
-    setRules(updated);
-    setForm({ cidr: '', type: 'white', priority: 1, comment: '' });
-    setShowForm(false);
-    logger.admin(`IP-правило добавлено: ${form.type} ${form.cidr}`);
-    toast('success', `Правило ${form.cidr} добавлено`);
+    try {
+      setData(await api.addIpRule(form));
+      toast('success', `Правило ${form.cidr} добавлено`);
+      setForm({ cidr: '', type: 'white', priority: 1, comment: '' });
+      setShowForm(false);
+    } catch (err) {
+      setError(errorMessage(err));
+    }
   };
 
-  const handleDelete = (rule: IpRule) => {
+  const handleDelete = async (rule: IpRule) => {
     if (!confirm(`Удалить правило ${rule.cidr}?`)) return;
-    const updated = rules.filter(r => r.id !== rule.id);
-    saveIpRules(updated);
-    setRules(updated);
-    logger.admin(`IP-правило удалено: ${rule.cidr}`);
-    toast('info', `Правило ${rule.cidr} удалено`);
+    try {
+      setData(await api.deleteIpRule(rule.id));
+      toast('info', `Правило ${rule.cidr} удалено`);
+    } catch (err) {
+      toast('error', errorMessage(err));
+    }
   };
 
   const whiteRules = rules.filter(r => r.type === 'white');
@@ -61,7 +56,12 @@ export function IpFilterPage() {
             <Shield className="w-5 h-5 text-blue-400" />
             IP-фильтр
           </h2>
-          <p className="text-sm text-gray-500">Белый и чёрный списки IP/CIDR</p>
+          <p className="text-sm text-gray-500">
+            Белый и чёрный списки IP/CIDR • ваш адрес: <span className="font-mono text-blue-400">{yourIp || '…'}</span>
+          </p>
+          <p className="text-[11px] text-gray-600 mt-0.5">
+            Сначала проверяется чёрный список. Если есть белые правила — доступ только из них. С самого сервера (localhost) доступ есть всегда.
+          </p>
         </div>
         <motion.button
           whileHover={{ scale: 1.05 }}

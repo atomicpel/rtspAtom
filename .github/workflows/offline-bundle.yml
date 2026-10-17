@@ -1,0 +1,116 @@
+name: Офлайн-пакет для Astra Linux
+
+on:
+  push:
+    branches: [rtsp-control-panel-0c095, main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  NODE_MAJOR: '24'
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_MAJOR }}
+          cache: npm
+
+      - name: Зависимости фронтенда
+        run: npm ci --no-audit --no-fund
+
+      - name: Проверка типов
+        run: npm run typecheck
+
+      - name: Сборка фронтенда
+        run: npm run build
+
+      - name: Тесты сервера
+        run: npm run test:server
+
+      - name: Скачать Node.js для Linux x64
+        run: |
+          set -euo pipefail
+          VER=$(curl -sf https://nodejs.org/dist/index.json | jq -r --arg m "v${NODE_MAJOR}." '[.[] | select(.version | startswith($m))][0].version')
+          echo "Node.js $VER"
+          mkdir -p dl && cd dl
+          curl -sfLO "https://nodejs.org/dist/$VER/node-$VER-linux-x64.tar.xz"
+          curl -sfL "https://nodejs.org/dist/$VER/SHASUMS256.txt" | grep " node-$VER-linux-x64.tar.xz\$" | sha256sum -c -
+          echo "NODE_TAR=$PWD/node-$VER-linux-x64.tar.xz" >> "$GITHUB_ENV"
+
+      - name: Скачать MediaMTX
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=$(gh api repos/bluenviron/mediamtx/releases/latest --jq .tag_name)
+          echo "MediaMTX $TAG"
+          cd dl
+          gh release download "$TAG" --repo bluenviron/mediamtx --pattern "mediamtx_${TAG}_linux_amd64.tar.gz" --clobber
+          if gh release download "$TAG" --repo bluenviron/mediamtx --pattern "checksums.sha256" --clobber 2>/dev/null; then
+            grep "mediamtx_${TAG}_linux_amd64.tar.gz" checksums.sha256 | sha256sum -c -
+          fi
+          echo "MTX_TAR=$PWD/mediamtx_${TAG}_linux_amd64.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Собрать пакет
+        run: |
+          set -euo pipefail
+          BUNDLE=$(scripts/build-bundle.sh "$NODE_TAR" "$MTX_TAR" out | head -1)
+          echo "BUNDLE=$BUNDLE" >> "$GITHUB_ENV"
+          echo "BUNDLE_NAME=$(basename "$BUNDLE" .tar.gz)" >> "$GITHUB_ENV"
+          ls -lh out/
+
+      - name: Сквозной тест (камера RTSP -> MediaMTX -> панель -> HLS)
+        run: |
+          set -euo pipefail
+          command -v ffmpeg >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null; }
+          mkdir -p e2e && tar -xzf "$BUNDLE" -C e2e
+          D=e2e/$BUNDLE_NAME
+          scripts/e2e.sh "$D/node/bin/node" "$D/mediamtx/mediamtx" "$D/app"
+
+      - name: Проверка установщика в Debian 12 (база Astra 1.8)
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w debian:12 bash scripts/install-test.sh "$BUNDLE"
+
+      - name: Проверка установщика в образе Astra Linux 1.8 (если доступен)
+        continue-on-error: true
+        run: |
+          for img in registry.astralinux.ru/library/astra/ubi18:latest registry.astralinux.ru/astra/ubi18:latest; do
+            if docker pull -q "$img" 2>/dev/null; then
+              docker run --rm -v "$PWD:/w" -w /w "$img" bash scripts/install-test.sh "$BUNDLE"
+              exit $?
+            fi
+          done
+          echo "Образ Astra Linux недоступен — проверка пропущена"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BUNDLE_NAME }}
+          path: out/*
+          retention-days: 30
+
+      - name: Опубликовать в Releases
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            gh release create "$TAG" out/* --title "RTSP Atom $TAG" --notes "$(tar -xzOf "$BUNDLE" "$BUNDLE_NAME/VERSION")"
+          else
+            TAG="offline-${GITHUB_REF_NAME//\//-}"
+            gh release delete "$TAG" --cleanup-tag -y 2>/dev/null || true
+            NOTES=$(printf 'Автоматическая сборка ветки %s (%s).\n\n```\n%s\n```\n\nУстановка: скачайте архив, перенесите на машину и выполните `sudo ./install.sh` (подробно — INSTALL.md внутри архива).' \
+              "$GITHUB_REF_NAME" "${GITHUB_SHA::7}" "$(tar -xzOf "$BUNDLE" "$BUNDLE_NAME/VERSION")")
+            gh release create "$TAG" out/* --prerelease --target "$GITHUB_SHA" \
+              --title "Офлайн-пакет: $GITHUB_REF_NAME" --notes "$NOTES"
+          fi

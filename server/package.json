@@ -1,0 +1,15 @@
+{
+  "name": "rtspatom-server",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Серверная часть панели RTSP Atom (без внешних зависимостей)",
+  "main": "index.js",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning index.js",
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js"
+  }
+}

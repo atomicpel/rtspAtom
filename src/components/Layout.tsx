@@ -4,8 +4,10 @@ import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { 
   LayoutDashboard, LayoutGrid, Server, Video, Users, Shield, ScrollText, 
-  Settings, Info, LogOut, Sun, Moon, Menu, X, Monitor, Sparkles
+  Settings, Info, LogOut, Sun, Moon, Menu, X, Monitor, Sparkles, KeyRound
 } from 'lucide-react';
+import { api, errorMessage } from '../lib/api';
+import { useToast } from './Toast';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -28,6 +30,24 @@ export function Layout({ children, currentPage, onNavigate }: LayoutProps) {
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { toast } = useToast();
+  const [pwOpen, setPwOpen] = useState(false);
+  const [pw, setPw] = useState({ current: '', next: '', repeat: '' });
+  const [pwError, setPwError] = useState('');
+
+  const changePassword = async () => {
+    setPwError('');
+    if (pw.next.length < 8) return setPwError('Новый пароль должен быть не короче 8 символов');
+    if (pw.next !== pw.repeat) return setPwError('Пароли не совпадают');
+    try {
+      await api.changeOwnPassword(pw.current, pw.next);
+      toast('success', 'Пароль изменён. Другие сеансы завершены.');
+      setPwOpen(false);
+      setPw({ current: '', next: '', repeat: '' });
+    } catch (err) {
+      setPwError(errorMessage(err));
+    }
+  };
 
   const filteredMenu = menuItems.filter(item => {
     if (!user) return false;
@@ -159,6 +179,13 @@ export function Layout({ children, currentPage, onNavigate }: LayoutProps) {
               </p>
             </div>
           </div>
+          <button
+            onClick={() => { setPwOpen(true); setPwError(''); }}
+            className="w-full flex items-center gap-2 px-3 py-2 mb-1 rounded-xl text-sm text-gray-400 hover:text-white hover:bg-gray-800/50 transition-all"
+          >
+            <KeyRound className="w-4 h-4" />
+            Сменить пароль
+          </button>
           <motion.button
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
@@ -263,6 +290,43 @@ export function Layout({ children, currentPage, onNavigate }: LayoutProps) {
           <span className="font-semibold text-gradient">115 обрОсН</span>
         </motion.footer>
       </div>
+
+      <AnimatePresence>
+        {pwOpen && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4"
+          >
+            <motion.form
+              onSubmit={(e) => { e.preventDefault(); changePassword(); }}
+              initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
+              className="glass-strong rounded-2xl w-full max-w-sm p-6 space-y-3"
+            >
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-lg font-semibold text-white">Смена пароля</h3>
+                <button type="button" onClick={() => setPwOpen(false)} className="p-1.5 rounded-xl hover:bg-gray-800 text-gray-400">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              {pwError && <p className="text-xs text-red-400 bg-red-950/30 border border-red-700/30 rounded-lg p-2">{pwError}</p>}
+              {([
+                ['current', 'Текущий пароль', 'current-password'],
+                ['next', 'Новый пароль (не короче 8 символов)', 'new-password'],
+                ['repeat', 'Повторите новый пароль', 'new-password'],
+              ] as const).map(([key, label, ac]) => (
+                <input key={key} type="password" placeholder={label} autoComplete={ac}
+                  value={pw[key]} onChange={(e) => setPw({ ...pw, [key]: e.target.value })}
+                  className="w-full px-4 py-2.5 bg-gray-800/50 border border-gray-700/50 rounded-xl text-white text-sm focus:outline-none focus:border-blue-500 transition-all"
+                />
+              ))}
+              <button type="submit"
+                className="w-full py-2.5 px-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white text-sm font-medium rounded-xl"
+              >
+                Сменить пароль
+              </button>
+            </motion.form>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

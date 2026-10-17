@@ -4,9 +4,9 @@ import {
   LayoutGrid, Maximize2, Minimize2, Plus, X, Save,
   Video, Settings, Server, ChevronDown, ChevronRight, RefreshCw
 } from 'lucide-react';
-import { Computer, Stream } from '../lib/types';
-import { getComputersForUser, saveVideoWallState, getVideoWallState } from '../lib/storage';
-import { useAuth } from '../contexts/AuthContext';
+import { Computer, Stream, WallConfig } from '../lib/types';
+import { api, errorMessage } from '../lib/api';
+import { usePolling } from '../lib/usePolling';
 import { useToast } from '../components/Toast';
 import { AnimatedCard, StaggerContainer, StaggerItem } from '../components/AnimatedCard';
 import { VideoPlayer } from '../components/VideoPlayer';
@@ -33,13 +33,6 @@ interface CellData {
   streamId: string | null;
 }
 
-interface VideoWallConfig {
-  id: string;
-  name: string;
-  layout: LayoutType;
-  cells: CellData[];
-  createdAt: string;
-}
 
 const createEmptyCells = (): CellData[] => {
   const arr: CellData[] = [];
@@ -49,54 +42,59 @@ const createEmptyCells = (): CellData[] => {
 
 export function VideoWallPage() {
   const { toast } = useToast();
-  const { user } = useAuth();
-  
-  // Load computers with error handling
-  const availableComputers = (() => {
-    try {
-      return getComputersForUser(user) || [];
-    } catch (error) {
-      console.error('Error loading computers for video wall:', error);
-      return [];
-    }
-  })();
-  
-  // Load saved state from localStorage
-  const savedState = getVideoWallState();
-  
-  const [layout, setLayout] = useState<LayoutType>(
-    (savedState?.layout as LayoutType) || '2x2'
-  );
-  const [cells, setCells] = useState<CellData[]>(
-    savedState?.cells || createEmptyCells()
-  );
+  const { data: computersData } = usePolling(api.computers, 10000);
+  const availableComputers: Computer[] = computersData || [];
+
+  const [loaded, setLoaded] = useState(false);
+  const [layout, setLayout] = useState<LayoutType>('2x2');
+  const [cells, setCells] = useState<CellData[]>(createEmptyCells());
   const [showPicker, setShowPicker] = useState<number | null>(null);
-  const [expandedComputers, setExpandedComputers] = useState<Set<string>>(
-    new Set(availableComputers.map(c => c.id))
-  );
+  const [expandedComputers, setExpandedComputers] = useState<Set<string>>(new Set());
   const [fullscreenCell, setFullscreenCell] = useState<number | null>(null);
   const [isWallFullscreen, setIsWallFullscreen] = useState(false);
-  const [refreshInterval, setRefreshInterval] = useState<number>(
-    savedState?.refreshInterval ?? 0
-  );
+  const [refreshInterval, setRefreshInterval] = useState<number>(0);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
-  const [configs, setConfigs] = useState<VideoWallConfig[]>(() => {
-    const saved = localStorage.getItem('rtsp_video_wall_configs_v4');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [configs, setConfigs] = useState<WallConfig[]>([]);
 
-  // Save state to localStorage whenever it changes
+  // Загрузка сохранённого состояния видеостены пользователя с сервера
   useEffect(() => {
-    saveVideoWallState({ layout, cells, refreshInterval });
-  }, [layout, cells, refreshInterval]);
+    let alive = true;
+    Promise.all([api.wallState(), api.wallConfigs()])
+      .then(([state, cfgs]) => {
+        if (!alive) return;
+        const full = createEmptyCells();
+        (state.cells || []).forEach((c, i) => { if (i < 16) full[i] = c; });
+        setLayout(state.layout || '2x2');
+        setCells(full);
+        setRefreshInterval(state.refreshInterval || 0);
+        setConfigs(cfgs);
+      })
+      .catch((err) => toast('error', `Не удалось загрузить видеостену: ${errorMessage(err)}`))
+      .finally(() => alive && setLoaded(true));
+    return () => { alive = false; };
+  }, []);
+
+  // Раскрываем список компьютеров в окне выбора при первой загрузке
+  useEffect(() => {
+    if (computersData && expandedComputers.size === 0) {
+      setExpandedComputers(new Set(computersData.map(c => c.id)));
+    }
+  }, [computersData]);
+
+  // Сохранение состояния на сервере (с задержкой, чтобы не слать запрос на каждое действие)
+  useEffect(() => {
+    if (!loaded) return;
+    const t = setTimeout(() => {
+      api.saveWallState({ layout, cells, refreshInterval }).catch(() => {});
+    }, 600);
+    return () => clearTimeout(t);
+  }, [layout, cells, refreshInterval, loaded]);
 
   // Auto-refresh
   useEffect(() => {
     if (refreshInterval === 0) return;
     const interval = setInterval(() => {
       setLastRefresh(new Date());
-      // Force re-render of cells
-      setCells(prev => [...prev]);
     }, refreshInterval * 1000);
     return () => clearInterval(interval);
   }, [refreshInterval]);
@@ -180,45 +178,42 @@ export function VideoWallPage() {
     toast('info', 'Ячейка очищена');
   };
 
-  const handleSaveConfig = () => {
+  const handleSaveConfig = async () => {
     const name = prompt('Название конфигурации:');
     if (!name) return;
-    const config: VideoWallConfig = {
-      id: Date.now().toString(36),
-      name,
-      layout,
-      cells: cells.slice(0, getCellCount()),
-      createdAt: new Date().toISOString(),
-    };
-    const updated = [...configs, config];
-    setConfigs(updated);
-    localStorage.setItem('rtsp_video_wall_configs_v4', JSON.stringify(updated));
-    toast('success', `Конфигурация "${name}" сохранена`);
+    try {
+      setConfigs(await api.addWallConfig({ name, layout, cells: cells.slice(0, getCellCount()) }));
+      toast('success', `Конфигурация «${name}» сохранена`);
+    } catch (err) {
+      toast('error', errorMessage(err));
+    }
   };
 
-  const handleLoadConfig = (config: VideoWallConfig) => {
+  const handleLoadConfig = (config: WallConfig) => {
     setLayout(config.layout);
     const newCells = createEmptyCells();
     config.cells.forEach((c, i) => {
       if (i < 16) newCells[i] = c;
     });
     setCells(newCells);
-    toast('success', `Конфигурация "${config.name}" загружена`);
+    toast('success', `Конфигурация «${config.name}» загружена`);
   };
 
-  const handleDeleteConfig = (configId: string, e: React.MouseEvent) => {
+  const handleDeleteConfig = async (configId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!confirm('Удалить конфигурацию?')) return;
-    const updated = configs.filter(c => c.id !== configId);
-    setConfigs(updated);
-    localStorage.setItem('rtsp_video_wall_configs_v4', JSON.stringify(updated));
-    toast('info', 'Конфигурация удалена');
+    try {
+      setConfigs(await api.deleteWallConfig(configId));
+      toast('info', 'Конфигурация удалена');
+    } catch (err) {
+      toast('error', errorMessage(err));
+    }
   };
 
   const handleAutoFill = () => {
     const allStreams: { computerId: string; stream: Stream }[] = [];
     availableComputers.forEach(computer => {
-      (computer.streams || []).filter(s => s.isActive && s.status === 'online').forEach(stream => {
+      (computer.streams || []).filter(s => s.isActive && (s.status === 'online' || s.status === 'idle')).forEach(stream => {
         allStreams.push({ computerId: computer.id, stream });
       });
     });
@@ -248,7 +243,7 @@ export function VideoWallPage() {
     const { computer, stream } = getCellData(index);
     return (
       <motion.div
-        key={`${index}-${lastRefresh.getTime()}`}
+        key={index}
         initial={{ opacity: 0, scale: 0.8 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ delay: 0.02 * index, duration: 0.3 }}
@@ -261,12 +256,13 @@ export function VideoWallPage() {
         {stream && computer ? (
           <>
             <VideoPlayer
-              url={stream.url}
-              protocol={stream.protocol}
+              streamId={stream.id}
               name={stream.name}
+              reloadKey={lastRefresh.getTime()}
+              disabled={!stream.isActive || !computer.isActive}
               className="absolute inset-0"
             />
-            
+
             {/* Название потока */}
             <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-2 pointer-events-none">
               <p className={`${isFullscreenMode ? 'text-sm' : 'text-xs'} text-white font-medium truncate`}>
@@ -277,23 +273,9 @@ export function VideoWallPage() {
               </p>
             </div>
 
-            {stream.status === 'online' && (
-              <motion.div
-                initial={{ opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
-                className="absolute top-2 left-2 flex items-center gap-1 bg-black/60 px-2 py-0.5 rounded-lg backdrop-blur-sm border border-red-500/30"
-              >
-                <motion.div
-                  animate={{ scale: [1, 1.3, 1], opacity: [1, 0.5, 1] }}
-                  transition={{ duration: 1, repeat: Infinity }}
-                  className="w-1.5 h-1.5 rounded-full bg-red-500"
-                />
-                <span className="text-[10px] text-white font-medium">LIVE</span>
-              </motion.div>
-            )}
             <div className={`absolute top-2 right-2 w-2 h-2 rounded-full ${
               stream.status === 'online' ? 'bg-green-500 shadow-lg shadow-green-500/50' :
-              stream.status === 'reconnecting' ? 'bg-yellow-500' : 'bg-red-500'
+              stream.status === 'reconnecting' ? 'bg-yellow-500' : stream.status === 'idle' ? 'bg-blue-400' : 'bg-red-500'
             }`} />
             {!isFullscreenMode && (
               <>
@@ -577,7 +559,7 @@ export function VideoWallPage() {
                                     >
                                       <div className={`w-2 h-2 rounded-full shrink-0 ${
                                         stream.status === 'online' ? 'bg-green-500' :
-                                        stream.status === 'reconnecting' ? 'bg-yellow-500' : 'bg-red-500'
+                                        stream.status === 'reconnecting' ? 'bg-yellow-500' : stream.status === 'idle' ? 'bg-blue-400' : 'bg-red-500'
                                       }`} />
                                       <Video className="w-3.5 h-3.5 text-gray-500 shrink-0" />
                                       <div className="flex-1 min-w-0">
@@ -586,7 +568,7 @@ export function VideoWallPage() {
                                         </p>
                                         <div className="flex items-center gap-1">
                                           <span className="text-[9px] text-purple-400 uppercase">{stream.protocol}</span>
-                                          <span className="text-[9px] text-gray-600 font-mono truncate">{stream.url}</span>
+                                          {stream.tracks.length > 0 && <span className="text-[9px] text-gray-500">{stream.tracks.join(', ')}</span>}
                                         </div>
                                       </div>
                                       {stream.status === 'online' && (
@@ -638,29 +620,18 @@ export function VideoWallPage() {
                 className="relative w-full h-full max-w-6xl max-h-[80vh] bg-black rounded-2xl overflow-hidden border border-gray-700/50"
               >
                 <VideoPlayer
-                  url={stream.url}
-                  protocol={stream.protocol}
+                  streamId={stream.id}
                   name={stream.name}
+                  disabled={!stream.isActive || !computer.isActive}
                   className="absolute inset-0"
                 />
                 
                 {/* Информация о потоке */}
                 <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 pointer-events-none">
                   <p className="text-xl text-white font-medium">{stream.name}</p>
-                  <p className="text-sm text-gray-300 mt-1">{computer.name} • {computer.ip}</p>
-                  <p className="text-xs text-purple-400 mt-1 uppercase">{stream.protocol}</p>
-                  <p className="text-xs text-gray-500 font-mono mt-1">{stream.url}</p>
+                  <p className="text-sm text-gray-300 mt-1">{computer.name}{computer.ip ? ` • ${computer.ip}` : ''}</p>
+                  <p className="text-xs text-purple-400 mt-1 uppercase">{stream.protocol}{stream.tracks.length ? ` • ${stream.tracks.join(', ')}` : ''}</p>
                 </div>
-                {stream.status === 'online' && (
-                  <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}
-                    className="absolute top-4 left-4 flex items-center gap-2 bg-black/60 px-3 py-1.5 rounded-xl backdrop-blur-sm border border-red-500/30"
-                  >
-                    <motion.div animate={{ scale: [1, 1.3, 1], opacity: [1, 0.5, 1] }}
-                      transition={{ duration: 1, repeat: Infinity }} className="w-2 h-2 rounded-full bg-red-500"
-                    />
-                    <span className="text-sm text-white font-medium">LIVE</span>
-                  </motion.div>
-                )}
                 <motion.button whileHover={{ scale: 1.1, rotate: 90 }} whileTap={{ scale: 0.9 }}
                   onClick={() => setFullscreenCell(null)}
                   className="absolute top-4 right-4 p-2 bg-gray-800/80 hover:bg-gray-700 text-white rounded-xl backdrop-blur-sm"

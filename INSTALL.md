@@ -1,567 +1,131 @@
-# 📥 Инструкция по установке
+# Установка RTSP Atom на Astra Linux SE 1.8 (без интернета)
 
-## Системные требования
+Пакет `rtspatom-<версия>-astra-x86_64.tar.gz` содержит всё необходимое:
+Node.js, MediaMTX, серверную часть и собранный веб-интерфейс.
+На целевой машине ничего скачивать не нужно.
 
-### Минимальные требования
-- **ОС:** Windows 10/11, Linux (Ubuntu 20.04+, Astra Linux), macOS 10.15+
-- **Node.js:** 18.0 или выше
-- **npm:** 8.0 или выше
-- **RAM:** 2 GB
-- **Диск:** 500 MB свободного места
-- **Браузер:** Chrome 90+, Firefox 88+, Safari 14+, Edge 90+
+## Требования
 
-### Рекомендуемые требования
-- **Node.js:** 20 LTS
-- **RAM:** 4 GB
-- **Диск:** 1 GB свободного места
-- **Сеть:** Локальная сеть с доступом к IP-камерам
+- Astra Linux SE 1.8 («Орёл», «Воронеж» или «Смоленск»), x86_64. Подойдёт и Debian 12 или новее.
+- Замкнутая программная среда (ЗПС) **выключена**. Если её включат, бинарные файлы
+  `/opt/rtspatom/node/bin/node` и `/opt/rtspatom/mediamtx/mediamtx` придётся подписать
+  ключом организации (`bsign`) и добавить ключ в ЗПС.
+- Права администратора (`sudo`).
+- Камеры доступны с этой машины по сети (RTSP, обычно порт 554).
 
----
+## Где взять пакет
 
-## 🚀 Быстрая установка (5 минут)
+На компьютере с интернетом откройте репозиторий на GitHub → **Releases** →
+«Офлайн-пакет: rtsp-control-panel-0c095» и скачайте два файла:
 
-### Шаг 1: Установка Node.js
+- `rtspatom-…-astra-x86_64.tar.gz` — сам пакет;
+- `rtspatom-…-astra-x86_64.tar.gz.sha256` — контрольная сумма.
 
-#### Windows
-1. Скачайте Node.js: https://nodejs.org/
-2. Запустите установщик
-3. Следуйте инструкциям
-4. Проверьте установку:
-```bash
-node --version
-npm --version
-```
+Перенесите оба файла на целевую машину, например на флешке.
 
-#### Linux (Ubuntu/Debian)
-```bash
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt-get install -y nodejs
-```
-
-#### Linux (Astra Linux)
-```bash
-# Если есть доступ к интернету
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt-get install -y nodejs
-
-# Если сеть изолирована - используйте локальный пакет Node.js
-# Скопируйте nodejs.tar.gz на сервер и распакуйте
-tar -xzf nodejs.tar.gz
-export PATH=$PATH:/path/to/nodejs/bin
-```
-
-#### macOS
-```bash
-# Через Homebrew
-brew install node
-
-# Или скачайте установщик: https://nodejs.org/
-```
-
-### Шаг 2: Скачивание проекта
-
-#### Вариант A: Из архива
-```bash
-# Распакуйте архив rtsp-server.zip
-unzip rtsp-server.zip
-cd rtsp-server
-```
-
-#### Вариант B: Из Git репозитория
-```bash
-git clone https://your-repo-url/rtsp-server.git
-cd rtsp-server
-```
-
-### Шаг 3: Установка зависимостей
+## Установка
 
 ```bash
-npm install
+sha256sum -c rtspatom-*-astra-x86_64.tar.gz.sha256   # должно быть: OK
+tar -xzf rtspatom-*-astra-x86_64.tar.gz
+cd rtspatom-*-astra-x86_64
+sudo ./install.sh
 ```
 
-Это установит все необходимые пакеты:
-- React, TypeScript, Vite
-- Tailwind CSS, Framer Motion
-- hls.js, mpegts.js
-- Recharts, Lucide React
-- И другие зависимости
+Установщик:
 
-### Шаг 4: Запуск в режиме разработки
+1. проверит целостность файлов и совместимость системы;
+2. создаст служебного пользователя `rtspatom`;
+3. скопирует программу в `/opt/rtspatom`, настройки — в `/etc/rtspatom`, база будет в `/var/lib/rtspatom`;
+4. установит и запустит службы `rtspatom-mediamtx` и `rtspatom`;
+5. попросит придумать пароль администратора (логин `admin`).
+
+Параметры:
+
+| Параметр | Назначение |
+|---|---|
+| `--port 8080` | порт веб-интерфейса (по умолчанию 8080) |
+| `--tls` | включить HTTPS с самоподписанным сертификатом |
+| `--admin ЛОГИН` | логин первого администратора |
+| `--no-start` | не запускать службы после установки |
+
+После установки откройте в браузере `http://<IP-сервера>:8080`.
+
+## Первые шаги
+
+1. **Компьютеры → Добавить компьютер.** Компьютер — это группа камер: пост, объект, участок.
+2. Раскройте компьютер и нажмите **Добавить поток**. Вставьте RTSP-адрес камеры, например
+   `rtsp://192.168.1.64:554/Streaming/Channels/101`. Укажите логин и пароль камеры
+   и нажмите **Проверить подключение к камере**.
+3. **Видеостена**: выберите сетку и нажмите на ячейку, чтобы назначить ей камеру. Кнопка **Авто** заполнит сетку сама.
+4. **Пользователи**: заведите операторов и наблюдателей. Для каждого можно ограничить список компьютеров
+   и адреса, с которых разрешён вход.
+
+> **Кодек.** Браузеры надёжно показывают видео **H.264**. Если камера отдаёт H.265 (HEVC),
+> переключите её основной или дополнительный поток на H.264 в настройках камеры.
+> Проверка подключения предупредит об этом.
+
+## Как это устроено
+
+```
+Камеры ──RTSP──▶ MediaMTX (127.0.0.1) ──HLS──▶ Панель :8080 ──▶ Браузеры
+                     ▲  управляет через API        │ проверка входа и прав
+                     └─────────────────────────────┘
+```
+
+- MediaMTX слушает только `127.0.0.1`, снаружи открыт один порт панели.
+- Видео идёт к браузеру через панель, поэтому без входа смотреть его нельзя. Пользователь видит
+  только те камеры, к которым ему дан доступ.
+
+## Обслуживание
 
 ```bash
-npm run dev
+systemctl status rtspatom rtspatom-mediamtx    # состояние служб
+journalctl -u rtspatom -f                       # журнал панели
+journalctl -u rtspatom-mediamtx -f              # журнал видеосервера
+sudo systemctl restart rtspatom                 # перезапуск панели
+
+sudo rtspatom-admin list-users                  # список пользователей
+sudo rtspatom-admin reset-password admin        # сброс пароля
+sudo rtspatom-admin create-admin ivanov         # ещё один администратор
+sudo rtspatom-admin unblock-ip                  # снять блокировку входа
+sudo rtspatom-admin clear-ip-rules              # удалить правила IP-фильтра, если закрыли себе доступ
 ```
 
-Вы увидите:
-```
-  VITE v5.0.0  ready in 500 ms
+С самого сервера (`127.0.0.1`) IP-фильтр не действует, поэтому доступ к панели оттуда есть всегда.
 
-  ➜  Local:   http://localhost:5173/
-  ➜  Network: use --host to expose
-```
+**Резервная копия:** достаточно скопировать `/var/lib/rtspatom/` и `/etc/rtspatom/`
+(предварительно `sudo systemctl stop rtspatom`).
 
-### Шаг 5: Открытие в браузере
+## Обновление
 
-Откройте: **http://localhost:5173**
+Распакуйте новый пакет и снова выполните `sudo ./install.sh`. База, пользователи и
+настройки сохранятся. Если вы правили `/etc/rtspatom/mediamtx.yml`, ваш файл останется
+на месте, а новый вариант будет записан рядом как `mediamtx.yml.new`.
 
-### Шаг 6: Вход в систему
-
-- **Логин:** `admin`
-- **Пароль:** `admin`
-
-Готово! Система работает.
-
----
-
-## 🏭 Установка для продакшена
-
-### Шаг 1: Сборка проекта
+## Удаление
 
 ```bash
-npm run build
+sudo /opt/rtspatom/uninstall.sh          # данные и настройки сохраняются
+sudo /opt/rtspatom/uninstall.sh --purge  # удалить всё
 ```
 
-Результат будет в папке `dist/`:
-```
-dist/
-├── index.html
-├── assets/
-│   ├── index-[hash].js
-│   └── index-[hash].css
-└── ...
-```
+## Если что-то не работает
 
-### Шаг 2: Развёртывание на веб-сервере
+| Признак | Что проверить |
+|---|---|
+| Страница не открывается с других машин | межсетевой экран: `sudo ufw allow 8080/tcp`; правила IP-фильтра |
+| «Служба MediaMTX недоступна» | `systemctl status rtspatom-mediamtx`, `journalctl -u rtspatom-mediamtx -n 50` |
+| Камера «нет сигнала» | адрес и пароль камеры (кнопка «Проверить»); пинг до камеры; попробуйте транспорт TCP |
+| Видео есть в проверке, но не в браузере | кодек H.265 — переключите камеру на H.264 |
+| Забыт пароль администратора | `sudo rtspatom-admin reset-password admin` |
+| Вход заблокирован после ошибок | подождите 15 минут или `sudo rtspatom-admin unblock-ip` |
+| Службы не стартуют после включения ЗПС | подпишите `node` и `mediamtx` (см. «Требования») |
 
-#### Вариант A: Nginx
-
-1. Скопируйте папку `dist/` на сервер:
-```bash
-scp -r dist/* user@server:/var/www/rtsp-server/
-```
-
-2. Создайте конфиг Nginx `/etc/nginx/sites-available/rtsp-server`:
-```nginx
-server {
-    listen 80;
-    server_name your-domain.local;
-    
-    root /var/www/rtsp-server;
-    index index.html;
-    
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-    
-    # Кэширование статики
-    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg)$ {
-        expires 1y;
-        add_header Cache-Control "public, immutable";
-    }
-}
-```
-
-3. Активируйте сайт:
-```bash
-sudo ln -s /etc/nginx/sites-available/rtsp-server /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl reload nginx
-```
-
-#### Вариант B: Apache
-
-1. Скопируйте папку `dist/` на сервер:
-```bash
-scp -r dist/* user@server:/var/www/html/rtsp-server/
-```
-
-2. Создайте `.htaccess` в `/var/www/html/rtsp-server/`:
-```apache
-RewriteEngine On
-RewriteBase /
-RewriteRule ^index\.html$ - [L]
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule . /index.html [L]
-```
-
-3. Включите mod_rewrite:
-```bash
-sudo a2enmod rewrite
-sudo systemctl restart apache2
-```
-
-#### Вариант C: Простой HTTP сервер (для тестирования)
+## Ручной запуск (без systemd)
 
 ```bash
-# Установите serve
-npm install -g serve
-
-# Запустите сервер
-serve -s dist -l 8080
+sudo -u rtspatom /opt/rtspatom/mediamtx/mediamtx /etc/rtspatom/mediamtx.yml &
+sudo -u rtspatom env RTSPATOM_CONFIG=/etc/rtspatom/config.json \
+  /opt/rtspatom/node/bin/node --disable-warning=ExperimentalWarning /opt/rtspatom/app/server/index.js
 ```
-
-Откройте: **http://localhost:8080**
-
-### Шаг 3: Настройка HTTPS (опционально)
-
-#### Самоподписанный сертификат (для изолированной сети)
-
-```bash
-# Создайте папку для сертификатов
-mkdir -p /etc/nginx/ssl
-
-# Сгенерируйте самоподписанный сертификат
-sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-  -keyout /etc/nginx/ssl/rtsp.key \
-  -out /etc/nginx/ssl/rtsp.crt
-
-# Обновите конфиг Nginx
-server {
-    listen 443 ssl;
-    server_name your-domain.local;
-    
-    ssl_certificate /etc/nginx/ssl/rtsp.crt;
-    ssl_certificate_key /etc/nginx/ssl/rtsp.key;
-    
-    root /var/www/rtsp-server;
-    index index.html;
-    
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-}
-
-# Перенаправление HTTP → HTTPS
-server {
-    listen 80;
-    server_name your-domain.local;
-    return 301 https://$server_name$request_uri;
-}
-```
-
----
-
-## 🎥 Настройка MediaMTX (для RTSP камер)
-
-### Шаг 1: Скачивание MediaMTX
-
-#### Windows
-1. Скачайте: https://github.com/bluenviron/mediamtx/releases
-2. Распакуйте `mediamtx_windows.zip`
-3. Запустите `mediamtx.exe`
-
-#### Linux
-```bash
-# Скачайте последнюю версию
-wget https://github.com/bluenviron/mediamtx/releases/latest/download/mediamtx_linux_amd64.tar.gz
-
-# Распакуйте
-tar -xzf mediamtx_linux_amd64.tar.gz
-
-# Запустите
-./mediamtx
-```
-
-#### macOS
-```bash
-# Через Homebrew
-brew install mediamtx
-
-# Или скачайте бинарник
-wget https://github.com/bluenviron/mediamtx/releases/latest/download/mediamtx_darwin_amd64.tar.gz
-tar -xzf mediamtx_darwin_amd64.tar.gz
-./mediamtx
-```
-
-### Шаг 2: Конфигурация
-
-Откройте файл `mediamtx.yml`:
-
-```yaml
-# Общие настройки
-logLevel: info
-logDestinations: [stdout]
-
-# HTTP сервер
-api: yes
-apiAddress: :9997
-
-# Metrics
-metrics: yes
-metricsAddress: :9998
-
-# RTSP сервер
-rtsp: yes
-rtspAddress: :8554
-rtspEncryption: "no"
-
-# RTMP сервер
-rtmp: yes
-rtmpAddress: :1935
-
-# HLS сервер
-hls: yes
-hlsAddress: :8888
-
-# Пути (камеры)
-paths:
-  # Пример 1: RTSP камера
-  camera1:
-    source: rtsp://192.168.1.100:554/stream1
-    sourceProtocol: tcp
-    sourceOnDemand: yes
-  
-  # Пример 2: Другая RTSP камера
-  camera2:
-    source: rtsp://192.168.1.101:554/stream1
-    sourceProtocol: tcp
-    sourceOnDemand: yes
-  
-  # Пример 3: HLS поток (обход CORS)
-  ntv:
-    source: https://cdn.ntv.ru/unknown_russia/tracks-v1a1/playlist.m3u8
-    sourceOnDemand: yes
-  
-  # Пример 4: Локальный файл
-  test:
-    source: publisher
-```
-
-### Шаг 3: Запуск MediaMTX
-
-```bash
-./mediamtx
-```
-
-Вы увидите:
-```
-2024/01/01 12:00:00 INF [RTSP] listener opened on :8554 (TCP), :8554 (UDP)
-2024/01/01 12:00:00 INF [RTMP] listener opened on :1935
-2024/01/01 12:00:00 INF [HLS] listener opened on :8888
-```
-
-### Шаг 4: Использование в RTSP Сервере
-
-В RTSP Сервере добавьте потоки:
-
-- **HTTP-FLV** (низкая задержка): `http://localhost:8888/camera1`
-- **HLS**: `http://localhost:8888/camera1/hls`
-
-Пример:
-1. Откройте "Компьютеры"
-2. Добавьте компьютер "Офис"
-3. Добавьте поток:
-   - Название: "Камера 1"
-   - URL: `http://localhost:8888/camera1/hls`
-   - Протокол: HLS (определяется автоматически)
-4. Видео начнёт воспроизводиться
-
-### Шаг 5: Автозапуск MediaMTX (Linux)
-
-Создайте systemd сервис `/etc/systemd/system/mediamtx.service`:
-
-```ini
-[Unit]
-Description=MediaMTX Media Server
-After=network.target
-
-[Service]
-Type=simple
-User=www-data
-WorkingDirectory=/opt/mediamtx
-ExecStart=/opt/mediamtx/mediamtx
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Активируйте:
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable mediamtx
-sudo systemctl start mediamtx
-sudo systemctl status mediamtx
-```
-
----
-
-## 🔧 Устранение неполадок
-
-### Проблема: `npm install` не работает
-
-**Решение:**
-```bash
-# Очистите кэш npm
-npm cache clean --force
-
-# Удалите node_modules и package-lock.json
-rm -rf node_modules package-lock.json
-
-# Установите заново
-npm install
-```
-
-### Проблема: Порт 5173 занят
-
-**Решение:**
-```bash
-# Запустите на другом порту
-npm run dev -- --port 3000
-```
-
-### Проблема: Видео не воспроизводится
-
-**Решение:**
-1. Откройте консоль браузера (F12)
-2. Проверьте ошибки
-3. Убедитесь что URL доступен
-4. Проверьте CORS заголовки
-5. Используйте MediaMTX для конвертации
-
-### Проблема: MediaMTX не запускается
-
-**Решение:**
-```bash
-# Проверьте что порт не занят
-sudo lsof -i :8554
-sudo lsof -i :8888
-
-# Если занят - убейте процесс
-sudo kill -9 <PID>
-
-# Запустите заново
-./mediamtx
-```
-
-### Проблема: Не могу войти в систему
-
-**Решение:**
-```bash
-# Очистите localStorage
-# Откройте консоль браузера (F12) и выполните:
-localStorage.clear()
-
-# Перезагрузите страницу
-# Войдите с admin/admin
-```
-
----
-
-## 📊 Мониторинг и логи
-
-### Логи RTSP Сервера
-
-Логи хранятся в localStorage и доступны на странице "Журналы".
-
-### Логи MediaMTX
-
-```bash
-# Просмотр логов
-journalctl -u mediamtx -f
-
-# Или если запущен напрямую
-./mediamtx 2>&1 | tee mediamtx.log
-```
-
-### Метрики MediaMTX
-
-```bash
-# Prometheus метрики
-curl http://localhost:9998/metrics
-```
-
----
-
-## 🔄 Обновление
-
-### Шаг 1: Остановите сервер
-
-```bash
-# Если запущен в режиме разработки - Ctrl+C
-
-# Если запущен как сервис
-sudo systemctl stop rtsp-server
-```
-
-### Шаг 2: Создайте резервную копию
-
-```bash
-# Сохраните настройки
-cp -r dist/ dist-backup-$(date +%Y%m%d)/
-```
-
-### Шаг 3: Обновите код
-
-```bash
-# Из Git
-git pull
-
-# Или распакуйте новую версию
-unzip rtsp-server-new.zip
-```
-
-### Шаг 4: Переустановите зависимости
-
-```bash
-npm install
-```
-
-### Шаг 5: Пересоберите
-
-```bash
-npm run build
-```
-
-### Шаг 6: Запустите
-
-```bash
-# Режим разработки
-npm run dev
-
-# Или продакшен
-sudo systemctl start rtsp-server
-```
-
----
-
-## 📞 Поддержка
-
-### Документация
-- README.md — основное описание
-- ARCHITECTURE.md — архитектура системы
-- CHANGELOG.md — история изменений
-
-### Технологии
-- Node.js: https://nodejs.org/
-- React: https://react.dev/
-- MediaMTX: https://github.com/bluenviron/mediamtx
-
-### Контакты
-- Email: support@example.com
-- Telegram: @rtsp_support
-
----
-
-## ✅ Чек-лист установки
-
-- [ ] Node.js установлен (версия 18+)
-- [ ] npm установлен (версия 8+)
-- [ ] Проект скачан/клонирован
-- [ ] Зависимости установлены (`npm install`)
-- [ ] Сервер запущен (`npm run dev`)
-- [ ] Браузер открыт (http://localhost:5173)
-- [ ] Вход выполнен (admin/admin)
-- [ ] MediaMTX установлен (для RTSP камер)
-- [ ] MediaMTX настроен (mediamtx.yml)
-- [ ] MediaMTX запущен
-- [ ] Тестовые потоки воспроизводятся
-- [ ] RTSP камеры добавлены (если есть)
-
----
-
-**Версия документа:** 1.0  
-**Дата обновления:** 2024  
-**Совместимость:** Windows, Linux, macOS

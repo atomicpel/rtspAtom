@@ -4,8 +4,8 @@ import {
   Plus, Edit2, Trash2, UserCheck, UserX, Key, X, Check, Users as UsersIcon, Shield, ShieldCheck
 } from 'lucide-react';
 import { User, UserRole } from '../lib/types';
-import { getUsers, saveUsers, generateId, hashPassword, getComputers } from '../lib/storage';
-import { logger } from '../lib/logger';
+import { api, errorMessage } from '../lib/api';
+import { usePolling } from '../lib/usePolling';
 import { useToast } from '../components/Toast';
 import { useAuth } from '../contexts/AuthContext';
 import { AnimatedCard, StaggerContainer, StaggerItem } from '../components/AnimatedCard';
@@ -14,118 +14,103 @@ export function UsersPage() {
   const { toast } = useToast();
   const { refreshUser, user: currentUser } = useAuth();
   
-  const [users, setUsers] = useState<User[]>(() => {
-    const rawUsers = getUsers();
-    return rawUsers.map(u => ({
-      ...u,
-      isAdmin: u.isAdmin ?? false,
-      allowedComputerIds: u.allowedComputerIds ?? [],
-      allowedCidrs: u.allowedCidrs ?? [],
-    }));
-  });
-  
+  const { data: usersData, reload } = usePolling(api.users);
+  const users: User[] = usersData || [];
+  const { data: computersData } = usePolling(api.computers);
+  const allComputers = computersData || [];
+
   const [showForm, setShowForm] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [showPasswordChange, setShowPasswordChange] = useState<string | null>(null);
   const [newPassword, setNewPassword] = useState('');
+  const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({
-    login: '', 
-    role: 'viewer' as UserRole, 
+    login: '',
+    password: '',
+    role: 'viewer' as UserRole,
     isAdmin: false,
-    allowedCidrs: '', 
+    allowedCidrs: '',
     allowedComputerIds: [] as string[],
-    isActive: true 
+    isActive: true
   });
 
-  const allComputers = getComputers();
-
   const resetForm = () => {
-    setForm({ login: '', role: 'viewer', isAdmin: false, allowedCidrs: '', allowedComputerIds: [], isActive: true });
+    setForm({ login: '', password: '', role: 'viewer', isAdmin: false, allowedCidrs: '', allowedComputerIds: [], isActive: true });
     setEditingUser(null);
     setShowForm(false);
   };
 
-  const handleSave = () => {
+  const run = async (fn: () => Promise<unknown>, ok: string, type: 'success' | 'info' | 'warning' = 'success') => {
+    setBusy(true);
+    try {
+      await fn();
+      toast(type, ok);
+      await reload();
+      return true;
+    } catch (err) {
+      toast('error', errorMessage(err));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleSave = async () => {
     if (!form.login) return;
-
-    let updated: User[];
+    const payload = {
+      login: form.login,
+      role: form.isAdmin ? 'admin' : form.role,
+      isAdmin: form.isAdmin,
+      allowedCidrs: form.allowedCidrs.split(',').map(s => s.trim()).filter(Boolean),
+      allowedComputerIds: form.allowedComputerIds,
+      isActive: form.isActive,
+    };
+    let ok: boolean;
     if (editingUser) {
-      updated = users.map(u => u.id === editingUser.id ? {
-        ...u,
-        login: form.login,
-        role: form.isAdmin ? 'admin' : form.role,
-        isAdmin: form.isAdmin,
-        allowedCidrs: form.allowedCidrs.split(',').map(s => s.trim()).filter(Boolean),
-        allowedComputerIds: form.allowedComputerIds,
-        isActive: form.isActive,
-      } : u);
-      logger.admin(`Пользователь обновлён: ${form.login}`, form.login);
-      toast('success', `Пользователь "${form.login}" обновлён`);
+      ok = await run(() => api.updateUser(editingUser.id, payload), `Пользователь «${form.login}» обновлён`);
     } else {
-      const newUser: User = {
-        id: generateId(),
-        login: form.login,
-        passwordHash: hashPassword('password'),
-        role: form.isAdmin ? 'admin' : form.role,
-        isAdmin: form.isAdmin,
-        allowedCidrs: form.allowedCidrs.split(',').map(s => s.trim()).filter(Boolean),
-        allowedComputerIds: form.allowedComputerIds,
-        isActive: form.isActive,
-        createdAt: new Date().toISOString(),
-      };
-      updated = [...users, newUser];
-      logger.admin(`Пользователь создан: ${form.login}`, form.login);
-      toast('success', `Пользователь "${form.login}" создан`);
+      if (form.password.length < 8) {
+        toast('error', 'Пароль должен быть не короче 8 символов');
+        return;
+      }
+      ok = await run(() => api.createUser({ ...payload, password: form.password }), `Пользователь «${form.login}» создан`);
     }
-
-    saveUsers(updated);
-    setUsers(updated);
-    if (editingUser?.id === currentUser?.id || (!editingUser && form.login === currentUser?.login)) {
-      refreshUser();
+    if (ok) {
+      if (editingUser?.id === currentUser?.id) refreshUser();
+      resetForm();
     }
-    resetForm();
   };
 
   const handleDelete = (user: User) => {
-    if (user.login === 'admin') {
-      toast('error', 'Нельзя удалить основного администратора');
-      return;
-    }
-    if (!confirm(`Удалить пользователя "${user.login}"?`)) return;
-    const updated = users.filter(u => u.id !== user.id);
-    saveUsers(updated);
-    setUsers(updated);
-    logger.admin(`Пользователь удалён: ${user.login}`);
-    toast('info', `Пользователь "${user.login}" удалён`);
+    if (!confirm(`Удалить пользователя «${user.login}»?`)) return;
+    run(() => api.deleteUser(user.id), `Пользователь «${user.login}» удалён`, 'info');
   };
 
   const handleToggleActive = (user: User) => {
-    const updated = users.map(u => u.id === user.id ? { ...u, isActive: !u.isActive } : u);
-    saveUsers(updated);
-    setUsers(updated);
-    if (user.id === currentUser?.id) refreshUser();
-    logger.admin(`Пользователь ${user.isActive ? 'деактивирован' : 'активирован'}: ${user.login}`, user.login);
-    toast(user.isActive ? 'warning' : 'success', `Пользователь "${user.login}" ${user.isActive ? 'деактивирован' : 'активирован'}`);
+    run(
+      () => api.updateUser(user.id, { isActive: !user.isActive }),
+      `Пользователь «${user.login}» ${user.isActive ? 'отключён' : 'активирован'}`,
+      user.isActive ? 'warning' : 'success',
+    );
   };
 
-  const handleChangePassword = (userId: string) => {
-    if (!newPassword || newPassword.length < 4) {
-      toast('error', 'Пароль должен быть не менее 4 символов');
+  const handleChangePassword = async (userId: string) => {
+    if (newPassword.length < 8) {
+      toast('error', 'Пароль должен быть не короче 8 символов');
       return;
     }
-    const updated = users.map(u => u.id === userId ? { ...u, passwordHash: hashPassword(newPassword) } : u);
-    saveUsers(updated);
-    setUsers(updated);
-    setShowPasswordChange(null);
-    setNewPassword('');
-    logger.admin(`Пароль изменён для: ${users.find(u => u.id === userId)?.login}`);
-    toast('success', 'Пароль успешно изменён');
+    const ok = await run(() => api.setUserPassword(userId, newPassword), 'Пароль изменён, сеансы пользователя завершены');
+    if (ok) {
+      setShowPasswordChange(null);
+      setNewPassword('');
+    }
   };
 
   const startEdit = (user: User) => {
     setForm({
       login: user.login,
-      role: user.role,
+      password: '',
+      role: user.role === 'admin' ? 'operator' : user.role,
       isAdmin: user.isAdmin ?? false,
       allowedCidrs: (user.allowedCidrs ?? []).join(', '),
       allowedComputerIds: user.allowedComputerIds ?? [],
@@ -277,7 +262,7 @@ export function UsersPage() {
                       >
                         <Edit2 className="w-4 h-4" />
                       </motion.button>
-                      {user.login !== 'admin' && (
+                      {user.id !== currentUser?.id && (
                         <motion.button
                           whileHover={{ scale: 1.2, rotate: 10 }}
                           whileTap={{ scale: 0.9 }}
@@ -333,9 +318,22 @@ export function UsersPage() {
                     value={form.login}
                     onChange={e => setForm({...form, login: e.target.value})}
                     className="w-full px-4 py-2.5 bg-gray-800/50 border border-gray-700/50 rounded-xl text-white text-sm focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
-                    disabled={!!editingUser}
                   />
                 </div>
+
+                {!editingUser && (
+                  <div>
+                    <label className="block text-sm text-gray-300 mb-1.5">Пароль</label>
+                    <input
+                      type="password"
+                      value={form.password}
+                      autoComplete="new-password"
+                      onChange={e => setForm({...form, password: e.target.value})}
+                      className="w-full px-4 py-2.5 bg-gray-800/50 border border-gray-700/50 rounded-xl text-white text-sm focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
+                      placeholder="Не короче 8 символов"
+                    />
+                  </div>
+                )}
 
                 <div className="flex items-center gap-4">
                   <div className="flex-1">
@@ -346,7 +344,6 @@ export function UsersPage() {
                       disabled={form.isAdmin}
                       className="w-full px-4 py-2.5 bg-gray-800/50 border border-gray-700/50 rounded-xl text-white text-sm focus:outline-none focus:border-blue-500 disabled:opacity-50"
                     >
-                      <option value="admin">Администратор</option>
                       <option value="operator">Оператор</option>
                       <option value="viewer">Наблюдатель</option>
                     </select>
@@ -368,7 +365,7 @@ export function UsersPage() {
                 </div>
 
                 <div>
-                  <label className="block text-sm text-gray-300 mb-1.5">Разрешённые CIDR (через запятую)</label>
+                  <label className="block text-sm text-gray-300 mb-1.5">Разрешённые адреса для входа (CIDR через запятую, пусто — любые)</label>
                   <input
                     type="text"
                     value={form.allowedCidrs}
@@ -427,11 +424,9 @@ export function UsersPage() {
                 </div>
               </div>
 
-              {!editingUser && (
-                <p className="text-xs text-yellow-500 mt-3 bg-yellow-950/20 p-2 rounded-lg border border-yellow-700/30">
-                  Пароль по умолчанию: «password». Смените после создания.
-                </p>
-              )}
+              <p className="text-[11px] text-gray-500 mt-3">
+                Оператор: просмотр видео и журналов. Наблюдатель: только просмотр видео.
+              </p>
 
               <div className="flex gap-3 mt-6 relative">
                 <motion.button
@@ -446,6 +441,7 @@ export function UsersPage() {
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
                   onClick={handleSave}
+                  disabled={busy}
                   className="flex-1 py-2.5 px-4 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white text-sm font-medium rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20"
                 >
                   <Check className="w-4 h-4" />
@@ -488,7 +484,7 @@ export function UsersPage() {
                 value={newPassword}
                 onChange={e => setNewPassword(e.target.value)}
                 className="w-full px-4 py-2.5 bg-gray-800/50 border border-gray-700/50 rounded-xl text-white text-sm focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all mb-4"
-                placeholder="Новый пароль (мин. 4 символа)"
+                placeholder="Новый пароль (не короче 8 символов)"
                 autoFocus
               />
               <motion.button

@@ -3,8 +3,6 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { ToastProvider } from './components/Toast';
 import { AnimatedBackground } from './components/AnimatedBackground';
-import { initializeStorage, initializeSeedData, getComputers } from './lib/storage';
-import { initializeRtspMock } from './lib/rtsp-mock';
 import { Layout } from './components/Layout';
 import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
@@ -28,40 +26,9 @@ const PAGE_ROLES: Record<string, string[]> = {
 };
 
 function AppContent() {
-  const { user, isFirstRun } = useAuth();
+  const { user, checking } = useAuth();
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [isWallFullscreen, setIsWallFullscreen] = useState(false);
-
-  useEffect(() => {
-    try {
-      initializeStorage();
-      
-      // Try to load data, if it fails, reset
-      let computers = getComputers();
-      if (!computers || computers.length === 0) {
-        // No data, initialize seed data
-        initializeSeedData();
-        computers = getComputers();
-      }
-      
-      initializeRtspMock(computers);
-    } catch (error) {
-      console.error('Initialization error:', error);
-      // If initialization fails, reset all data
-      try {
-        localStorage.clear();
-        sessionStorage.clear();
-        initializeStorage();
-        initializeSeedData();
-        const computers = getComputers();
-        initializeRtspMock(computers);
-        // Force reload to start fresh
-        window.location.reload();
-      } catch (retryError) {
-        console.error('Retry failed:', retryError);
-      }
-    }
-  }, []);
 
   const canAccessPage = (page: string): boolean => {
     if (!user) return false;
@@ -97,7 +64,16 @@ function AppContent() {
     };
   }, []);
 
-  if (!user || isFirstRun) {
+  if (checking) {
+    return (
+      <>
+        <AnimatedBackground />
+        <div className="min-h-screen flex items-center justify-center text-gray-400 text-sm">Загрузка…</div>
+      </>
+    );
+  }
+
+  if (!user) {
     return (
       <>
         <AnimatedBackground />

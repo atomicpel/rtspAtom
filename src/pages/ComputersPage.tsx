@@ -1,54 +1,47 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  Plus, Edit2, Trash2, Power, X, Check, Server, Video, 
-  ChevronDown, ChevronRight, Monitor, Radio, Globe, Film
+import {
+  Plus, Edit2, Trash2, Power, X, Check, Server, Video,
+  ChevronDown, ChevronRight, Monitor, Radio, Loader2, Eye,
 } from 'lucide-react';
-import { Computer, Stream, StreamProtocol } from '../lib/types';
-import { getComputers, saveComputers, generateId } from '../lib/storage';
-import { logger } from '../lib/logger';
+import { Computer, Stream, StreamTransport } from '../lib/types';
+import { api, errorMessage, protocolFromUrl } from '../lib/api';
+import { usePolling } from '../lib/usePolling';
 import { useToast } from '../components/Toast';
 import { AnimatedCard, StaggerContainer, StaggerItem } from '../components/AnimatedCard';
-import { detectProtocolFromUrl } from '../components/VideoPlayer';
 
-const PROTOCOLS: { value: StreamProtocol; label: string; icon: React.ElementType }[] = [
-  { value: 'rtsp', label: 'RTSP', icon: Radio },
-  { value: 'http', label: 'HTTP', icon: Globe },
-  { value: 'https', label: 'HTTPS', icon: Globe },
-  { value: 'hls', label: 'HLS (m3u8)', icon: Film },
-  { value: 'm3u8', label: 'M3U8', icon: Film },
-  { value: 'ts', label: 'MPEG-TS', icon: Film },
-  { value: 'flv', label: 'FLV', icon: Film },
-  { value: 'rtmp', label: 'RTMP', icon: Radio },
-  { value: 'webrtc', label: 'WebRTC', icon: Globe },
-];
+const STATUS_DOT: Record<string, string> = {
+  online: 'bg-green-500 shadow-lg shadow-green-500/50',
+  reconnecting: 'bg-yellow-500',
+  idle: 'bg-blue-400',
+  offline: 'bg-red-500',
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  online: 'в сети',
+  reconnecting: 'нет сигнала, переподключение',
+  idle: 'по запросу',
+  offline: 'отключён',
+};
+
+const emptyStream = { name: '', url: '', transport: 'auto' as StreamTransport, sourceLogin: '', sourcePassword: '' };
 
 export function ComputersPage() {
   const { toast } = useToast();
-  
-  // Load computers with error handling
-  const [computers, setComputers] = useState<Computer[]>(() => {
-    try {
-      return getComputers() || [];
-    } catch (error) {
-      console.error('Error loading computers:', error);
-      return [];
-    }
-  });
+  const { data, reload, error } = usePolling(api.computers, 5000);
+  const computers: Computer[] = data || [];
+
   const [showComputerForm, setShowComputerForm] = useState(false);
   const [editingComputer, setEditingComputer] = useState<Computer | null>(null);
   const [expandedComputers, setExpandedComputers] = useState<Set<string>>(new Set());
   const [showStreamForm, setShowStreamForm] = useState<string | null>(null);
   const [editingStream, setEditingStream] = useState<Stream | null>(null);
-  
-  const [computerForm, setComputerForm] = useState({
-    name: '', hostname: '', ip: '', description: ''
-  });
-  const [streamForm, setStreamForm] = useState({
-    name: '', url: '', protocol: 'hls' as StreamProtocol, sourceLogin: '', sourcePassword: ''
-  });
-  const [streamCheckStatus, setStreamCheckStatus] = useState<'idle' | 'checking' | 'success' | 'error' | 'warning'>('idle');
-  const [streamCheckMessage, setStreamCheckMessage] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const [computerForm, setComputerForm] = useState({ name: '', hostname: '', ip: '', description: '' });
+  const [streamForm, setStreamForm] = useState(emptyStream);
+  const [checkState, setCheckState] = useState<'idle' | 'checking' | 'success' | 'error' | 'warning'>('idle');
+  const [checkMessage, setCheckMessage] = useState('');
 
   const resetComputerForm = () => {
     setComputerForm({ name: '', hostname: '', ip: '', description: '' });
@@ -57,211 +50,140 @@ export function ComputersPage() {
   };
 
   const resetStreamForm = () => {
-    setStreamForm({ name: '', url: '', protocol: 'hls', sourceLogin: '', sourcePassword: '' });
+    setStreamForm(emptyStream);
     setEditingStream(null);
     setShowStreamForm(null);
-    setStreamCheckStatus('idle');
-    setStreamCheckMessage('');
+    setCheckState('idle');
+    setCheckMessage('');
   };
 
-  const handleSaveComputer = () => {
-    if (!computerForm.name || !computerForm.ip) return;
-    
+  const run = async (fn: () => Promise<unknown>, okMsg: string, okType: 'success' | 'info' | 'warning' = 'success') => {
+    setSaving(true);
     try {
-      let updated: Computer[];
-      if (editingComputer) {
-        updated = computers.map(c => c.id === editingComputer.id ? {
-          ...c, 
-          name: computerForm.name, 
-          hostname: computerForm.hostname,
-          ip: computerForm.ip, 
-          description: computerForm.description,
-        } : c);
-        toast('success', `Компьютер "${computerForm.name}" обновлён`);
-      } else {
-        const newComputer: Computer = {
-          id: generateId(),
-          name: computerForm.name,
-          hostname: computerForm.hostname,
-          ip: computerForm.ip,
-          description: computerForm.description,
-          streams: [],
-          isActive: true,
-          status: 'online',
-          createdAt: new Date().toISOString(),
-        };
-        updated = [...computers, newComputer];
-        toast('success', `Компьютер "${computerForm.name}" добавлен`);
-      }
-      saveComputers(updated);
-      setComputers(updated);
-      resetComputerForm();
-    } catch (error) {
-      console.error('Error saving computer:', error);
-      toast('error', 'Ошибка при сохранении компьютера');
+      await fn();
+      toast(okType, okMsg);
+      await reload();
+      return true;
+    } catch (err) {
+      toast('error', errorMessage(err));
+      return false;
+    } finally {
+      setSaving(false);
     }
+  };
+
+  const handleSaveComputer = async () => {
+    if (!computerForm.name.trim()) {
+      toast('error', 'Укажите название компьютера');
+      return;
+    }
+    const ok = editingComputer
+      ? await run(() => api.updateComputer(editingComputer.id, computerForm), `Компьютер «${computerForm.name}» обновлён`)
+      : await run(async () => {
+          const c = await api.createComputer(computerForm);
+          setExpandedComputers((prev) => new Set(prev).add(c.id));
+        }, `Компьютер «${computerForm.name}» добавлен`);
+    if (ok) resetComputerForm();
   };
 
   const handleDeleteComputer = (computer: Computer) => {
-    if (!confirm(`Удалить компьютер "${computer.name}" со всеми потоками?`)) return;
-    const updated = computers.filter(c => c.id !== computer.id);
-    saveComputers(updated);
-    setComputers(updated);
-    toast('info', `Компьютер "${computer.name}" удалён`);
+    if (!confirm(`Удалить компьютер «${computer.name}» со всеми потоками?`)) return;
+    run(() => api.deleteComputer(computer.id), `Компьютер «${computer.name}» удалён`, 'info');
   };
 
   const handleToggleComputer = (computer: Computer) => {
-    const updated = computers.map(c => c.id === computer.id ? {
-      ...c, isActive: !c.isActive,
-      status: (!c.isActive ? 'online' : 'offline') as Computer['status']
-    } : c);
-    saveComputers(updated);
-    setComputers(updated);
-    toast(computer.isActive ? 'warning' : 'success', `Компьютер "${computer.name}" ${computer.isActive ? 'отключён' : 'включён'}`);
+    run(
+      () => api.updateComputer(computer.id, { isActive: !computer.isActive }),
+      `Компьютер «${computer.name}» ${computer.isActive ? 'отключён' : 'включён'}`,
+      computer.isActive ? 'warning' : 'success',
+    );
   };
 
-  const handleSaveStream = (computerId: string) => {
-    if (!streamForm.name || !streamForm.url) return;
-    
-    try {
-      const updated = computers.map(c => {
-        if (c.id !== computerId) return c;
-        const computerStreams = c.streams || [];
-        let streams: Stream[];
-        if (editingStream) {
-          streams = computerStreams.map(s => s.id === editingStream.id ? { 
-            ...s, 
-            name: streamForm.name,
-            url: streamForm.url,
-            protocol: streamForm.protocol,
-            sourceLogin: streamForm.sourceLogin,
-            sourcePassword: streamForm.sourcePassword,
-          } : s);
-        } else {
-          const newStream: Stream = {
-            id: generateId(),
-            name: streamForm.name,
-            url: streamForm.url,
-            protocol: streamForm.protocol,
-            sourceLogin: streamForm.sourceLogin,
-            sourcePassword: streamForm.sourcePassword,
-            isActive: true,
-            status: 'online',
-          };
-          streams = [...computerStreams, newStream];
-        }
-        return { ...c, streams };
-      });
-      saveComputers(updated);
-      setComputers(updated);
-      toast('success', editingStream ? `Поток "${streamForm.name}" обновлён` : `Поток "${streamForm.name}" добавлен`);
-      resetStreamForm();
-    } catch (error) {
-      console.error('Error saving stream:', error);
-      toast('error', 'Ошибка при сохранении потока');
+  const handleSaveStream = async (computerId: string) => {
+    if (!streamForm.name.trim() || !streamForm.url.trim()) {
+      toast('error', 'Укажите название и URL потока');
+      return;
     }
+    const payload = {
+      name: streamForm.name,
+      url: streamForm.url,
+      transport: streamForm.transport,
+      sourceLogin: streamForm.sourceLogin,
+      sourcePassword: streamForm.sourcePassword,
+    };
+    const ok = editingStream
+      ? await run(() => api.updateStream(editingStream.id, payload), `Поток «${streamForm.name}» обновлён`)
+      : await run(() => api.createStream(computerId, payload), `Поток «${streamForm.name}» добавлен`);
+    if (ok) resetStreamForm();
   };
 
   const checkStream = async () => {
-    if (!streamForm.url) {
-      setStreamCheckStatus('error');
-      setStreamCheckMessage('Введите URL потока');
+    if (!streamForm.url.trim()) {
+      setCheckState('error');
+      setCheckMessage('Введите URL потока');
       return;
     }
-
-    setStreamCheckStatus('checking');
-    setStreamCheckMessage('Проверка потока...');
-
-    const detectedProtocol = detectProtocolFromUrl(streamForm.url);
-    setStreamForm(prev => ({ ...prev, protocol: detectedProtocol }));
-
+    setCheckState('checking');
+    setCheckMessage('Подключаюсь к камере (до 12 секунд)…');
     try {
-      // Для HLS потоков проверяем доступность m3u8 файла
-      if (detectedProtocol === 'hls' || detectedProtocol === 'm3u8') {
-        const response = await fetch(streamForm.url, { 
-          method: 'GET',
-          mode: 'no-cors'
-        });
-        
-        // no-cors возвращает opaque response, но если нет ошибки - значит URL доступен
-        setStreamCheckStatus('success');
-        setStreamCheckMessage('✓ HLS поток доступен');
+      const r = await api.probeStream({
+        url: streamForm.url,
+        transport: streamForm.transport,
+        sourceLogin: streamForm.sourceLogin,
+        sourcePassword: streamForm.sourcePassword,
+        streamId: editingStream?.id,
+      });
+      if (!r.ok) {
+        setCheckState('error');
+        setCheckMessage('✗ Видео не получено. Проверьте адрес, логин/пароль и доступность камеры по сети.');
+      } else if (r.warning) {
+        setCheckState('warning');
+        setCheckMessage(`⚠ Поток получен (${r.tracks.join(', ')}). ${r.warning}`);
+      } else {
+        setCheckState('success');
+        setCheckMessage(`✓ Поток получен: ${r.tracks.join(', ') || 'дорожки определены'}`);
       }
-      // Для HTTP/HTTPS проверяем доступность
-      else if (detectedProtocol === 'http' || detectedProtocol === 'https') {
-        const response = await fetch(streamForm.url, { 
-          method: 'HEAD',
-          mode: 'no-cors'
-        });
-        setStreamCheckStatus('success');
-        setStreamCheckMessage('✓ HTTP поток доступен');
-      }
-      // Для RTSP/RTMP/FLV предупреждаем о необходимости конвертера
-      else {
-        setStreamCheckStatus('warning');
-        setStreamCheckMessage(`⚠ ${detectedProtocol.toUpperCase()} требует сервер-конвертер`);
-      }
-    } catch (error) {
-      console.error('Stream check error:', error);
-      setStreamCheckStatus('error');
-      setStreamCheckMessage('✗ Поток недоступен или заблокирован CORS');
+    } catch (err) {
+      setCheckState('error');
+      setCheckMessage(`✗ ${errorMessage(err)}`);
     }
   };
 
-  const handleDeleteStream = (computerId: string, stream: Stream) => {
-    if (!confirm(`Удалить поток "${stream.name}"?`)) return;
-    const updated = computers.map(c => {
-      if (c.id !== computerId) return c;
-      return { ...c, streams: (c.streams || []).filter(s => s.id !== stream.id) };
-    });
-    saveComputers(updated);
-    setComputers(updated);
-    toast('info', `Поток "${stream.name}" удалён`);
+  const handleDeleteStream = (stream: Stream) => {
+    if (!confirm(`Удалить поток «${stream.name}»?`)) return;
+    run(() => api.deleteStream(stream.id), `Поток «${stream.name}» удалён`, 'info');
   };
 
-  const handleToggleStream = (computerId: string, stream: Stream) => {
-    const updated = computers.map(c => {
-      if (c.id !== computerId) return c;
-      return {
-        ...c,
-        streams: (c.streams || []).map(s => s.id === stream.id ? {
-          ...s, isActive: !s.isActive,
-          status: (!s.isActive ? 'online' : 'offline') as Stream['status']
-        } : s)
-      };
-    });
-    saveComputers(updated);
-    setComputers(updated);
+  const handleToggleStream = (stream: Stream) => {
+    run(
+      () => api.updateStream(stream.id, { isActive: !stream.isActive }),
+      `Поток «${stream.name}» ${stream.isActive ? 'отключён' : 'включён'}`,
+      stream.isActive ? 'warning' : 'success',
+    );
   };
 
   const toggleExpand = (computerId: string) => {
-    const newExpanded = new Set(expandedComputers);
-    if (newExpanded.has(computerId)) newExpanded.delete(computerId);
-    else newExpanded.add(computerId);
-    setExpandedComputers(newExpanded);
+    const next = new Set(expandedComputers);
+    if (next.has(computerId)) next.delete(computerId);
+    else next.add(computerId);
+    setExpandedComputers(next);
   };
 
   const startEditStream = (computerId: string, stream: Stream) => {
     setStreamForm({
-      name: stream.name, url: stream.url, protocol: stream.protocol,
-      sourceLogin: stream.sourceLogin, sourcePassword: stream.sourcePassword,
+      name: stream.name, url: stream.url, transport: stream.transport,
+      sourceLogin: stream.sourceLogin, sourcePassword: '',
     });
     setEditingStream(stream);
     setShowStreamForm(computerId);
+    setCheckState('idle');
+    setCheckMessage('');
   };
 
-  const getProtocolIcon = (protocol: StreamProtocol) => {
-    const found = PROTOCOLS.find(p => p.value === protocol);
-    return found ? found.icon : Radio;
-  };
-
-  const getProtocolLabel = (protocol: StreamProtocol) => {
-    const found = PROTOCOLS.find(p => p.value === protocol);
-    return found ? found.label : protocol.toUpperCase();
-  };
-
-  const totalStreams = computers.reduce((sum, c) => sum + (c.streams?.length || 0), 0);
-  const activeStreams = computers.reduce((sum, c) => sum + (c.streams || []).filter(s => s.isActive).length, 0);
+  const totalStreams = computers.reduce((sum, c) => sum + c.streams.length, 0);
+  const onlineStreams = computers.reduce((sum, c) => sum + c.streams.filter((s) => s.status === 'online').length, 0);
+  const detected = protocolFromUrl(streamForm.url);
+  const inputCls = 'w-full px-4 py-2.5 bg-gray-800/50 border border-gray-700/50 rounded-xl text-white text-sm focus:outline-none focus:border-blue-500 transition-all';
 
   return (
     <div className="space-y-6">
@@ -272,7 +194,7 @@ export function ComputersPage() {
             Компьютеры
           </h2>
           <p className="text-sm text-gray-500">
-            Удалённые компьютеры с потоками • {computers.length} компьютеров • {activeStreams}/{totalStreams} потоков активно
+            {computers.length} компьютеров • {onlineStreams}/{totalStreams} потоков в сети
           </p>
         </div>
         <motion.button
@@ -285,8 +207,12 @@ export function ComputersPage() {
         </motion.button>
       </motion.div>
 
+      {error && (
+        <div className="p-3 rounded-xl bg-red-950/40 border border-red-700/40 text-red-300 text-sm">{error}</div>
+      )}
+
       <StaggerContainer className="space-y-3">
-        {computers.map(computer => {
+        {computers.map((computer) => {
           const isExpanded = expandedComputers.has(computer.id);
           return (
             <StaggerItem key={computer.id}>
@@ -298,19 +224,18 @@ export function ComputersPage() {
                   >
                     {isExpanded ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
                   </motion.button>
-                  <div className={`w-3 h-3 rounded-full ${
-                    computer.status === 'online' ? 'bg-green-500 shadow-lg shadow-green-500/50' :
-                    computer.status === 'reconnecting' ? 'bg-yellow-500' : 'bg-red-500'
-                  }`} />
-                  <div className="flex-1 min-w-0">
+                  <div className={`w-3 h-3 rounded-full ${STATUS_DOT[computer.status]}`} title={STATUS_LABEL[computer.status]} />
+                  <div className="flex-1 min-w-0 cursor-pointer" onClick={() => toggleExpand(computer.id)}>
                     <h3 className="text-sm font-medium text-white">{computer.name}</h3>
                     <p className="text-xs text-gray-500 font-mono">
-                      {computer.hostname} • {computer.ip} • {(computer.streams || []).length} потоков
+                      {[computer.hostname, computer.ip].filter(Boolean).join(' • ')}
+                      {(computer.hostname || computer.ip) ? ' • ' : ''}{computer.streams.length} потоков
                     </p>
                   </div>
                   <div className="flex items-center gap-1">
                     <motion.button whileHover={{ scale: 1.2 }} whileTap={{ scale: 0.9 }}
-                      onClick={() => handleToggleComputer(computer)}
+                      onClick={() => handleToggleComputer(computer)} disabled={saving}
+                      title={computer.isActive ? 'Отключить' : 'Включить'}
                       className={`p-1.5 rounded-lg transition-all ${computer.isActive ? 'text-green-400 hover:bg-green-950/30' : 'text-gray-500 hover:bg-gray-800'}`}
                     >
                       <Power className="w-4 h-4" />
@@ -321,12 +246,14 @@ export function ComputersPage() {
                         setEditingComputer(computer);
                         setShowComputerForm(true);
                       }}
+                      title="Изменить"
                       className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-800 transition-all"
                     >
                       <Edit2 className="w-4 h-4" />
                     </motion.button>
                     <motion.button whileHover={{ scale: 1.2, rotate: 10 }} whileTap={{ scale: 0.9 }}
-                      onClick={() => handleDeleteComputer(computer)}
+                      onClick={() => handleDeleteComputer(computer)} disabled={saving}
+                      title="Удалить"
                       className="p-1.5 rounded-lg text-red-400 hover:bg-red-950/30 transition-all"
                     >
                       <Trash2 className="w-4 h-4" />
@@ -342,52 +269,53 @@ export function ComputersPage() {
                     >
                       <div className="p-4 space-y-2">
                         {computer.description && <p className="text-xs text-gray-500 mb-3">{computer.description}</p>}
-                        {(computer.streams || []).map(stream => {
-                          const ProtocolIcon = getProtocolIcon(stream.protocol);
-                          return (
-                            <motion.div key={stream.id} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}
-                              className="flex items-center gap-3 p-2.5 bg-gray-800/30 rounded-lg border border-gray-700/30 group hover:border-blue-500/30 transition-all"
-                            >
-                              <div className={`w-2 h-2 rounded-full ${
-                                stream.status === 'online' ? 'bg-green-500' :
-                                stream.status === 'reconnecting' ? 'bg-yellow-500' : 'bg-red-500'
-                              }`} />
-                              <ProtocolIcon className="w-4 h-4 text-purple-400" />
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2">
-                                  <p className="text-xs font-medium text-white">{stream.name}</p>
-                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-950/50 text-purple-400 border border-purple-700/30">
-                                    {getProtocolLabel(stream.protocol)}
-                                  </span>
-                                </div>
-                                <p className="text-[10px] text-gray-500 font-mono truncate">{stream.url}</p>
+                        {computer.streams.map((stream) => (
+                          <div key={stream.id}
+                            className="flex items-center gap-3 p-2.5 bg-gray-800/30 rounded-lg border border-gray-700/30 group hover:border-blue-500/30 transition-all"
+                          >
+                            <div className={`w-2 h-2 rounded-full ${STATUS_DOT[stream.status]}`} title={STATUS_LABEL[stream.status]} />
+                            <Radio className="w-4 h-4 text-purple-400" />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="text-xs font-medium text-white">{stream.name}</p>
+                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-950/50 text-purple-400 border border-purple-700/30 uppercase">
+                                  {stream.protocol}{stream.protocol === 'rtsp' && stream.transport !== 'auto' ? ` / ${stream.transport}` : ''}
+                                </span>
+                                {stream.tracks.length > 0 && (
+                                  <span className="text-[9px] text-gray-400">{stream.tracks.join(', ')}</span>
+                                )}
+                                {stream.viewers > 0 && (
+                                  <span className="text-[9px] text-blue-300 flex items-center gap-0.5"><Eye className="w-2.5 h-2.5" />{stream.viewers}</span>
+                                )}
+                                <span className="text-[9px] text-gray-500">{STATUS_LABEL[stream.status]}</span>
                               </div>
-                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <motion.button whileHover={{ scale: 1.2 }} whileTap={{ scale: 0.9 }}
-                                  onClick={() => handleToggleStream(computer.id, stream)}
-                                  className={`p-1 rounded ${stream.isActive ? 'text-green-400' : 'text-gray-500'}`}
-                                >
-                                  <Power className="w-3 h-3" />
-                                </motion.button>
-                                <motion.button whileHover={{ scale: 1.2 }} whileTap={{ scale: 0.9 }}
-                                  onClick={() => startEditStream(computer.id, stream)}
-                                  className="p-1 rounded text-gray-400 hover:bg-gray-700"
-                                >
-                                  <Edit2 className="w-3 h-3" />
-                                </motion.button>
-                                <motion.button whileHover={{ scale: 1.2 }} whileTap={{ scale: 0.9 }}
-                                  onClick={() => handleDeleteStream(computer.id, stream)}
-                                  className="p-1 rounded text-red-400 hover:bg-red-950/30"
-                                >
-                                  <Trash2 className="w-3 h-3" />
-                                </motion.button>
-                              </div>
-                            </motion.div>
-                          );
-                        })}
+                              <p className="text-[10px] text-gray-500 font-mono truncate">
+                                {stream.url}{stream.sourceLogin ? ` (логин: ${stream.sourceLogin})` : ''}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
+                              <button onClick={() => handleToggleStream(stream)} disabled={saving}
+                                title={stream.isActive ? 'Отключить' : 'Включить'}
+                                className={`p-1 rounded ${stream.isActive ? 'text-green-400' : 'text-gray-500'}`}
+                              >
+                                <Power className="w-3.5 h-3.5" />
+                              </button>
+                              <button onClick={() => startEditStream(computer.id, stream)} title="Изменить"
+                                className="p-1 rounded text-gray-400 hover:bg-gray-700"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                              <button onClick={() => handleDeleteStream(stream)} disabled={saving} title="Удалить"
+                                className="p-1 rounded text-red-400 hover:bg-red-950/30"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
                         <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
                           onClick={() => {
-                            setStreamForm({ name: '', url: '', protocol: 'rtsp', sourceLogin: '', sourcePassword: '' });
+                            setStreamForm(emptyStream);
                             setEditingStream(null);
                             setShowStreamForm(computer.id);
                           }}
@@ -406,14 +334,15 @@ export function ComputersPage() {
         })}
       </StaggerContainer>
 
-      {computers.length === 0 && (
+      {data && computers.length === 0 && (
         <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="text-center py-16 text-gray-500">
           <Server className="w-16 h-16 mx-auto mb-4 opacity-30" />
           <p className="text-lg">Нет настроенных компьютеров</p>
+          <p className="text-sm mt-1">Добавьте компьютер, затем подключите к нему камеры</p>
         </motion.div>
       )}
 
-      {/* Computer Form Modal */}
+      {/* Форма компьютера */}
       <AnimatePresence>
         {showComputerForm && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -427,201 +356,174 @@ export function ComputersPage() {
                   <Monitor className="w-5 h-5 text-blue-400" />
                   {editingComputer ? 'Редактировать компьютер' : 'Новый компьютер'}
                 </h3>
-                <motion.button whileHover={{ scale: 1.1, rotate: 90 }} whileTap={{ scale: 0.9 }}
-                  onClick={resetComputerForm} className="p-1.5 rounded-xl hover:bg-gray-800 text-gray-400"
-                >
+                <button onClick={resetComputerForm} className="p-1.5 rounded-xl hover:bg-gray-800 text-gray-400">
                   <X className="w-5 h-5" />
-                </motion.button>
+                </button>
               </div>
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm text-gray-300 mb-1.5">Название</label>
-                  <input type="text" value={computerForm.name}
-                    onChange={e => setComputerForm({...computerForm, name: e.target.value})}
-                    className="w-full px-4 py-2.5 bg-gray-800/50 border border-gray-700/50 rounded-xl text-white text-sm focus:outline-none focus:border-blue-500 transition-all"
-                    placeholder="КПП-1"
+                  <input type="text" value={computerForm.name} autoFocus
+                    onChange={(e) => setComputerForm({ ...computerForm, name: e.target.value })}
+                    className={inputCls} placeholder="КПП-1"
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-sm text-gray-300 mb-1.5">Hostname</label>
                     <input type="text" value={computerForm.hostname}
-                      onChange={e => setComputerForm({...computerForm, hostname: e.target.value})}
-                      className="w-full px-4 py-2.5 bg-gray-800/50 border border-gray-700/50 rounded-xl text-white text-sm font-mono focus:outline-none focus:border-blue-500 transition-all"
-                      placeholder="kpp1-server"
+                      onChange={(e) => setComputerForm({ ...computerForm, hostname: e.target.value })}
+                      className={`${inputCls} font-mono`} placeholder="kpp1-server"
                     />
                   </div>
                   <div>
                     <label className="block text-sm text-gray-300 mb-1.5">IP-адрес</label>
                     <input type="text" value={computerForm.ip}
-                      onChange={e => setComputerForm({...computerForm, ip: e.target.value})}
-                      className="w-full px-4 py-2.5 bg-gray-800/50 border border-gray-700/50 rounded-xl text-white text-sm font-mono focus:outline-none focus:border-blue-500 transition-all"
-                      placeholder="192.168.1.10"
+                      onChange={(e) => setComputerForm({ ...computerForm, ip: e.target.value })}
+                      className={`${inputCls} font-mono`} placeholder="192.168.1.10"
                     />
                   </div>
                 </div>
                 <div>
                   <label className="block text-sm text-gray-300 mb-1.5">Описание</label>
-                  <textarea value={computerForm.description}
-                    onChange={e => setComputerForm({...computerForm, description: e.target.value})}
-                    rows={2}
-                    className="w-full px-4 py-2.5 bg-gray-800/50 border border-gray-700/50 rounded-xl text-white text-sm focus:outline-none focus:border-blue-500 transition-all resize-none"
-                    placeholder="Описание..."
+                  <textarea value={computerForm.description} rows={2}
+                    onChange={(e) => setComputerForm({ ...computerForm, description: e.target.value })}
+                    className={`${inputCls} resize-none`} placeholder="Описание…"
                   />
                 </div>
+                <p className="text-[11px] text-gray-500">
+                  Компьютер — это группа камер (объект, пост, участок). Камеры добавляются к нему как потоки.
+                </p>
               </div>
               <div className="flex gap-3 mt-6">
-                <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
-                  onClick={resetComputerForm}
+                <button onClick={resetComputerForm}
                   className="flex-1 py-2.5 px-4 bg-gray-800/50 hover:bg-gray-700/50 text-gray-300 text-sm rounded-xl transition-all border border-gray-700/50"
                 >
                   Отмена
-                </motion.button>
-                <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
-                  onClick={handleSaveComputer}
-                  className="flex-1 py-2.5 px-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white text-sm font-medium rounded-xl transition-all flex items-center justify-center gap-2"
+                </button>
+                <button onClick={handleSaveComputer} disabled={saving}
+                  className="flex-1 py-2.5 px-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white text-sm font-medium rounded-xl transition-all flex items-center justify-center gap-2 disabled:opacity-60"
                 >
-                  <Check className="w-4 h-4" />
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
                   {editingComputer ? 'Сохранить' : 'Добавить'}
-                </motion.button>
+                </button>
               </div>
             </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Stream Form Modal */}
+      {/* Форма потока */}
       <AnimatePresence>
         {showStreamForm && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
           >
             <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
-              className="glass-strong rounded-2xl w-full max-w-md p-6 relative overflow-hidden"
+              className="glass-strong rounded-2xl w-full max-w-lg p-6 relative overflow-hidden max-h-[92vh] overflow-y-auto"
             >
               <div className="flex items-center justify-between mb-5">
                 <h3 className="text-lg font-semibold text-white flex items-center gap-2">
                   <Video className="w-5 h-5 text-purple-400" />
                   {editingStream ? 'Редактировать поток' : 'Новый поток'}
                 </h3>
-                <motion.button whileHover={{ scale: 1.1, rotate: 90 }} whileTap={{ scale: 0.9 }}
-                  onClick={resetStreamForm} className="p-1.5 rounded-xl hover:bg-gray-800 text-gray-400"
-                >
+                <button onClick={resetStreamForm} className="p-1.5 rounded-xl hover:bg-gray-800 text-gray-400">
                   <X className="w-5 h-5" />
-                </motion.button>
+                </button>
               </div>
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm text-gray-300 mb-1.5">Протокол</label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {PROTOCOLS.map(proto => {
-                      const Icon = proto.icon;
-                      return (
-                        <motion.button key={proto.value}
-                          whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
-                          onClick={() => setStreamForm({...streamForm, protocol: proto.value})}
-                          className={`flex items-center gap-1.5 px-2 py-2 rounded-lg text-xs font-medium transition-all ${
-                            streamForm.protocol === proto.value
-                              ? 'bg-gradient-to-r from-purple-600 to-blue-600 text-white shadow-lg'
-                              : 'bg-gray-800/50 text-gray-400 hover:bg-gray-700/50 border border-gray-700/50'
-                          }`}
-                        >
-                          <Icon className="w-3 h-3" />
-                          {proto.label}
-                        </motion.button>
-                      );
-                    })}
-                  </div>
-                </div>
-                <div>
                   <label className="block text-sm text-gray-300 mb-1.5">Название потока</label>
-                  <input type="text" value={streamForm.name}
-                    onChange={e => setStreamForm({...streamForm, name: e.target.value})}
-                    className="w-full px-4 py-2.5 bg-gray-800/50 border border-gray-700/50 rounded-xl text-white text-sm focus:outline-none focus:border-blue-500 transition-all"
-                    placeholder="Камера въезда"
+                  <input type="text" value={streamForm.name} autoFocus
+                    onChange={(e) => setStreamForm({ ...streamForm, name: e.target.value })}
+                    className={inputCls} placeholder="Камера въезда"
                   />
                 </div>
                 <div>
                   <label className="block text-sm text-gray-300 mb-1.5">
                     URL потока
                     {streamForm.url && (
-                      <span className="ml-2 text-xs text-green-400">
-                        ({detectProtocolFromUrl(streamForm.url).toUpperCase()})
+                      <span className={`ml-2 text-xs ${detected ? 'text-green-400' : 'text-red-400'}`}>
+                        ({detected || 'неизвестный протокол'})
                       </span>
                     )}
                   </label>
                   <input type="text" value={streamForm.url}
-                    onChange={e => {
-                      const newUrl = e.target.value;
-                      const detectedProtocol = detectProtocolFromUrl(newUrl);
-                      setStreamForm({
-                        ...streamForm, 
-                        url: newUrl,
-                        protocol: detectedProtocol
-                      });
-                    }}
-                    className="w-full px-4 py-2.5 bg-gray-800/50 border border-gray-700/50 rounded-xl text-white text-sm font-mono focus:outline-none focus:border-blue-500 transition-all"
-                    placeholder="Вставьте URL потока (автоопределение типа)"
+                    onChange={(e) => { setStreamForm({ ...streamForm, url: e.target.value }); setCheckState('idle'); setCheckMessage(''); }}
+                    className={`${inputCls} font-mono`}
+                    placeholder="rtsp://192.168.1.64:554/Streaming/Channels/101"
                   />
-                  {streamForm.url && (
-                    <div className="flex items-center justify-between mt-1">
-                      <p className="text-xs text-gray-500">
-                        Тип потока: <span className="text-purple-400 font-medium">{detectProtocolFromUrl(streamForm.url).toUpperCase()}</span>
-                      </p>
-                      <motion.button
-                        whileHover={{ scale: 1.05 }}
-                        whileTap={{ scale: 0.95 }}
-                        onClick={checkStream}
-                        disabled={streamCheckStatus === 'checking'}
-                        className="text-xs px-2 py-1 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 rounded-lg transition-all disabled:opacity-50"
-                      >
-                        {streamCheckStatus === 'checking' ? 'Проверка...' : 'Проверить'}
-                      </motion.button>
-                    </div>
-                  )}
-                  
-                  {streamCheckMessage && (
-                    <div className={`mt-2 p-2 rounded-lg text-xs ${
-                      streamCheckStatus === 'success' ? 'bg-green-950/30 text-green-400 border border-green-700/30' :
-                      streamCheckStatus === 'error' ? 'bg-red-950/30 text-red-400 border border-red-700/30' :
-                      streamCheckStatus === 'warning' ? 'bg-yellow-950/30 text-yellow-400 border border-yellow-700/30' :
-                      'bg-blue-950/30 text-blue-400 border border-blue-700/30'
-                    }`}>
-                      {streamCheckMessage}
-                    </div>
-                  )}
+                  <p className="text-[11px] text-gray-500 mt-1">
+                    Поддерживаются rtsp://, rtsps://, rtmp://, http(s):// (HLS), srt://, udp://. Логин и пароль можно указать в URL — они будут перенесены в поля ниже.
+                  </p>
                 </div>
+                {detected === 'RTSP' && (
+                  <div>
+                    <label className="block text-sm text-gray-300 mb-1.5">Транспорт RTSP</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {(['auto', 'tcp', 'udp'] as StreamTransport[]).map((t) => (
+                        <button key={t} onClick={() => setStreamForm({ ...streamForm, transport: t })}
+                          className={`px-2 py-2 rounded-lg text-xs font-medium transition-all ${
+                            streamForm.transport === t
+                              ? 'bg-gradient-to-r from-purple-600 to-blue-600 text-white shadow-lg'
+                              : 'bg-gray-800/50 text-gray-400 hover:bg-gray-700/50 border border-gray-700/50'
+                          }`}
+                        >
+                          {t === 'auto' ? 'Авто' : t.toUpperCase()}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-[11px] text-gray-500 mt-1">TCP надёжнее через маршрутизаторы и межсетевые экраны.</p>
+                  </div>
+                )}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-sm text-gray-300 mb-1.5">Логин</label>
-                    <input type="text" value={streamForm.sourceLogin}
-                      onChange={e => setStreamForm({...streamForm, sourceLogin: e.target.value})}
-                      className="w-full px-4 py-2.5 bg-gray-800/50 border border-gray-700/50 rounded-xl text-white text-sm focus:outline-none focus:border-blue-500 transition-all"
+                    <label className="block text-sm text-gray-300 mb-1.5">Логин камеры</label>
+                    <input type="text" value={streamForm.sourceLogin} autoComplete="off"
+                      onChange={(e) => setStreamForm({ ...streamForm, sourceLogin: e.target.value })}
+                      className={inputCls}
                     />
                   </div>
                   <div>
-                    <label className="block text-sm text-gray-300 mb-1.5">Пароль</label>
-                    <input type="password" value={streamForm.sourcePassword}
-                      onChange={e => setStreamForm({...streamForm, sourcePassword: e.target.value})}
-                      className="w-full px-4 py-2.5 bg-gray-800/50 border border-gray-700/50 rounded-xl text-white text-sm focus:outline-none focus:border-blue-500 transition-all"
+                    <label className="block text-sm text-gray-300 mb-1.5">Пароль камеры</label>
+                    <input type="password" value={streamForm.sourcePassword} autoComplete="new-password"
+                      onChange={(e) => setStreamForm({ ...streamForm, sourcePassword: e.target.value })}
+                      className={inputCls}
+                      placeholder={editingStream?.hasPassword ? 'не менять' : ''}
                     />
                   </div>
+                </div>
+                <div>
+                  <button onClick={checkStream} disabled={checkState === 'checking' || !streamForm.url}
+                    className="text-xs px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 rounded-lg transition-all disabled:opacity-50 flex items-center gap-1.5"
+                  >
+                    {checkState === 'checking' && <Loader2 className="w-3 h-3 animate-spin" />}
+                    {checkState === 'checking' ? 'Проверка…' : 'Проверить подключение к камере'}
+                  </button>
+                  {checkMessage && (
+                    <div className={`mt-2 p-2 rounded-lg text-xs ${
+                      checkState === 'success' ? 'bg-green-950/30 text-green-400 border border-green-700/30' :
+                      checkState === 'error' ? 'bg-red-950/30 text-red-400 border border-red-700/30' :
+                      checkState === 'warning' ? 'bg-yellow-950/30 text-yellow-400 border border-yellow-700/30' :
+                      'bg-blue-950/30 text-blue-400 border border-blue-700/30'
+                    }`}>
+                      {checkMessage}
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="flex gap-3 mt-6">
-                <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
-                  onClick={resetStreamForm}
+                <button onClick={resetStreamForm}
                   className="flex-1 py-2.5 px-4 bg-gray-800/50 hover:bg-gray-700/50 text-gray-300 text-sm rounded-xl transition-all border border-gray-700/50"
                 >
                   Отмена
-                </motion.button>
-                <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
-                  onClick={() => handleSaveStream(showStreamForm)}
-                  className="flex-1 py-2.5 px-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white text-sm font-medium rounded-xl transition-all flex items-center justify-center gap-2"
+                </button>
+                <button onClick={() => handleSaveStream(showStreamForm)} disabled={saving}
+                  className="flex-1 py-2.5 px-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white text-sm font-medium rounded-xl transition-all flex items-center justify-center gap-2 disabled:opacity-60"
                 >
-                  <Check className="w-4 h-4" />
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
                   {editingStream ? 'Сохранить' : 'Добавить'}
-                </motion.button>
+                </button>
               </div>
             </motion.div>
           </motion.div>

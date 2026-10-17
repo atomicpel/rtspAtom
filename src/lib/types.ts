@@ -1,16 +1,25 @@
 export type UserRole = 'admin' | 'operator' | 'viewer';
 
-export type StreamProtocol = 'rtsp' | 'http' | 'https' | 'hls' | 'm3u8' | 'ts' | 'flv' | 'rtmp' | 'webrtc';
+/** Тип источника определяется сервером по схеме URL. */
+export type StreamProtocol = 'rtsp' | 'rtmp' | 'hls' | 'srt' | 'udp';
+export type StreamTransport = 'auto' | 'tcp' | 'udp';
+
+/** idle — камера подключается только при просмотре (режим «по запросу»). */
+export type StreamStatus = 'online' | 'offline' | 'reconnecting' | 'idle';
 
 export interface Stream {
   id: string;
+  computerId: string;
   name: string;
   url: string;
   protocol: StreamProtocol;
+  transport: StreamTransport;
   sourceLogin: string;
-  sourcePassword: string;
+  hasPassword: boolean;
   isActive: boolean;
-  status: 'online' | 'offline' | 'reconnecting';
+  status: StreamStatus;
+  tracks: string[];
+  viewers: number;
 }
 
 export interface Computer {
@@ -28,13 +37,13 @@ export interface Computer {
 export interface User {
   id: string;
   login: string;
-  passwordHash: string;
   role: UserRole;
-  isAdmin: boolean; // Явные права администратора
+  isAdmin: boolean;
   allowedCidrs: string[];
-  allowedComputerIds: string[]; // Разрешённые компьютеры (пусто = все)
+  allowedComputerIds: string[]; // пусто = все компьютеры
   isActive: boolean;
   createdAt: string;
+  lastLoginAt: string | null;
 }
 
 export interface IpRule {
@@ -60,29 +69,65 @@ export interface LogEntry {
   message: string;
 }
 
-export interface Session {
-  id: string;
-  userId: string;
-  token: string;
-  ip: string;
-  expiresAt: string;
-}
-
 export interface Settings {
-  tlsEnabled: boolean;
+  tlsEnabled: boolean; // только чтение — задаётся в /etc/rtspatom/config.json
   sessionTtl: number;
   maxConnections: number;
   logFormat: 'syslog' | 'json';
   rateLimitLogin: number;
   rateLimitApi: number;
+  logRetentionDays: number;
+  camerasAlwaysOn: boolean;
 }
 
-export interface SystemMetrics {
+export interface Metrics {
   cpu: number;
   ram: number;
   networkIn: number;
   networkOut: number;
-  activeSystems: number;
+  activeComputers: number;
+  totalComputers: number;
+  totalStreams: number;
+  onlineStreams: number;
   connectedClients: number;
   uptime: number;
+  appUptime: number;
+  mediamtx: { reachable: boolean };
+}
+
+export interface SystemInfo {
+  version: string;
+  node: string;
+  hostname: string;
+  platform: string;
+  tlsEnabled: boolean;
+  mediamtx: { reachable: boolean; version: string | null; lastError: string; lastSyncAt: string | null };
+}
+
+export interface WallCell {
+  computerId: string | null;
+  streamId: string | null;
+}
+
+export type WallLayout = '1x1' | '2x2' | '3x3' | '4x4';
+
+export interface WallState {
+  layout: WallLayout;
+  cells: WallCell[];
+  refreshInterval: number;
+}
+
+export interface WallConfig {
+  id: string;
+  name: string;
+  layout: WallLayout;
+  cells: WallCell[];
+  createdAt: string;
+}
+
+export interface ProbeResult {
+  ok: boolean;
+  tracks: string[];
+  protocol: StreamProtocol;
+  warning: string;
 }

@@ -1,0 +1,26 @@
+[Unit]
+Description=RTSP Atom - панель управления видеотрансляцией
+After=network-online.target rtspatom-mediamtx.service
+Wants=network-online.target rtspatom-mediamtx.service
+
+[Service]
+Type=simple
+User=rtspatom
+Group=rtspatom
+Environment=RTSPATOM_CONFIG=/etc/rtspatom/config.json
+Environment=NODE_ENV=production
+WorkingDirectory=/var/lib/rtspatom
+ExecStart=/opt/rtspatom/node/bin/node --disable-warning=ExperimentalWarning /opt/rtspatom/app/server/index.js
+Restart=always
+RestartSec=3
+# Разрешает слушать порты 80/443 без прав root
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/rtspatom
+
+[Install]
+WantedBy=multi-user.target

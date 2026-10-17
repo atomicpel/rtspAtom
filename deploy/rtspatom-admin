@@ -1,0 +1,15 @@
+#!/bin/sh
+# Утилита администрирования RTSP Atom (создание администратора, сброс пароля и т. п.)
+# Запускается от root; команды выполняются от имени служебного пользователя rtspatom.
+set -e
+export RTSPATOM_CONFIG="${RTSPATOM_CONFIG:-/etc/rtspatom/config.json}"
+NODE=/opt/rtspatom/node/bin/node
+CLI=/opt/rtspatom/app/server/cli.js
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "Запустите через sudo: sudo rtspatom-admin $*" >&2
+  exit 1
+fi
+cd /var/lib/rtspatom
+exec runuser -u rtspatom -- env RTSPATOM_CONFIG="$RTSPATOM_CONFIG" \
+  "$NODE" --disable-warning=ExperimentalWarning "$CLI" "$@"

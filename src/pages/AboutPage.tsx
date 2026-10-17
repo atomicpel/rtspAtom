@@ -1,9 +1,12 @@
 import React from 'react';
+import { api } from '../lib/api';
+import { usePolling } from '../lib/usePolling';
 import { motion } from 'framer-motion';
 import { Monitor, Shield, Server, Network, Lock, Database, Sparkles, AlertTriangle } from 'lucide-react';
 import { AnimatedCard, StaggerContainer, StaggerItem } from '../components/AnimatedCard';
 
 export function AboutPage() {
+  const { data: info } = usePolling(api.system, 10000);
   return (
     <div className="space-y-8 max-w-3xl">
       {/* Hero */}
@@ -101,7 +104,7 @@ export function AboutPage() {
               <h3 className="text-sm font-medium text-white group-hover:text-blue-400 transition-colors">RTSP-ретрансляция</h3>
             </div>
             <p className="text-xs text-gray-400">
-              Управление удалёнными системами с множеством камер. Ретрансляция RTSP-потоков, поддержка HLS/WebRTC.
+              Управление удалёнными системами с множеством камер. Приём RTSP/RTMP/HLS/SRT через MediaMTX и показ в браузере по HLS.
             </p>
           </AnimatedCard>
         </StaggerItem>
@@ -118,7 +121,7 @@ export function AboutPage() {
               <h3 className="text-sm font-medium text-white group-hover:text-green-400 transition-colors">Безопасность</h3>
             </div>
             <p className="text-xs text-gray-400">
-              JWT-аутентификация, RBAC, IP-фильтрация, rate limiting, аудит действий.
+              Сессии в HttpOnly-cookie, пароли scrypt, роли, IP-фильтрация, ограничение попыток входа, журнал действий.
             </p>
           </AnimatedCard>
         </StaggerItem>
@@ -196,45 +199,30 @@ export function AboutPage() {
       <AnimatedCard className="p-5" delay={0.3}>
         <h3 className="text-sm font-medium text-white mb-4">Техническая информация</h3>
         <div className="grid grid-cols-2 gap-3 text-xs">
-          <div className="text-gray-400">Платформа:</div>
-          <div className="text-white">React + TypeScript + Vite</div>
-          <div className="text-gray-400">Стилизация:</div>
-          <div className="text-white">Tailwind CSS</div>
-          <div className="text-gray-400">Хранилище:</div>
-          <div className="text-white">localStorage (имитация SQLite)</div>
-          <div className="text-gray-400">Аутентификация:</div>
-          <div className="text-white">JWT + bcrypt (mock)</div>
-          <div className="text-gray-400">RTSP:</div>
-          <div className="text-white">Mock-модуль (TODO: FFmpeg)</div>
-          <div className="text-gray-400">ОС:</div>
-          <div className="text-white">Astra Linux (изолированная сеть)</div>
           <div className="text-gray-400">Версия:</div>
-          <div className="text-white">1.0.0</div>
+          <div className="text-white">{info?.version || '—'}</div>
+          <div className="text-gray-400">Сервер:</div>
+          <div className="text-white">{info ? `${info.hostname} • ${info.platform}` : '—'}</div>
+          <div className="text-gray-400">Среда выполнения:</div>
+          <div className="text-white">Node.js {info?.node || ''} • SQLite</div>
+          <div className="text-gray-400">Видеосервер:</div>
+          <div className={info?.mediamtx.reachable ? 'text-green-400' : 'text-red-400'}>
+            MediaMTX {info?.mediamtx.version || ''} — {info ? (info.mediamtx.reachable ? 'работает' : 'недоступен') : '…'}
+          </div>
+          {info && !info.mediamtx.reachable && info.mediamtx.lastError && (
+            <>
+              <div className="text-gray-400">Ошибка:</div>
+              <div className="text-red-400 break-all">{info.mediamtx.lastError}</div>
+            </>
+          )}
+          <div className="text-gray-400">Шифрование:</div>
+          <div className="text-white">{info ? (info.tlsEnabled ? 'HTTPS' : 'HTTP (без TLS)') : '—'}</div>
+          <div className="text-gray-400">Интерфейс:</div>
+          <div className="text-white">React + TypeScript + Vite + Tailwind CSS</div>
+          <div className="text-gray-400">ОС:</div>
+          <div className="text-white">Astra Linux SE 1.8 (изолированная сеть)</div>
           <div className="text-gray-400">Обозначение:</div>
           <div className="text-gradient font-bold">115 обрОсН</div>
-        </div>
-      </AnimatedCard>
-
-      {/* Reset Data Button */}
-      <AnimatedCard className="p-5" delay={0.5}>
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-medium text-white mb-1">Сброс данных</h3>
-            <p className="text-xs text-gray-400">Удалить все данные и начать заново</p>
-          </div>
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            onClick={() => {
-              if (confirm('Вы уверены? Все данные будут удалены!')) {
-                localStorage.clear();
-                window.location.reload();
-              }
-            }}
-            className="px-4 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 text-xs font-medium rounded-xl transition-all border border-red-700/30"
-          >
-            Сбросить
-          </motion.button>
         </div>
       </AnimatedCard>
 
@@ -258,7 +246,7 @@ export function AboutPage() {
           Панель управления RTSP-сервером видеотрансляции
         </p>
         <p className="text-xs text-gray-600 mt-2">
-          © 2024 • Изолированная локальная сеть • Все права защищены
+          © 2024–2026 • Изолированная локальная сеть • Все права защищены
         </p>
       </motion.div>
     </div>

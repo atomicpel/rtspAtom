@@ -1,24 +1,40 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Save, Shield, Clock, Wifi, FileText, AlertTriangle, Check } from 'lucide-react';
-import { getSettings, saveSettings } from '../lib/storage';
+import { Save, Shield, Clock, Wifi, FileText, AlertTriangle, Check, Video, Archive } from 'lucide-react';
+import { api, errorMessage } from '../lib/api';
 import { Settings as SettingsType } from '../lib/types';
-import { logger } from '../lib/logger';
 import { useToast } from '../components/Toast';
 import { AnimatedCard, StaggerContainer, StaggerItem } from '../components/AnimatedCard';
 
 export function SettingsPage() {
   const { toast } = useToast();
-  const [settings, setSettings] = useState<SettingsType>(getSettings());
+  const [settings, setSettings] = useState<SettingsType | null>(null);
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-  const handleSave = () => {
-    saveSettings(settings);
-    logger.admin('Настройки обновлены');
-    setSaved(true);
-    toast('success', 'Настройки сохранены');
-    setTimeout(() => setSaved(false), 3000);
+  useEffect(() => {
+    api.settings().then(setSettings).catch((err) => toast('error', errorMessage(err)));
+  }, []);
+
+  const handleSave = async () => {
+    if (!settings) return;
+    setSaving(true);
+    try {
+      const { tlsEnabled: _tls, ...values } = settings;
+      setSettings(await api.saveSettings(values));
+      setSaved(true);
+      toast('success', 'Настройки сохранены');
+      setTimeout(() => setSaved(false), 3000);
+    } catch (err) {
+      toast('error', errorMessage(err));
+    } finally {
+      setSaving(false);
+    }
   };
+
+  if (!settings) {
+    return <div className="text-sm text-gray-500">Загрузка настроек…</div>;
+  }
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -50,34 +66,17 @@ export function SettingsPage() {
                 <p className="text-xs text-gray-500">Шифрование соединений</p>
               </div>
             </div>
-            <label className="flex items-center gap-3 cursor-pointer">
-              <div className="relative">
-                <input
-                  type="checkbox"
-                  checked={settings.tlsEnabled}
-                  onChange={e => setSettings({...settings, tlsEnabled: e.target.checked})}
-                  className="sr-only peer"
-                />
-                <div className="w-12 h-6 bg-gray-700 rounded-full peer-checked:bg-gradient-to-r peer-checked:from-blue-600 peer-checked:to-purple-600 transition-all" />
-                <motion.div 
-                  animate={{ x: settings.tlsEnabled ? 24 : 2 }}
-                  className="absolute left-0 top-1 w-4 h-4 bg-white rounded-full shadow-lg"
-                />
-              </div>
-              <span className="text-sm text-gray-300">
-                {settings.tlsEnabled ? 'Включено' : 'Отключено'}
+            <p className={`text-sm ${settings.tlsEnabled ? 'text-green-400' : 'text-yellow-400'}`}>
+              {settings.tlsEnabled ? 'HTTPS включён' : 'HTTPS выключен'}
+            </p>
+            <p className="text-xs text-gray-500 mt-2 flex items-start gap-1 bg-gray-800/30 p-2 rounded-lg border border-gray-700/30">
+              <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0 text-yellow-500" />
+              <span>
+                Включается при установке (<span className="font-mono">sudo ./install.sh --tls</span>) или в файле
+                {' '}<span className="font-mono">/etc/rtspatom/config.json</span> (раздел tls) с последующим
+                {' '}<span className="font-mono">systemctl restart rtspatom</span>.
               </span>
-            </label>
-            {!settings.tlsEnabled && (
-              <motion.p 
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-                className="text-xs text-yellow-500 mt-3 flex items-center gap-1 bg-yellow-950/20 p-2 rounded-lg border border-yellow-700/30"
-              >
-                <AlertTriangle className="w-3 h-3" />
-                Рекомендуется включить TLS для продакшена
-              </motion.p>
-            )}
+            </p>
           </AnimatedCard>
         </StaggerItem>
 
@@ -93,7 +92,7 @@ export function SettingsPage() {
               </motion.div>
               <div>
                 <h3 className="text-sm font-medium text-white group-hover:text-blue-400 transition-colors">Время жизни сессии</h3>
-                <p className="text-xs text-gray-500">Автоматический выход при неактивности</p>
+                <p className="text-xs text-gray-500">Автоматический выход после периода бездействия</p>
               </div>
             </div>
             <div className="flex items-center gap-4">
@@ -132,7 +131,7 @@ export function SettingsPage() {
               </motion.div>
               <div>
                 <h3 className="text-sm font-medium text-white group-hover:text-purple-400 transition-colors">Лимит подключений</h3>
-                <p className="text-xs text-gray-500">Максимальное число одновременных клиентов</p>
+                <p className="text-xs text-gray-500">Максимум одновременно просматриваемых видеопотоков (по всем пользователям)</p>
               </div>
             </div>
             <motion.input
@@ -178,10 +177,10 @@ export function SettingsPage() {
                 <label className="block text-xs text-gray-400 mb-1.5">API запросы (в минуту)</label>
                 <input
                   type="number"
-                  min={10}
-                  max={600}
+                  min={30}
+                  max={6000}
                   value={settings.rateLimitApi}
-                  onChange={e => setSettings({...settings, rateLimitApi: parseInt(e.target.value) || 60})}
+                  onChange={e => setSettings({...settings, rateLimitApi: parseInt(e.target.value) || 600})}
                   className="w-full px-4 py-2.5 bg-gray-800/50 border border-gray-700/50 rounded-xl text-white text-sm focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
                 />
               </div>
@@ -201,7 +200,7 @@ export function SettingsPage() {
               </motion.div>
               <div>
                 <h3 className="text-sm font-medium text-white group-hover:text-cyan-400 transition-colors">Формат логов</h3>
-                <p className="text-xs text-gray-500">Формат записи в журнал событий</p>
+                <p className="text-xs text-gray-500">Формат вывода событий в системный журнал (journalctl -u rtspatom)</p>
               </div>
             </div>
             <div className="flex gap-3">
@@ -232,6 +231,61 @@ export function SettingsPage() {
             </div>
           </AnimatedCard>
         </StaggerItem>
+        {/* Режим камер */}
+        <StaggerItem>
+          <AnimatedCard className="p-5 group">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2.5 rounded-xl bg-pink-950/50 text-pink-400">
+                <Video className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-medium text-white">Подключение к камерам</h3>
+                <p className="text-xs text-gray-500">Как сервер забирает видео с камер</p>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              {[
+                { v: true, t: 'Постоянно', d: 'видео открывается мгновенно, статус камер виден всегда' },
+                { v: false, t: 'По запросу', d: 'камера подключается только когда кто-то смотрит — меньше трафика' },
+              ].map(o => (
+                <button key={String(o.v)} onClick={() => setSettings({ ...settings, camerasAlwaysOn: o.v })}
+                  className={`flex-1 py-2.5 px-3 rounded-xl text-left transition-all ${
+                    settings.camerasAlwaysOn === o.v
+                      ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg shadow-blue-500/20'
+                      : 'bg-gray-800/50 text-gray-400 hover:bg-gray-700/50 border border-gray-700/50'
+                  }`}
+                >
+                  <div className="text-sm font-medium">{o.t}</div>
+                  <div className="text-[11px] opacity-80">{o.d}</div>
+                </button>
+              ))}
+            </div>
+          </AnimatedCard>
+        </StaggerItem>
+
+        {/* Хранение журнала */}
+        <StaggerItem>
+          <AnimatedCard className="p-5 group">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2.5 rounded-xl bg-emerald-950/50 text-emerald-400">
+                <Archive className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-medium text-white">Хранение журнала</h3>
+                <p className="text-xs text-gray-500">Записи старше указанного срока удаляются автоматически</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <input
+                type="number" min={1} max={3650}
+                value={settings.logRetentionDays}
+                onChange={e => setSettings({ ...settings, logRetentionDays: parseInt(e.target.value) || 90 })}
+                className="w-32 px-4 py-2.5 bg-gray-800/50 border border-gray-700/50 rounded-xl text-white text-sm focus:outline-none focus:border-blue-500 transition-all"
+              />
+              <span className="text-sm text-gray-400">дней</span>
+            </div>
+          </AnimatedCard>
+        </StaggerItem>
       </StaggerContainer>
 
       {/* Save Button */}
@@ -245,6 +299,7 @@ export function SettingsPage() {
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
           onClick={handleSave}
+          disabled={saving}
           className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white text-sm font-medium rounded-xl transition-all shadow-lg shadow-blue-500/20"
         >
           <Save className="w-4 h-4" />

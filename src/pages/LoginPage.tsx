@@ -4,7 +4,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { Monitor, AlertTriangle, Loader2, Sparkles } from 'lucide-react';
 
 export function LoginPage() {
-  const { login, isFirstRun, createFirstAdmin } = useAuth();
+  const { login, setup, setupRequired, setupAllowedHere } = useAuth();
+  const isFirstRun = setupRequired;
   const [loginStr, setLoginStr] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -14,35 +15,40 @@ export function LoginPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    setLoading(true);
-
-    try {
-      if (isFirstRun) {
-        if (password !== confirmPassword) {
-          setError('Пароли не совпадают');
-          setLoading(false);
-          return;
-        }
-        if (password.length < 4) {
-          setError('Пароль должен быть не менее 4 символов');
-          setLoading(false);
-          return;
-        }
-        const success = await createFirstAdmin(loginStr, password);
-        if (!success) {
-          setError('Ошибка создания администратора');
-        }
-      } else {
-        const result = await login(loginStr, password, '127.0.0.1');
-        if (!result.success) {
-          setError(result.error || 'Ошибка входа');
-        }
+    if (isFirstRun) {
+      if (password !== confirmPassword) {
+        setError('Пароли не совпадают');
+        return;
       }
-    } catch {
-      setError('Внутренняя ошибка');
+      if (password.length < 8) {
+        setError('Пароль должен быть не короче 8 символов');
+        return;
+      }
     }
+    setLoading(true);
+    const result = isFirstRun ? await setup(loginStr, password) : await login(loginStr, password);
+    if (!result.success) setError(result.error || 'Ошибка входа');
     setLoading(false);
   };
+
+  if (isFirstRun && !setupAllowedHere) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4 relative">
+        <div className="glass-strong rounded-2xl p-6 max-w-lg w-full space-y-3 relative z-10">
+          <h1 className="text-xl font-bold text-gradient">RTSP Сервер — первичная настройка</h1>
+          <p className="text-sm text-gray-300">
+            В системе ещё нет ни одного пользователя. Создайте администратора на самом сервере одним из способов:
+          </p>
+          <ul className="text-sm text-gray-300 list-disc pl-5 space-y-1">
+            <li>откройте панель в браузере на сервере по адресу <span className="font-mono text-blue-400">http://127.0.0.1:8080</span>;</li>
+            <li>или выполните в терминале сервера:</li>
+          </ul>
+          <pre className="text-xs bg-gray-900/70 border border-gray-700/50 rounded-xl p-3 font-mono text-green-400">sudo rtspatom-admin create-admin</pre>
+          <p className="text-xs text-gray-500">После этого обновите страницу.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden">
@@ -204,7 +210,7 @@ export function LoginPage() {
               transition={{ delay: 0.9 }}
               className="text-xs text-gray-500 text-center"
             >
-              5 неудачных попыток → блокировка на 15 минут
+              После нескольких неудачных попыток вход с вашего адреса блокируется на 15 минут
             </motion.p>
           )}
         </motion.form>

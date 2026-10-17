@@ -1,0 +1,63 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const serverRoot = path.resolve(here, '..');
+
+export const DEFAULT_CONFIG_FILE = '/etc/rtspatom/config.json';
+
+function defaults() {
+  // В пакете фронтенд лежит рядом с сервером (app/public),
+  // при разработке — в dist/ корня репозитория.
+  const bundled = path.resolve(serverRoot, '..', 'public');
+  const dev = path.resolve(serverRoot, '..', 'dist');
+  return {
+    host: '0.0.0.0',
+    port: 8080,
+    dataDir: path.resolve(process.cwd(), 'data'),
+    publicDir: fs.existsSync(bundled) ? bundled : dev,
+    trustProxy: false,
+    tls: { enabled: false, cert: '', key: '' },
+    mediamtx: {
+      apiUrl: 'http://127.0.0.1:9997',
+      hlsUrl: 'http://127.0.0.1:8888',
+    },
+  };
+}
+
+function isObject(v) {
+  return v && typeof v === 'object' && !Array.isArray(v);
+}
+
+function merge(base, extra) {
+  const out = { ...base };
+  for (const [k, v] of Object.entries(extra || {})) {
+    out[k] = isObject(v) && isObject(base[k]) ? merge(base[k], v) : v;
+  }
+  return out;
+}
+
+export function loadConfig(overrides = {}) {
+  let cfg = defaults();
+  const file = process.env.RTSPATOM_CONFIG || DEFAULT_CONFIG_FILE;
+  if (fs.existsSync(file)) {
+    try {
+      cfg = merge(cfg, JSON.parse(fs.readFileSync(file, 'utf8')));
+      cfg.configFile = file;
+    } catch (err) {
+      throw new Error(`Не удалось прочитать конфигурацию ${file}: ${err.message}`);
+    }
+  }
+  const env = process.env;
+  if (env.RTSPATOM_PORT) cfg.port = Number(env.RTSPATOM_PORT);
+  if (env.RTSPATOM_HOST) cfg.host = env.RTSPATOM_HOST;
+  if (env.RTSPATOM_DATA_DIR) cfg.dataDir = env.RTSPATOM_DATA_DIR;
+  if (env.RTSPATOM_PUBLIC_DIR) cfg.publicDir = env.RTSPATOM_PUBLIC_DIR;
+  if (env.RTSPATOM_MEDIAMTX_API) cfg.mediamtx.apiUrl = env.RTSPATOM_MEDIAMTX_API;
+  if (env.RTSPATOM_MEDIAMTX_HLS) cfg.mediamtx.hlsUrl = env.RTSPATOM_MEDIAMTX_HLS;
+  cfg = merge(cfg, overrides);
+  cfg.dataDir = path.resolve(cfg.dataDir);
+  cfg.publicDir = path.resolve(cfg.publicDir);
+  return cfg;
+}

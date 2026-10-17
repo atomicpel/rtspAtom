@@ -4,9 +4,9 @@ import {
   Video, Users, Cpu, HardDrive, ArrowDown, ArrowUp, Activity, Wifi, TrendingUp, Server
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
-import { getMockMetrics } from '../lib/rtsp-mock';
-import { getComputers } from '../lib/storage';
-import { Computer } from '../lib/types';
+import { api } from '../lib/api';
+import { usePolling } from '../lib/usePolling';
+import { Computer, Metrics } from '../lib/types';
 import { AnimatedCard, StaggerContainer, StaggerItem } from '../components/AnimatedCard';
 
 interface MetricCardProps {
@@ -50,30 +50,30 @@ function MetricCard({ title, value, icon: Icon, color, subtitle }: MetricCardPro
 }
 
 export function DashboardPage() {
-  const [metrics, setMetrics] = useState(getMockMetrics());
+  const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [cpuHistory, setCpuHistory] = useState<Array<{ time: string; cpu: number; ram: number }>>([]);
   const [networkHistory, setNetworkHistory] = useState<Array<{ time: string; in: number; out: number }>>([]);
-  const computers = getComputers();
+  const { data: computersData } = usePolling(api.computers, 5000);
+  const computers: Computer[] = computersData || [];
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      const newMetrics = getMockMetrics();
-      setMetrics(newMetrics);
-
-      const now = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      
-      setCpuHistory(prev => {
-        const next = [...prev, { time: now, cpu: newMetrics.cpu, ram: newMetrics.ram }];
-        return next.slice(-20);
-      });
-
-      setNetworkHistory(prev => {
-        const next = [...prev, { time: now, in: newMetrics.networkIn, out: newMetrics.networkOut }];
-        return next.slice(-20);
-      });
-    }, 2000);
-
-    return () => clearInterval(interval);
+    let alive = true;
+    const tick = async () => {
+      if (document.visibilityState !== 'visible') return;
+      try {
+        const m = await api.metrics();
+        if (!alive) return;
+        setMetrics(m);
+        const now = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        setCpuHistory(prev => [...prev, { time: now, cpu: m.cpu, ram: m.ram }].slice(-30));
+        setNetworkHistory(prev => [...prev, { time: now, in: m.networkIn, out: m.networkOut }].slice(-30));
+      } catch {
+        /* следующая попытка через 2 с */
+      }
+    };
+    tick();
+    const interval = setInterval(tick, 2000);
+    return () => { alive = false; clearInterval(interval); };
   }, []);
 
   const formatUptime = (seconds: number) => {
@@ -83,35 +83,43 @@ export function DashboardPage() {
     return `${days}д ${hours}ч ${mins}м`;
   };
 
-  const totalStreams = computers.reduce((sum: number, c: Computer) => sum + (c.streams?.length || 0), 0);
+  const m = metrics || {
+    cpu: 0, ram: 0, networkIn: 0, networkOut: 0, activeComputers: 0, totalComputers: 0,
+    totalStreams: 0, onlineStreams: 0, connectedClients: 0, uptime: 0, appUptime: 0, mediamtx: { reachable: true },
+  };
 
   return (
     <div className="space-y-6">
+      {metrics && !metrics.mediamtx.reachable && (
+        <div className="p-3 rounded-xl bg-red-950/40 border border-red-700/40 text-red-300 text-sm">
+          Служба MediaMTX недоступна — видео с камер не транслируется. Проверьте: <span className="font-mono">systemctl status rtspatom-mediamtx</span>
+        </div>
+      )}
       <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard 
           title="Активные компьютеры" 
-          value={metrics.activeComputers}
+          value={m.activeComputers}
           icon={Server}
           color="bg-blue-950/50 text-blue-400"
-          subtitle={`из ${computers.length} настроенных`}
+          subtitle={`из ${m.totalComputers} настроенных`}
         />
         <MetricCard 
-          title="RTSP-потоки онлайн" 
-          value={metrics.totalStreams}
+          title="Потоки онлайн" 
+          value={m.onlineStreams}
           icon={Video}
           color="bg-green-950/50 text-green-400"
-          subtitle={`из ${totalStreams} всего`}
+          subtitle={`из ${m.totalStreams} • зрителей: ${m.connectedClients}`}
         />
         <MetricCard 
           title="CPU" 
-          value={`${metrics.cpu}%`}
+          value={`${m.cpu}%`}
           icon={Cpu}
           color="bg-yellow-950/50 text-yellow-400"
           subtitle="загрузка процессора"
         />
         <MetricCard 
           title="RAM" 
-          value={`${metrics.ram}%`}
+          value={`${m.ram}%`}
           icon={HardDrive}
           color="bg-purple-950/50 text-purple-400"
           subtitle="использование памяти"
@@ -131,12 +139,12 @@ export function DashboardPage() {
             <div>
               <p className="text-sm text-gray-400">Входящий трафик</p>
               <motion.p 
-                key={metrics.networkIn}
+                key={m.networkIn}
                 initial={{ scale: 1.1 }}
                 animate={{ scale: 1 }}
                 className="text-xl font-bold text-white"
               >
-                {metrics.networkIn} Мбит/с
+                {m.networkIn} Мбит/с
               </motion.p>
             </div>
           </AnimatedCard>
@@ -153,12 +161,12 @@ export function DashboardPage() {
             <div>
               <p className="text-sm text-gray-400">Исходящий трафик</p>
               <motion.p 
-                key={metrics.networkOut}
+                key={m.networkOut}
                 initial={{ scale: 1.1 }}
                 animate={{ scale: 1 }}
                 className="text-xl font-bold text-white"
               >
-                {metrics.networkOut} Мбит/с
+                {m.networkOut} Мбит/с
               </motion.p>
             </div>
           </AnimatedCard>
@@ -174,7 +182,7 @@ export function DashboardPage() {
             </motion.div>
             <div>
               <p className="text-sm text-gray-400">Время работы</p>
-              <p className="text-xl font-bold text-white">{formatUptime(metrics.uptime)}</p>
+              <p className="text-xl font-bold text-white">{formatUptime(m.uptime)}</p>
             </div>
           </AnimatedCard>
         </StaggerItem>
@@ -284,7 +292,7 @@ export function DashboardPage() {
                 />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-white truncate group-hover:text-blue-400 transition-colors">{computer.name}</p>
-                  <p className="text-xs text-gray-500">{(computer.streams || []).length} потоков • {computer.ip}</p>
+                  <p className="text-xs text-gray-500">{computer.streams.filter(s => s.status === 'online').length}/{computer.streams.length} потоков онлайн{computer.ip ? ` • ${computer.ip}` : ''}</p>
                 </div>
               </motion.div>
             </StaggerItem>
