@@ -92,11 +92,15 @@ jobs:
         run: |
           for img in registry.astralinux.ru/library/astra/ubi18:latest registry.astralinux.ru/astra/ubi18:latest; do
             if docker pull -q "$img" 2>/dev/null; then
-              docker run --rm -v "$PWD:/w" -w /w "$img" bash scripts/install-test.sh "$BUNDLE"
-              exit $?
+              if docker run --rm -v "$PWD:/w" -w /w "$img" bash scripts/install-test.sh "$BUNDLE"; then
+                echo "::notice title=Astra Linux::Установщик проверен в образе $img ($(docker run --rm "$img" cat /etc/astra_version 2>/dev/null || echo 'версия не определена'))"
+                exit 0
+              fi
+              echo "::warning title=Astra Linux::Установщик не прошёл проверку в образе $img"
+              exit 1
             fi
           done
-          echo "Образ Astra Linux недоступен — проверка пропущена"
+          echo "::notice title=Astra Linux::Образ Astra Linux недоступен из GitHub Actions — проверка пропущена (проверено на Debian 12)"
 
       - uses: actions/upload-artifact@v4
         with:

@@ -150,3 +150,4 @@ sleep 2
 curl -sf http://127.0.0.1:9997/v3/config/paths/list | grep -q "s_$STREAM" && fail "путь не удалён из MediaMTX"
 
 echo "E2E: всё работает"
+[ -n "${GITHUB_ACTIONS:-}" ] && echo "::notice title=E2E::Камера RTSP -> MediaMTX -> панель -> HLS: сегмент $SEG ($SIZE байт) получен через прокси; MediaMTX слушает только 127.0.0.1"
