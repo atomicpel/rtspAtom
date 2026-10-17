@@ -1,11 +1,11 @@
 #!/bin/bash
 # Сквозная проверка: тестовая «камера» (ffmpeg -> RTSP) -> MediaMTX панели -> сервер панели -> HLS.
 #   scripts/e2e.sh <node> <mediamtx> <каталог приложения: server/ и public/>
-set -euo pipefail
+set -Eeuo pipefail
 
 NODE="$1"; MTX="$2"; APP="$3"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-W="$(mktemp -d)"
+W="${E2E_DIR:-$(mktemp -d)}"; mkdir -p "$W"
 PIDS=()
 cleanup() {
   for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null || true; done
@@ -13,10 +13,17 @@ cleanup() {
     echo "----- журнал камеры -----"; tail -n 40 "$W/camera.log" || true
     echo "----- журнал MediaMTX панели -----"; tail -n 60 "$W/mediamtx.log" || true
     echo "----- журнал сервера -----"; tail -n 60 "$W/server.log" || true
+    if [ -n "${GITHUB_ACTIONS:-}" ]; then
+      for f in camera ffmpeg mediamtx server; do
+        [ -s "$W/$f.log" ] || continue
+        echo "::error title=E2E: $f.log::$(tail -n 30 "$W/$f.log" | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"
+      done
+    fi
   fi
 }
 trap cleanup EXIT
-fail() { echo "E2E ОШИБКА: $*" >&2; E2E_FAILED=1; exit 1; }
+fail() { echo "E2E ОШИБКА: $*" >&2; echo "::error title=E2E::$*"; E2E_FAILED=1; exit 1; }
+trap 'E2E_FAILED=1; echo "::error title=E2E строка $LINENO::$BASH_COMMAND"' ERR
 
 # 1. «Камера»: отдельный MediaMTX на 18554 + ffmpeg с тестовой картинкой H.264
 cat > "$W/camera.yml" <<'EOF'

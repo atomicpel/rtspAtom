@@ -38,7 +38,7 @@ jobs:
 
       - name: Скачать Node.js для Linux x64
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail; trap 'echo "::error title=Ошибка в строке $LINENO::$BASH_COMMAND"' ERR
           VER=$(curl -sf https://nodejs.org/dist/index.json | jq -r --arg m "v${NODE_MAJOR}." '[.[] | select(.version | startswith($m))][0].version')
           echo "Node.js $VER"
           mkdir -p dl && cd dl
@@ -50,7 +50,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail; trap 'echo "::error title=Ошибка в строке $LINENO::$BASH_COMMAND"' ERR
           TAG=$(gh api repos/bluenviron/mediamtx/releases/latest --jq .tag_name)
           echo "MediaMTX $TAG"
           cd dl
@@ -62,23 +62,26 @@ jobs:
 
       - name: Собрать пакет
         run: |
-          set -euo pipefail
-          BUNDLE=$(scripts/build-bundle.sh "$NODE_TAR" "$MTX_TAR" out | head -1)
+          set -Eeuo pipefail; trap 'echo "::error title=Ошибка в строке $LINENO::$BASH_COMMAND"' ERR
+          OUTPUT=$(scripts/build-bundle.sh "$NODE_TAR" "$MTX_TAR" out)
+          echo "$OUTPUT"
+          BUNDLE=$(echo "$OUTPUT" | sed -n 1p)
           echo "BUNDLE=$BUNDLE" >> "$GITHUB_ENV"
           echo "BUNDLE_NAME=$(basename "$BUNDLE" .tar.gz)" >> "$GITHUB_ENV"
           ls -lh out/
 
       - name: Сквозной тест (камера RTSP -> MediaMTX -> панель -> HLS)
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail; trap 'echo "::error title=Ошибка в строке $LINENO::$BASH_COMMAND"' ERR
           command -v ffmpeg >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null; }
           mkdir -p e2e && tar -xzf "$BUNDLE" -C e2e
           D=e2e/$BUNDLE_NAME
-          scripts/e2e.sh "$D/node/bin/node" "$D/mediamtx/mediamtx" "$D/app"
+          E2E_DIR=$PWD/e2e-logs scripts/e2e.sh "$D/node/bin/node" "$D/mediamtx/mediamtx" "$D/app"
 
       - name: Проверка установщика в Debian 12 (база Astra 1.8)
         run: |
-          docker run --rm -v "$PWD:/w" -w /w debian:12 bash scripts/install-test.sh "$BUNDLE"
+          docker run --rm -v "$PWD:/w" -w /w debian:12 bash scripts/install-test.sh "$BUNDLE" 2>&1 | tee install-test.log
+          test "${PIPESTATUS[0]}" -eq 0 || { echo "::error title=Тест установщика::$(tail -n 40 install-test.log | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"; exit 1; }
 
       - name: Проверка установщика в образе Astra Linux 1.8 (если доступен)
         continue-on-error: true
@@ -102,7 +105,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail; trap 'echo "::error title=Ошибка в строке $LINENO::$BASH_COMMAND"' ERR
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             TAG="${GITHUB_REF#refs/tags/}"
             gh release create "$TAG" out/* --title "RTSP Atom $TAG" --notes "$(tar -xzOf "$BUNDLE" "$BUNDLE_NAME/VERSION")"
