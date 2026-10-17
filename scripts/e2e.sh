@@ -37,6 +37,7 @@ rtmp: no
 hls: no
 webrtc: no
 srt: no
+moq: no
 paths:
   all_others:
 EOF
@@ -48,6 +49,7 @@ ffmpeg -hide_banner -loglevel error -re -f lavfi -i testsrc=size=640x360:rate=25
 
 # 2. MediaMTX панели с боевой конфигурацией
 "$MTX" "$ROOT/deploy/mediamtx.yml" > "$W/mediamtx.log" 2>&1 & PIDS+=($!)
+MTX_PID=$!
 
 # 3. Сервер панели
 cat > "$W/config.json" <<EOF
@@ -66,6 +68,20 @@ curl -sf "$B/" | grep -q '<div id="root">' || fail "фронтенд не отд
 H=(-H 'Content-Type: application/json' -H 'X-RTSPAtom: 1' -b "$J" -c "$J")
 curl -sf "${H[@]}" -d '{"login":"admin","password":"e2e-password"}' "$B/api/auth/login" >/dev/null || fail "вход"
 COMP=$(curl -sf "${H[@]}" -d '{"name":"Тестовый объект"}' "$B/api/computers" | "$NODE" -pe 'JSON.parse(require("fs").readFileSync(0)).id')
+
+# MediaMTX панели не должен слушать внешние адреса
+sleep 1
+kill -0 "$MTX_PID" 2>/dev/null || fail "MediaMTX с deploy/mediamtx.yml не запустился"
+EXPOSED=$(ss -ltnupH 2>/dev/null | grep "pid=$MTX_PID," | awk '{print $5}' | grep -vE '^(127\.0\.0\.1|\[::1\]):' || true)
+[ -z "$EXPOSED" ] || fail "MediaMTX слушает внешние адреса: $EXPOSED"
+echo "MediaMTX слушает: $(ss -ltnupH | grep "pid=$MTX_PID," | awk '{print $5}' | tr '\n' ' ')"
+
+# Панель должна увидеть MediaMTX
+for i in $(seq 1 20); do
+  curl -sf -b "$J" "$B/api/system" | grep -q '"reachable":true' && break
+  sleep 0.5
+done
+curl -sf -b "$J" "$B/api/system" | grep -q '"reachable":true' || fail "панель не видит MediaMTX"
 
 # Проверка источника до добавления
 PROBE=$(curl -sf "${H[@]}" -d '{"url":"rtsp://127.0.0.1:18554/cam","transport":"tcp"}' "$B/api/streams/probe")

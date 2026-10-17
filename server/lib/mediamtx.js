@@ -279,9 +279,12 @@ export class StreamSync {
 
   async refreshStatus() {
     let items;
+    const wasReachable = this.reachable;
     try {
       items = await this.client.listPaths();
       this.reachable = true;
+      // MediaMTX появился (запустился позже панели) — сразу передаём ему камеры.
+      if (!wasReachable && !this.syncing) this.trigger();
     } catch (err) {
       this.reachable = false;
       this.lastError = err.message;

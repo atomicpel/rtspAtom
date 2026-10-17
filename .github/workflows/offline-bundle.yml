@@ -12,6 +12,8 @@ permissions:
 
 env:
   NODE_MAJOR: '24'
+  # Версия MediaMTX зафиксирована: deploy/mediamtx.yml проверен именно с ней.
+  MEDIAMTX_VERSION: v1.21.2
 
 jobs:
   build:
@@ -51,7 +53,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail; trap 'echo "::error title=Ошибка в строке $LINENO::$BASH_COMMAND"' ERR
-          TAG=$(gh api repos/bluenviron/mediamtx/releases/latest --jq .tag_name)
+          TAG="$MEDIAMTX_VERSION"
+          LATEST=$(gh api repos/bluenviron/mediamtx/releases/latest --jq .tag_name || echo "?")
+          [ "$LATEST" = "$TAG" ] || echo "::notice title=MediaMTX::Доступна новая версия $LATEST (в пакете $TAG)"
           echo "MediaMTX $TAG"
           cd dl
           gh release download "$TAG" --repo bluenviron/mediamtx --pattern "mediamtx_${TAG}_linux_amd64.tar.gz" --clobber
