@@ -13,12 +13,17 @@ $InstallDir = Join-Path $env:ProgramFiles 'RTSPAtom'
 $W = Join-Path ($env:RUNNER_TEMP ?? $env:TEMP) 'rtspatom-wtest'
 $procs = @()
 
+function Annotate([string]$title, [string]$text) {
+  $t = ($text -replace '%', '%25' -replace "`r", '' -replace "`n", '%0A')
+  Write-Host "::error title=$title::$t"
+}
 function Fail([string]$m) {
   Write-Host "::error title=Windows::$m"
   Write-Host "ОШИБКА: $m" -ForegroundColor Red
   if (Test-Path "$DataRoot\logs") {
     Get-ChildItem "$DataRoot\logs" -File | ForEach-Object {
-      Write-Host "::group::$($_.Name)"; Get-Content $_.FullName -Tail 60; Write-Host '::endgroup::'
+      $tail = (Get-Content $_.FullName -Tail 30) -join "`n"
+      if ($tail) { Annotate "log $($_.Name)" $tail }
     }
   }
   foreach ($f in 'camera.log', 'ffmpeg.log') {
@@ -33,9 +38,12 @@ function Install-Bundle([string[]]$Extra) {
   $log = Join-Path $W "install-$([guid]::NewGuid().ToString('N').Substring(0,6)).log"
   $p = Start-Process powershell.exe -Wait -PassThru -NoNewWindow -RedirectStandardOutput $log `
     -ArgumentList (@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$dir\install.ps1`"") + $Extra)
-  Get-Content $log -Encoding UTF8
-  if ($p.ExitCode -ne 0) { Fail "install.ps1 завершился с кодом $($p.ExitCode)" }
-  if ((Get-Content $log -Raw -Encoding UTF8) -match 'Ошибка:') { Fail 'install.ps1 сообщил об ошибке' }
+  $text = Get-Content $log -Raw -Encoding UTF8
+  Write-Host $text
+  if ($p.ExitCode -ne 0 -or $text -match 'Ошибка:') {
+    Annotate 'install.ps1' ((($text -split "`n") | Select-Object -Last 40) -join "`n")
+    Fail "install.ps1 завершился с кодом $($p.ExitCode)"
+  }
 }
 
 function New-Session([string]$base) {
