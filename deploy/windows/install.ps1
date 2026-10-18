@@ -24,6 +24,16 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Если скрипт запущен из PowerShell 7, унаследованный PSModulePath указывает на модули PS7,
+# и Windows PowerShell 5.1 не находит свои командлеты. Восстанавливаем стандартные пути.
+if ($PSVersionTable.PSEdition -eq 'Desktop') {
+  $env:PSModulePath = @(
+    (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'WindowsPowerShell\Modules'),
+    (Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules'),
+    (Join-Path $PSHOME 'Modules')
+  ) -join ';'
+}
 $ProgressPreference = 'SilentlyContinue'
 try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch {}
 $OutputEncoding = New-Object System.Text.UTF8Encoding $false
@@ -95,11 +105,15 @@ try {
   if (Test-Path $sums) {
     Say 'Проверка целостности пакета'
     $bad = @()
+    $sha = [Security.Cryptography.SHA256]::Create()
     foreach ($line in Get-Content -LiteralPath $sums -Encoding UTF8) {
       if ($line -notmatch '^([0-9a-f]{64})\s+\*?(.+)$') { continue }
       $file = Join-Path $Src ($Matches[2] -replace '^\./', '' -replace '/', '\')
       if (-not (Test-Path -LiteralPath $file)) { $bad += $Matches[2]; continue }
-      if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLower() -ne $Matches[1]) { $bad += $Matches[2] }
+      $expected = $Matches[1]; $name = $Matches[2]
+      $fs = [IO.File]::OpenRead($file)
+      try { $hash = -join ($sha.ComputeHash($fs) | ForEach-Object { $_.ToString('x2') }) } finally { $fs.Dispose() }
+      if ($hash -ne $expected) { $bad += $name }
     }
     if ($bad.Count) { Die ("файлы пакета повреждены: " + ($bad -join ', ')) }
   }

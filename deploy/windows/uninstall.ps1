@@ -8,6 +8,16 @@
 param([switch]$Purge, [switch]$Elevated, [switch]$Yes)
 
 $ErrorActionPreference = 'Stop'
+
+# Если скрипт запущен из PowerShell 7, унаследованный PSModulePath указывает на модули PS7,
+# и Windows PowerShell 5.1 не находит свои командлеты. Восстанавливаем стандартные пути.
+if ($PSVersionTable.PSEdition -eq 'Desktop') {
+  $env:PSModulePath = @(
+    (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'WindowsPowerShell\Modules'),
+    (Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules'),
+    (Join-Path $PSHOME 'Modules')
+  ) -join ';'
+}
 try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch {}
 $InstallDir = $PSScriptRoot
 $DataRoot = Join-Path $env:ProgramData 'RTSPAtom'
