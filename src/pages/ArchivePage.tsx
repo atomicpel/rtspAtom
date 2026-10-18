@@ -116,8 +116,21 @@ export function ArchivePage() {
     const to = new Date(Math.min(ve + pad, Date.now() + MIN));
     const res = await Promise.all(info.streams.map((s) =>
       api.archiveSpans(s.id, from, to).then((l) => [s.id, toSpans(l)] as const).catch(() => [s.id, undefined] as const)));
-    setSpans(new Map(res.filter((r) => r[1]) as [string, Span[]][]));
+    // не удалось получить промежутки (перегрузка, лимит запросов) — оставляем прежние и повторяем
+    setSpans((prev) => {
+      const next = new Map(prev);
+      for (const [id, list] of res) if (list) next.set(id, list);
+      return next;
+    });
+    if (res.some((r) => !r[1])) {
+      clearTimeout(spansRetry.current);
+      spansRetry.current = setTimeout(() => loadSpansRef.current(), 3000);
+    }
   }, [info, view]);
+  const spansRetry = useRef<ReturnType<typeof setTimeout>>();
+  const loadSpansRef = useRef(loadSpans);
+  loadSpansRef.current = loadSpans;
+  useEffect(() => () => clearTimeout(spansRetry.current), []);
 
   useEffect(() => {
     const h = setTimeout(loadSpans, 250);
