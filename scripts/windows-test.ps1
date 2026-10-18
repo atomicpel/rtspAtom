@@ -21,8 +21,8 @@ function Fail([string]$m) {
   Write-Host "::error title=Windows::$m"
   Write-Host "ОШИБКА: $m" -ForegroundColor Red
   if (Test-Path "$DataRoot\logs") {
-    Get-ChildItem "$DataRoot\logs" -File | ForEach-Object {
-      $tail = (Get-Content $_.FullName -Tail 30) -join "`n"
+    Get-ChildItem "$DataRoot\logs" -File -ErrorAction SilentlyContinue | ForEach-Object {
+      $tail = (Get-Content $_.FullName -Tail 30 -ErrorAction SilentlyContinue) -join "`n"
       if ($tail) { Annotate "log $($_.Name)" $tail }
     }
   }

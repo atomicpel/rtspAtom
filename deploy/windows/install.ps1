@@ -127,7 +127,14 @@ try {
       if (Test-Path $wrapper) { Invoke-Native $wrapper @('uninstall') | Out-Null } else { Invoke-Native 'sc.exe' @('delete', $s) | Out-Null }
     }
   }
-  Start-Sleep -Seconds 1
+  # Ждём завершения процессов старой версии, чтобы файлы не были заняты.
+  for ($i = 0; $i -lt 20; $i++) {
+    $running = Get-Process -Name node, mediamtx, rtspatom, rtspatom-mediamtx -ErrorAction SilentlyContinue |
+      Where-Object { $_.Path -and $_.Path.StartsWith($InstallDir, [StringComparison]::OrdinalIgnoreCase) }
+    if (-not $running) { break }
+    if ($i -eq 19) { $running | Stop-Process -Force -ErrorAction SilentlyContinue }
+    Start-Sleep -Milliseconds 500
+  }
 
   # --- Копирование программы --------------------------------------------------------
   Say "Копирую файлы в $InstallDir"
@@ -152,11 +159,12 @@ try {
   # Службы работают от «NT AUTHORITY\LocalService» (S-1-5-19), а не от SYSTEM.
   Say "Каталог данных $DataRoot"
   foreach ($d in @($DataRoot, $DataDir, $LogDir, $TlsDir)) { New-Item -ItemType Directory -Force -Path $d | Out-Null }
-  $r = Invoke-Native 'icacls.exe' @($DataRoot, '/inheritance:r', '/grant:r', '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F', '*S-1-5-19:(OI)(CI)RX', '/T', '/Q')
+  # Наследуемые разрешения на каталогах сами распространяются на вложенные файлы.
+  $r = Invoke-Native 'icacls.exe' @($DataRoot, '/inheritance:r', '/grant:r', '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F', '*S-1-5-19:(OI)(CI)RX', '/Q')
   if ($r.Code -ne 0) { Die "не удалось настроить права на $DataRoot`: $($r.Output)" }
   foreach ($d in @($DataDir, $LogDir)) {
-    $r = Invoke-Native 'icacls.exe' @($d, '/grant', '*S-1-5-19:(OI)(CI)M', '/T', '/Q')
-    if ($r.Code -ne 0) { Die "не удалось настроить права на $d`: $($r.Output)" }
+    $r = Invoke-Native 'icacls.exe' @($d, '/grant', '*S-1-5-19:(OI)(CI)M', '/Q')
+    if ($r.Code -ne 0) { Warn "права на $d настроены не полностью: $($r.Output)" }
   }
 
   # --- HTTPS --------------------------------------------------------------------------
