@@ -16,7 +16,7 @@ const HELP = `Использование: rtspatom-admin <команда> [па�
   unblock-ip [ip]             снять блокировку входа (без ip — со всех адресов)
   clear-ip-rules              удалить все правила IP-фильтра (если закрыли себе доступ)
 
-Пароль запрашивается интерактивно; для скриптов: --password-stdin`;
+Пароль запрашивается интерактивно; для скриптов: --password-stdin или --password-env ИМЯ_ПЕРЕМЕННОЙ`;
 
 function ask(question, { hidden = false } = {}) {
   return new Promise((resolve) => {
@@ -35,6 +35,14 @@ function ask(question, { hidden = false } = {}) {
 }
 
 async function readPassword(args) {
+  // --password-env ИМЯ: пароль из переменной окружения (надёжно для любых символов в Windows).
+  const envIdx = args.indexOf('--password-env');
+  if (envIdx >= 0) {
+    const name = args[envIdx + 1];
+    const value = name ? process.env[name] : undefined;
+    if (!value) throw new Error(`Переменная окружения ${name || '(не указана)'} пуста`);
+    return value;
+  }
   if (args.includes('--password-stdin')) {
     const chunks = [];
     for await (const c of process.stdin) chunks.push(c);
@@ -58,7 +66,7 @@ async function readPassword(args) {
 
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
-  const args = rest.filter((a) => !a.startsWith('--'));
+  const args = rest.filter((a, i) => !a.startsWith('--') && rest[i - 1] !== '--password-env');
   if (!cmd || cmd === 'help' || cmd === '--help') {
     console.log(HELP);
     return;

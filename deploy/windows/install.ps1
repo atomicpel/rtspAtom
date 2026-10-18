@@ -257,7 +257,10 @@ try {
       }
     }
     if ($AdminPassword) {
-      $r = Invoke-Native $Node @('--disable-warning=ExperimentalWarning', $Cli, 'create-admin', $AdminLogin, '--password-stdin') $AdminPassword
+      $env:RTSPATOM_NEW_PASSWORD = $AdminPassword
+      try {
+        $r = Invoke-Native $Node @('--disable-warning=ExperimentalWarning', $Cli, 'create-admin', $AdminLogin, '--password-env', 'RTSPATOM_NEW_PASSWORD')
+      } finally { Remove-Item Env:\RTSPATOM_NEW_PASSWORD -ErrorAction SilentlyContinue }
       if ($r.Code -ne 0) { Die "не удалось создать администратора: $($r.Output)" }
       Write-Host "    $($r.Output)"
     }
