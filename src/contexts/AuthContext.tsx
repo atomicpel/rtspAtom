@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import type { User } from '../lib/types';
-import { api, errorMessage, UNAUTHORIZED_EVENT } from '../lib/api';
+import { api, ApiError, errorMessage, UNAUTHORIZED_EVENT } from '../lib/api';
+import { onReconnected } from '../lib/connection';
 import type { Platform } from '../lib/platform';
 
 interface AuthContextType {
@@ -44,12 +45,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } else {
         setUser(null);
       }
-    } catch {
+    } catch (err) {
+      // Нет связи (сервер перезапускается) — не выходим из системы, а ждём и проверяем снова
+      if (err instanceof ApiError && err.status === 0) {
+        setTimeout(checkStatus, 3000);
+        return;
+      }
       setUser(null);
-    } finally {
-      setChecking(false);
     }
+    setChecking(false);
   }, []);
+
+  useEffect(() => onReconnected(() => { checkStatus(); }), [checkStatus]);
 
   useEffect(() => {
     checkStatus();

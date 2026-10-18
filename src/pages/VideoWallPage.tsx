@@ -4,7 +4,8 @@ import {
   Bookmark, Crop, Expand, History, Maximize, Minimize, MonitorPlay, Plus, RefreshCw, Replace, Search, Trash2, Video, Wand2, X,
 } from 'lucide-react';
 import type { Stream, WallCell, WallConfig, WallLayout } from '../lib/types';
-import { api, errorMessage } from '../lib/api';
+import { api, ApiError, errorMessage } from '../lib/api';
+import { onReconnected } from '../lib/connection';
 import { usePolling } from '../lib/usePolling';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../components/Toast';
@@ -84,7 +85,10 @@ export function VideoWallPage({ onNavigate }: { onNavigate: (page: string) => vo
   const L = LAYOUTS.find((l) => l.id === layout) || LAYOUTS[1];
 
   // ---------- загрузка и сохранение состояния ----------
+  const [loadTry, setLoadTry] = useState(0);
+  useEffect(() => onReconnected(() => setLoadTry((n) => n + 1)), []);
   useEffect(() => {
+    if (loaded) return;
     let alive = true;
     Promise.all([api.wallState(), api.wallConfigs()])
       .then(([state, cfgs]) => {
@@ -96,11 +100,16 @@ export function VideoWallPage({ onNavigate }: { onNavigate: (page: string) => vo
         setRefreshInterval(state.refreshInterval || 0);
         setConfigs(cfgs);
         firstFill.current = full.every((c) => !c.streamId);
+        setLoaded(true);
       })
-      .catch((err) => toast('error', `Не удалось загрузить видеостену: ${errorMessage(err)}`))
-      .finally(() => { if (alive) setLoaded(true); });
+      .catch((err) => {
+        // без связи состояние стены не трогаем: загрузим, когда сервер ответит (иначе пустая стена затёрла бы сохранённую)
+        if (err instanceof ApiError && err.status === 0) return;
+        toast('error', `Не удалось загрузить видеостену: ${errorMessage(err)}`);
+        if (alive) setTimeout(() => setLoadTry((n) => n + 1), 5000);
+      });
     return () => { alive = false; };
-  }, [toast]);
+  }, [toast, loadTry, loaded]);
 
   useEffect(() => {
     if (!loaded) return;

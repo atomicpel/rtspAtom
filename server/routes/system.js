@@ -127,6 +127,25 @@ export function registerSystem(router, app) {
     log.info('access', `Экспорт журнала: ${rows.length} записей`, { user: ctx.user.login, ip: ctx.ip });
   }, { auth: 'operator' });
 
+  // ---------- События из браузера: обрыв связи с сервером ----------
+  const clientEvents = new Map(); // сеанс -> время последнего события
+  router.post('/api/client-event', async (ctx) => {
+    const body = await ctx.json();
+    if (body.kind !== 'connection-lost') throw badRequest('kind: connection-lost');
+    const downMs = Number(body.downMs);
+    const since = Date.parse(String(body.since || ''));
+    if (!Number.isFinite(downMs) || downMs < 0 || downMs > 7 * 86400_000 || !Number.isFinite(since)) throw badRequest('downMs, since');
+    const key = ctx.session.tokenHash;
+    if (Date.now() - (clientEvents.get(key) || 0) < 10_000) return { ok: true };
+    clientEvents.set(key, Date.now());
+    if (clientEvents.size > 5000) clientEvents.clear();
+    const sec = Math.round(downMs / 1000);
+    log.warn('error', `Браузер терял связь с сервером на ${sec} с (с ${new Date(since).toLocaleTimeString('ru-RU')}). ` +
+      'Если в это же время нет записи о перезапуске панели — причина в сети между браузером и сервером или в перегрузке компьютера.',
+    { user: ctx.user.login, ip: ctx.ip });
+    return { ok: true };
+  });
+
   // ---------- Сведения о системе ----------
   router.get('/api/system', (ctx) => ({
     version: APP_VERSION,

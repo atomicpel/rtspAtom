@@ -41,8 +41,12 @@ authInternalUsers:
       - action: publish
         path: '~^live/[a-z0-9]{20}$'
 
-# RTSP-сервер не нужен: камеры с RTSP MediaMTX забирает сам.
-rtsp: no
+# RTSP-сервер — только на 127.0.0.1 и только TCP: через него поток от энкодера (live/<ключ>)
+# передаётся в путь s_<id>, который пишется в архив. Камеры с RTSP MediaMTX забирает сам.
+rtsp: yes
+rtspTransports: [tcp]
+rtspEncryption: "no"
+rtspAddress: 127.0.0.1:8554
 moq: no
 
 # Приём от энкодеров (режим «энкодер отправляет сам»):

@@ -4,6 +4,8 @@
  * само видео — напрямую от MediaMTX по порту ICE.
  */
 
+import { markOffline } from './connection';
+
 export class WhepError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -66,12 +68,19 @@ export async function startWhep(
     // В локальной сети кандидаты собираются за миллисекунды; ждём не дольше секунды.
     await waitGathering(pc, 1000);
 
-    const res = await fetch(`/webrtc/${encodeURIComponent(streamId)}/whep`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/sdp', 'X-RTSPAtom': '1' },
-      body: pc.localDescription!.sdp,
-      credentials: 'same-origin',
-    });
+    let res: Response;
+    try {
+      res = await fetch(`/webrtc/${encodeURIComponent(streamId)}/whep`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/sdp', 'X-RTSPAtom': '1' },
+        body: pc.localDescription!.sdp,
+        credentials: 'same-origin',
+      });
+    } catch {
+      markOffline();
+      // нет связи с самим сервером панели — это не повод отказываться от WebRTC
+      throw new WhepError(-1, 'нет связи с сервером');
+    }
     if (res.status !== 201) {
       let msg = `код ${res.status}`;
       try { msg = (await res.json()).error || msg; } catch { /* не JSON */ }

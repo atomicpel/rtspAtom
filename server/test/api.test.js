@@ -423,7 +423,7 @@ test('архив: запись в MediaMTX, архивный путь отклю
   await app.sync.trigger();
   let conf = fake.paths.get(`s_${id}`);
   assert.equal(conf.record, true);
-  assert.equal(conf.recordPath, `${dir.replace(/\\/g, '/')}/${id}/%Y-%m-%d_%H-%M-%S-%f`);
+  assert.equal(conf.recordPath, `${dir.replace(/\\/g, '/')}/%path/%Y-%m-%d_%H-%M-%S-%f`);
   assert.equal(conf.recordDeleteAfter, '336h');
   assert.equal(conf.recordSegmentDuration, '10m');
 
@@ -438,8 +438,28 @@ test('архив: запись в MediaMTX, архивный путь отклю
   await app.sync.trigger();
   conf = fake.paths.get(`s_${id}`);
   assert.equal(conf.record, false);
-  assert.match(conf.recordPath, new RegExp(id));
+  assert.match(conf.recordPath, /%path/);
   await admin.put(`/api/streams/${id}`, { record: true });
+
+  // поток от энкодера: архив пишет путь s_<id>, который забирает поток live/<ключ> через локальный RTSP
+  r = await admin.post('/api/streams', { name: 'Энкодер в архив', mode: 'push' });
+  const pid = r.data.id;
+  const pkey = r.data.push.key;
+  await app.sync.trigger();
+  assert.deepEqual(fake.paths.get(`live/${pkey}`), { source: 'publisher' });
+  const relay = fake.paths.get(`s_${pid}`);
+  assert.equal(relay.source, `rtsp://127.0.0.1:8554/live/${pkey}`);
+  assert.equal(relay.record, true);
+  assert.equal(relay.sourceOnDemand, false);
+  // смена ключа: архивный путь тот же, источник новый
+  r = await admin.post(`/api/streams/${pid}/push-key`);
+  await app.sync.trigger();
+  assert.equal(fake.paths.get(`s_${pid}`).source, `rtsp://127.0.0.1:8554/live/${r.data.push.key}`);
+  // запись выключена и записей нет — архивного пути нет
+  await admin.put(`/api/streams/${pid}`, { record: false });
+  await app.sync.trigger();
+  assert.equal(fake.paths.has(`s_${pid}`), false);
+  await admin.del(`/api/streams/${pid}`);
 
   // промежутки записи
   fake.recordings.set(`s_${id}`, [{ start: '2026-10-18T10:00:00Z', duration: 600 }, { start: '2026-10-18T10:15:00Z', duration: 120.5 }]);
@@ -499,8 +519,8 @@ test('архив: запись в MediaMTX, архивный путь отклю
   assert.equal(r.status, 204);
 
   // сводка архива
-  fs.mkdirSync(path.join(dir, id), { recursive: true });
-  fs.writeFileSync(path.join(dir, id, '2026-10-18_10-00-00-000000.mp4'), Buffer.alloc(2048));
+  fs.mkdirSync(path.join(dir, `s_${id}`), { recursive: true });
+  fs.writeFileSync(path.join(dir, `s_${id}`, '2026-10-18_10-00-00-000000.mp4'), Buffer.alloc(2048));
   r = await admin.get('/api/archive');
   assert.equal(r.status, 200);
   const st = r.data.streams.find((s) => s.id === id);
@@ -521,7 +541,7 @@ test('архив: запись в MediaMTX, архивный путь отклю
   // удаление потока удаляет архив и закладки
   await admin.del(`/api/streams/${id}`);
   await new Promise((res) => setTimeout(res, 50));
-  assert.equal(fs.existsSync(path.join(dir, id)), false);
+  assert.equal(fs.existsSync(path.join(dir, `s_${id}`)), false);
   await app.sync.trigger();
   assert.equal(fake.paths.has(`s_${id}`), false);
   await admin.put('/api/settings', { archiveDays: 14 });
@@ -531,8 +551,8 @@ test('архив: запись в MediaMTX, архивный путь отклю
 test('архив: при нехватке места удаляются самые старые записи, идущая запись не трогается', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rtspatom-arch-'));
   const mk = (stream, name, size, ageMin) => {
-    fs.mkdirSync(path.join(dir, stream), { recursive: true });
-    const f = path.join(dir, stream, name);
+    fs.mkdirSync(path.join(dir, `s_${stream}`), { recursive: true });
+    const f = path.join(dir, `s_${stream}`, name);
     fs.writeFileSync(f, Buffer.alloc(size));
     const t = new Date(Date.now() - ageMin * 60_000);
     fs.utimesSync(f, t, t);
@@ -574,6 +594,21 @@ test('удаление потока удаляет путь MediaMTX', async () 
   assert.equal(fake.paths.has(`s_${streamId}`), false);
   r = await admin.get(`/hls/${streamId}/index.m3u8`);
   assert.equal(r.status, 404);
+});
+
+test('обрыв связи браузера записывается в журнал (не чаще раза в 10 с на сеанс)', async () => {
+  let r = await admin.post('/api/client-event', { kind: 'connection-lost', since: new Date(Date.now() - 12000).toISOString(), downMs: 12000 });
+  assert.equal(r.status, 200);
+  r = await admin.post('/api/client-event', { kind: 'connection-lost', since: new Date().toISOString(), downMs: 5000 });
+  assert.equal(r.status, 200);
+  r = await admin.get('/api/logs?category=error&limit=20');
+  const msgs = (r.data.items || r.data.logs || r.data).map((e) => e.message).filter((m) => /терял связь/.test(m));
+  assert.equal(msgs.length, 1);
+  assert.match(msgs[0], /на 12 с/);
+  r = await admin.post('/api/client-event', { kind: 'x' });
+  assert.equal(r.status, 400);
+  r = await new Client('10.0.0.99').post('/api/client-event', { kind: 'connection-lost', since: new Date().toISOString(), downMs: 1 });
+  assert.equal(r.status, 401);
 });
 
 test('выход завершает сессию', async () => {

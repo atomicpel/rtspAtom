@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import { AlertCircle, Loader2, Play, VideoOff } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { onReconnected } from '../lib/connection';
 import { startWhep, webrtcLatencyMs, WhepError, type WhepSession } from '../lib/whep';
 
 interface VideoPlayerProps {
@@ -46,6 +47,9 @@ export function VideoPlayer({ streamId, name, className = '', reloadKey = 0, dis
   const [transport, setTransport] = useState<Transport>(() => preferredTransport(lowLatency));
 
   useEffect(() => { onStatus?.(status === 'playing' && !disabled, transport); }, [status, disabled, transport]);
+
+  // Связь с сервером восстановилась — переподключаемся сразу, не дожидаясь очередной попытки
+  useEffect(() => onReconnected(() => setAttempt((a) => a + 1)), []);
 
   // Новая попытка подключения — снова с предпочтительным способом
   useEffect(() => { setTransport(preferredTransport(lowLatency)); }, [streamId, reloadKey, attempt, lowLatency]);
@@ -106,6 +110,7 @@ export function VideoPlayer({ streamId, name, className = '', reloadKey = 0, dis
         .catch((err: unknown) => {
           if (cancelled) return;
           const code = err instanceof WhepError ? err.status : 0;
+          if (code === -1) { fail('Нет связи с сервером'); return; }
           if ([401, 403, 409, 503].includes(code)) { fail(httpError(code)); return; }
           // Камера без поддерживаемого кодека, закрытый порт и т. п. — показываем через HLS
           if (code === 0) webrtcBrokenUntil = Date.now() + 5 * 60_000;

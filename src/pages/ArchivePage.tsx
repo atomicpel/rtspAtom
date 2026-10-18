@@ -11,6 +11,7 @@ import {
   fromDayKey, localInput, nextSpanStart, spanAt, startOfDay, toSpans,
 } from '../lib/archiveTime';
 import { useToast } from '../components/Toast';
+import { onReconnected } from '../lib/connection';
 import { ArchivePlayer } from '../components/archive/ArchivePlayer';
 import { Timeline } from '../components/archive/Timeline';
 import { Button, Field, IconButton, Modal, Notice, inputCls } from '../components/ui';
@@ -93,6 +94,18 @@ export function ArchivePage() {
   useEffect(() => {
     try { localStorage.setItem(SELECTED_KEY, JSON.stringify(selected)); } catch { /* недоступно */ }
   }, [selected]);
+
+  // связь восстановилась: обновить сводку, промежутки и переподключить плееры
+  useEffect(() => onReconnected(() => {
+    api.archive().then((a) => {
+      setInfo(a);
+      setSelected((sel) => {
+        if (sel.length) return sel;
+        return a.streams.filter((s) => s.record || s.bytes > 0).slice(0, 4).map((s) => s.id);
+      });
+    }).catch(() => {});
+    setSeekNonce((n) => n + 1);
+  }), []);
 
   // Промежутки записи для видимого окна (с запасом по краям), обновление каждые 20 с у «живого» края
   const loadSpans = useCallback(async () => {

@@ -2,6 +2,7 @@ import type {
   ArchiveInfo, ArchiveSpan, Bookmark,
   IpRule, LogEntry, ProbeResult, Settings, Stream, SystemInfo, User, WallConfig, WallState,
 } from './types';
+import { markOffline, markOnline } from './connection';
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -25,8 +26,12 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
       credentials: 'same-origin',
     });
   } catch {
-    throw new ApiError(0, 'Сервер недоступен');
+    markOffline();
+    throw new ApiError(0, 'Нет связи с сервером');
   }
+  // 502/503/504 от промежуточного прокси — тоже признак, что сервер панели недоступен
+  if ([502, 504].includes(res.status) && !res.headers.get('content-type')?.includes('json')) markOffline();
+  else markOnline();
   if (res.status === 204) return undefined as T;
   const text = await res.text();
   let data: any = null;
@@ -104,6 +109,7 @@ export const api = {
   updateStream: (id: string, s: StreamInput) => put<Stream>(`/api/streams/${id}`, s),
   deleteStream: (id: string) => del<void>(`/api/streams/${id}`),
   newPushKey: (id: string) => post<Stream>(`/api/streams/${id}/push-key`),
+  recordAll: (record: boolean) => put<{ changed: number }>('/api/streams-record', { record }),
 
   archive: () => get<ArchiveInfo>('/api/archive'),
   archiveSpans: (id: string, start: Date, end: Date) =>

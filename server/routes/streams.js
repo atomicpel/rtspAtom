@@ -177,6 +177,16 @@ export function registerStreams(router, app) {
     return streamToApi(getStream(cur.id), ctx.user);
   }, { auth: 'admin' });
 
+  // Запись в архив сразу для всех потоков: { record: true|false }
+  router.put('/api/streams-record', async (ctx) => {
+    const { record } = await ctx.json();
+    if (typeof record !== 'boolean') throw badRequest('record: true или false');
+    const n = db.prepare('UPDATE streams SET record = ?').run(record ? 1 : 0).changes;
+    log.info('admin', `${record ? 'Включена' : 'Выключена'} запись в архив для всех потоков (${n})`, { user: ctx.user.login, ip: ctx.ip });
+    sync();
+    return { changed: n };
+  }, { auth: 'admin' });
+
   // Порядок потоков (перетаскивание в списке): { ids: [...] }
   router.put('/api/streams-order', async (ctx) => {
     const { ids } = await ctx.json();

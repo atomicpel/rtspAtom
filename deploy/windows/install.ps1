@@ -197,7 +197,7 @@ try {
   # --- Свободные порты ----------------------------------------------------------------
   # Желаемые порты: из -Port / прежней установки / по умолчанию. Если порт занят другой
   # программой (наши службы уже остановлены), берётся следующий свободный.
-  $wantPanel = 8080; $wantHls = 8888; $wantApi = 9997; $wantWhep = 8890; $wantIce = 8189; $wantRtmp = 1935; $wantSrt = 8890; $wantPlay = 9996
+  $wantPanel = 8080; $wantHls = 8888; $wantApi = 9997; $wantWhep = 8890; $wantIce = 8189; $wantRtmp = 1935; $wantSrt = 8890; $wantPlay = 9996; $wantRtsp = 8554
   if (Test-Path $ConfigFile) {
     try {
       $old = [IO.File]::ReadAllText($ConfigFile).TrimStart([char]0xFEFF) | ConvertFrom-Json
@@ -209,15 +209,16 @@ try {
       if ($old.mediamtx.rtmpPort) { $wantRtmp = [int]$old.mediamtx.rtmpPort }
       if ($old.mediamtx.srtPort) { $wantSrt = [int]$old.mediamtx.srtPort }
       if ($old.mediamtx.playbackUrl) { $wantPlay = ([Uri]$old.mediamtx.playbackUrl).Port }
+      if ($old.mediamtx.rtspUrl) { $wantRtsp = ([Uri]$old.mediamtx.rtspUrl).Port }
     } catch { Warn "не удалось прочитать прежний $ConfigFile — используются порты по умолчанию" }
   }
   if ($Port) { $wantPanel = $Port }
   Say 'Проверяю, свободны ли порты'
-  $r = Invoke-Native $Node @((Join-Path $InstallDir 'deploy\ports.mjs'), "panel=$wantPanel@0.0.0.0", "hls=$wantHls@127.0.0.1", "api=$wantApi@127.0.0.1", "whep=$wantWhep@127.0.0.1", "ice=$wantIce@0.0.0.0+udp", "rtmp=$wantRtmp@0.0.0.0", "srt=$wantSrt@0.0.0.0/udp", "playback=$wantPlay@127.0.0.1")
+  $r = Invoke-Native $Node @((Join-Path $InstallDir 'deploy\ports.mjs'), "panel=$wantPanel@0.0.0.0", "hls=$wantHls@127.0.0.1", "api=$wantApi@127.0.0.1", "whep=$wantWhep@127.0.0.1", "ice=$wantIce@0.0.0.0+udp", "rtmp=$wantRtmp@0.0.0.0", "srt=$wantSrt@0.0.0.0/udp", "playback=$wantPlay@127.0.0.1", "rtsp=$wantRtsp@127.0.0.1")
   if ($r.Code -ne 0) { Die "не удалось подобрать порты: $($r.Output)" }
   $ports = ($r.Output -split "`n" | Select-Object -Last 1) | ConvertFrom-Json
-  $labels = @{ panel = 'веб-интерфейса'; hls = 'видео HLS (внутренний)'; api = 'управления MediaMTX (внутренний)'; whep = 'подключения WebRTC (внутренний)'; ice = 'видео WebRTC'; rtmp = 'приёма RTMP от энкодеров'; srt = 'приёма SRT от энкодеров'; playback = 'выдачи архива (внутренний)' }
-  foreach ($k in 'panel', 'hls', 'api', 'whep', 'ice', 'rtmp', 'srt', 'playback') {
+  $labels = @{ panel = 'веб-интерфейса'; hls = 'видео HLS (внутренний)'; api = 'управления MediaMTX (внутренний)'; whep = 'подключения WebRTC (внутренний)'; ice = 'видео WebRTC'; rtmp = 'приёма RTMP от энкодеров'; srt = 'приёма SRT от энкодеров'; playback = 'выдачи архива (внутренний)'; rtsp = 'передачи потока энкодера в архив (внутренний)' }
+  foreach ($k in 'panel', 'hls', 'api', 'whep', 'ice', 'rtmp', 'srt', 'playback', 'rtsp') {
     $pr = $ports.$k
     if ($pr.busyBy) { Warn "Порт $($pr.wanted) занят ($($pr.busyBy)) — для $($labels[$k]) взят свободный порт $($pr.port)" }
   }
@@ -232,7 +233,7 @@ try {
     '--public', (Join-Path $InstallDir 'app\public')
   )
   $cfgArgs += @('--port', $ports.panel.port, '--mtx-hls-port', $ports.hls.port, '--mtx-api-port', $ports.api.port,
-    '--mtx-whep-port', $ports.whep.port, '--ice-port', $ports.ice.port, '--rtmp-port', $ports.rtmp.port, '--srt-port', $ports.srt.port, '--playback-port', $ports.playback.port)
+    '--mtx-whep-port', $ports.whep.port, '--ice-port', $ports.ice.port, '--rtmp-port', $ports.rtmp.port, '--srt-port', $ports.srt.port, '--playback-port', $ports.playback.port, '--rtsp-port', $ports.rtsp.port)
   if ($ArchiveDir) { $cfgArgs += @('--archive-dir', [IO.Path]::GetFullPath($ArchiveDir)) }
   $cfgArgs += $pfxArgs
   $r = Invoke-Native $Node $cfgArgs

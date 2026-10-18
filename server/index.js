@@ -9,14 +9,16 @@ import { getSettings } from './lib/settings.js';
 import { MediaMtxClient, StreamSync } from './lib/mediamtx.js';
 import { ArchiveManager } from './lib/archive.js';
 import { createHandler } from './lib/app.js';
+import { startHealth } from './lib/health.js';
 import { APP_VERSION } from './routes/system.js';
 
 const config = loadConfig();
 const db = openDb(path.join(config.dataDir, 'rtspatom.db'));
 const log = new EventLog(db);
+const health = startHealth({ dataDir: config.dataDir, log, version: APP_VERSION });
 const client = new MediaMtxClient(config.mediamtx.apiUrl);
 const settings = () => getSettings(db);
-const sync = new StreamSync({ db, client, log, settings, archiveDir: config.archiveDir });
+const sync = new StreamSync({ db, client, log, settings, archiveDir: config.archiveDir, relayUrl: config.mediamtx.rtspUrl });
 const archive = new ArchiveManager({ dir: config.archiveDir, log, settings });
 
 const app = { db, config, log, sync, archive, startedAt: Date.now() };
@@ -81,6 +83,7 @@ function shutdown(signal) {
   log.info('admin', `Остановка сервера (${signal})`);
   sync.stop();
   archive.stop();
+  health.clean();
   server.close(() => {
     db.close();
     process.exit(0);

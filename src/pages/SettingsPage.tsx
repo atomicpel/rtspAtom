@@ -6,6 +6,7 @@ import { api, errorMessage } from '../lib/api';
 import { usePolling } from '../lib/usePolling';
 import { useAuth } from '../contexts/AuthContext';
 import { hints } from '../lib/platform';
+import { onReconnected } from '../lib/connection';
 import { useToast } from '../components/Toast';
 import { Button, Field, IconButton, Notice, PageHeader, Section, Toggle, inputCls } from '../components/ui';
 import { fmtBytes } from '../lib/archiveTime';
@@ -23,13 +24,25 @@ export function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const { data: sys } = usePolling(api.system, 10000);
   const { data: ipData, setData: setIpData } = usePolling(api.ipRules);
-  const { data: arch } = usePolling(api.archive, 60000);
+  const { data: arch, reload: reloadArch } = usePolling(api.archive, 60000);
+  const recordAll = async (record: boolean) => {
+    try {
+      const r = await api.recordAll(record);
+      toast('success', `${record ? 'Запись включена' : 'Запись выключена'} для потоков: ${r.changed}`);
+      reloadArch();
+    } catch (err) {
+      toast('error', errorMessage(err));
+    }
+  };
   const [rule, setRule] = useState({ cidr: '', type: 'white' as IpRule['type'], comment: '' });
   const [ruleError, setRuleError] = useState('');
 
+  const [loadTry, setLoadTry] = useState(0);
+  useEffect(() => onReconnected(() => setLoadTry((n) => n + 1)), []);
   useEffect(() => {
+    if (settings) return;
     api.settings().then((s) => { setSettings(s); setSaved(s); }).catch((err) => toast('error', errorMessage(err)));
-  }, [toast]);
+  }, [toast, loadTry]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const dirty = settings && saved && JSON.stringify(settings) !== JSON.stringify(saved);
 
@@ -141,6 +154,11 @@ export function SettingsPage() {
                 : <p>Места хватит примерно на {Math.floor(arch.capacityDays)} сут. при текущем объёме записи.</p>
             )}
             <p>Запись включается для каждого потока на странице «Потоки». Записи потока удаляются вместе с ним.</p>
+            <p className="flex flex-wrap items-center gap-2 pt-1">
+              Пишется потоков: {arch.streams.filter((s) => s.record).length} из {arch.streams.length}.
+              <Button onClick={() => recordAll(true)}>Включить запись для всех</Button>
+              <Button variant="ghost" onClick={() => recordAll(false)}>Выключить для всех</Button>
+            </p>
           </div>
         )}
       </Section>

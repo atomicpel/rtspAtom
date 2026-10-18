@@ -6,7 +6,7 @@
 //   node configure.mjs --config <config.json> --template <mediamtx.yml> --yml <mediamtx.yml>
 //                     --data <каталог данных> --public <каталог фронтенда>
 //                     [--port N] [--mtx-api-port N] [--mtx-hls-port N] [--mtx-whep-port N] [--ice-port N]
-//                     [--rtmp-port N] [--srt-port N] [--playback-port N] [--archive-dir <каталог>]
+//                     [--rtmp-port N] [--srt-port N] [--playback-port N] [--rtsp-port N] [--archive-dir <каталог>]
 //                     [--tls-pfx <файл> --tls-pass <пароль>]
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -63,6 +63,9 @@ cfg.mediamtx.srtPort = cfg.mediamtx.srtPort || 8890;
 if (args['playback-port']) cfg.mediamtx.playbackUrl = `http://127.0.0.1:${Number(args['playback-port'])}`;
 cfg.mediamtx.playbackUrl = cfg.mediamtx.playbackUrl || 'http://127.0.0.1:9996';
 const playbackAddr = new URL(cfg.mediamtx.playbackUrl).host;
+if (args['rtsp-port']) cfg.mediamtx.rtspUrl = `rtsp://127.0.0.1:${Number(args['rtsp-port'])}`;
+cfg.mediamtx.rtspUrl = cfg.mediamtx.rtspUrl || 'rtsp://127.0.0.1:8554';
+const rtspPort = Number(new URL(cfg.mediamtx.rtspUrl.replace(/^rtsp:/, 'http:')).port) || 8554;
 if (args['archive-dir']) cfg.archiveDir = args['archive-dir'];
 if (!cfg.archiveDir) cfg.archiveDir = path.join(args.data, 'archive');
 const whepAddr = new URL(cfg.mediamtx.webrtcUrl).host;
@@ -80,7 +83,8 @@ const setAddrs = (text) => text
   .replace(/^webrtcLocalTCPAddress:.*$/m, `webrtcLocalTCPAddress: :${cfg.mediamtx.icePort}`)
   .replace(/^rtmpAddress:.*$/m, `rtmpAddress: :${cfg.mediamtx.rtmpPort}`)
   .replace(/^srtAddress:.*$/m, `srtAddress: :${cfg.mediamtx.srtPort}`)
-  .replace(/^playbackAddress:.*$/m, `playbackAddress: ${playbackAddr}`);
+  .replace(/^playbackAddress:.*$/m, `playbackAddress: ${playbackAddr}`)
+  .replace(/^rtspAddress:.*$/m, `rtspAddress: 127.0.0.1:${rtspPort}`);
 const rendered = setAddrs(readText(args.template).replace('@CDN_SECRET@', cfg.mediamtx.cdnSecret)).replace(/\r?\n/g, '\r\n');
 let ymlNew = false;
 if (!fs.existsSync(args.yml)) {

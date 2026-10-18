@@ -15,9 +15,10 @@ function parseTime(v, field) {
   return t;
 }
 
-/** Путь MediaMTX, из которого выдаются записи потока (у отключённого — архивный путь s_<id>). */
+/** Записи потока всегда выдаются из пути s_<id>; null — такого пути в MediaMTX сейчас нет. */
 function playbackPath(app, row) {
-  return app.sync?.pathById.get(row.id) || null;
+  const name = pathNameFor(row.id);
+  return app.sync?.lastWanted?.has(name) ? name : null;
 }
 
 function playbackRequest(app, endpoint, params) {
@@ -173,7 +174,7 @@ export async function handleArchiveVideo(app, req, res, url, session, ip) {
     throw badRequest(`duration: от 1 до ${MAX_VIDEO_SEC} секунд`);
   }
   const download = url.searchParams.get('download') === '1';
-  const name = app.sync?.pathById.get(row.id) || pathNameFor(row.id);
+  const name = pathNameFor(row.id);
 
   const key = `${session.tokenHash.slice(0, 16)}|${row.id}`;
   app.archiveViews ??= new Map();

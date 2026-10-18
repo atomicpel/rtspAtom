@@ -180,9 +180,10 @@ export class MediaMtxClient {
  * кеширует их состояние (готовность, зрители, трафик).
  */
 export class StreamSync {
-  constructor({ db, client, log, settings, archiveDir = '' }) {
+  constructor({ db, client, log, settings, archiveDir = '', relayUrl = 'rtsp://127.0.0.1:8554' }) {
     this.db = db;
     this.archiveDir = archiveDir; // каталог архива; пусто — запись выключена совсем
+    this.relayUrl = relayUrl.replace(/\/+$/, ''); // RTSP-сервер MediaMTX на 127.0.0.1
     this.client = client;
     this.log = log;
     this.settings = settings; // () => текущие настройки
@@ -198,12 +199,15 @@ export class StreamSync {
     this.timers = [];
   }
 
-  /** Параметры записи пути: каталог по id потока (не зависит от ключа энкодера), срок хранения. */
-  archiveConf(stream) {
+  /**
+   * Параметры записи. Архив потока всегда в пути s_<id> (каталог <архив>/s_<id>), поэтому смена ключа
+   * энкодера и отключение потока не разрывают архив. MediaMTX требует %path в recordPath.
+   */
+  archiveConf() {
     if (!this.archiveDir) return {};
     const days = this.settings().archiveDays || 14;
     return {
-      recordPath: `${this.archiveDir.replace(/\\/g, '/')}/${stream.id}/%Y-%m-%d_%H-%M-%S-%f`,
+      recordPath: `${this.archiveDir.replace(/\\/g, '/')}/%path/%Y-%m-%d_%H-%M-%S-%f`,
       recordFormat: 'fmp4',
       recordSegmentDuration: '10m',
       recordDeleteAfter: `${days * 24}h`,
@@ -214,7 +218,7 @@ export class StreamSync {
   hasRecordings(streamId) {
     if (!this.archiveDir) return false;
     try {
-      return fs.readdirSync(path.join(this.archiveDir, streamId)).some((f) => f.endsWith('.mp4'));
+      return fs.readdirSync(path.join(this.archiveDir, pathNameFor(streamId))).some((f) => f.endsWith('.mp4'));
     } catch {
       return false;
     }
@@ -231,22 +235,39 @@ export class StreamSync {
         // и чтобы MediaMTX продолжал удалять старые записи. Публиковать в s_* нельзя (authInternalUsers).
         if (this.hasRecordings(s.id)) {
           const name = pathNameFor(s.id);
-          map.set(name, { conf: { source: 'publisher', record: false, ...this.archiveConf(s) }, stream: s, archiveOnly: true });
+          map.set(name, { conf: { source: 'publisher', record: false, ...this.archiveConf() }, stream: s, archiveOnly: true });
           byId.set(s.id, name);
         }
         continue;
       }
-      // Энкодер публикует сам: путь ждёт входящий поток по секретному имени
-      const conf = s.push_key
-        ? { source: 'publisher' }
-        : { source: buildSourceUrl(s.url, s.source_login, s.source_password), sourceOnDemand: !alwaysOn };
+      if (s.push_key) {
+        // Энкодер публикует сам: путь ждёт входящий поток по секретному имени
+        const name = pathNameOf(s);
+        map.set(name, { conf: { source: 'publisher' }, stream: s });
+        byId.set(s.id, name);
+        // Архив: s_<id> забирает поток энкодера через локальный RTSP и пишет его на диск
+        if (this.archiveDir && s.record) {
+          map.set(pathNameFor(s.id), {
+            conf: {
+              source: `${this.relayUrl}/${name}`, sourceOnDemand: false, rtspTransport: 'tcp', record: true, ...this.archiveConf(),
+            },
+            stream: s,
+            archiveOnly: true,
+          });
+        } else if (this.hasRecordings(s.id)) {
+          map.set(pathNameFor(s.id), { conf: { source: 'publisher', record: false, ...this.archiveConf() }, stream: s, archiveOnly: true });
+        }
+        continue;
+      }
+      const conf = { source: buildSourceUrl(s.url, s.source_login, s.source_password), sourceOnDemand: !alwaysOn };
       if (s.protocol === 'rtsp' && s.transport !== 'auto') conf.rtspTransport = s.transport;
-      if (this.archiveDir) Object.assign(conf, { record: !!s.record, ...this.archiveConf(s) });
+      if (this.archiveDir) Object.assign(conf, { record: !!s.record, ...this.archiveConf() });
       const name = pathNameOf(s);
       map.set(name, { conf, stream: s });
       byId.set(s.id, name);
     }
     this.pathById = byId;
+    this.lastWanted = map;
     return map;
   }
 
@@ -274,11 +295,15 @@ export class StreamSync {
     let current;
     try {
       current = await this.client.listConfigPaths();
+      const info = await this.client.info();
       if (!this.reachable) {
-        const info = await this.client.info();
         this.version = info?.version ?? null;
         this.log.info('stream', `MediaMTX доступен${this.version ? ` (версия ${this.version})` : ''}`);
+      } else if (info?.started && this.started && info.started !== this.started) {
+        // перезапуск между опросами: пути заданы заново ниже, но в журнале это должно быть видно
+        this.log.warn('stream', `Видеосервер MediaMTX был перезапущен (запущен в ${new Date(info.started).toLocaleTimeString('ru-RU')}); камеры подключены заново`);
       }
+      if (info?.started) this.started = info.started;
       this.reachable = true;
       this.lastError = '';
     } catch (err) {
@@ -329,6 +354,7 @@ export class StreamSync {
       // MediaMTX появился (запустился позже панели) — сразу передаём ему камеры.
       if (!wasReachable && !this.syncing) this.trigger();
     } catch (err) {
+      if (this.reachable) this.log.error('error', `MediaMTX недоступен: ${err.message}`);
       this.reachable = false;
       this.lastError = err.message;
       this.status.clear();

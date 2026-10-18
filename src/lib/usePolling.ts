@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { errorMessage } from './api';
+import { onReconnected } from './connection';
 
 /**
  * Загружает данные и (если intervalMs > 0) периодически обновляет их,
@@ -25,6 +26,9 @@ export function usePolling<T>(fetcher: () => Promise<T>, intervalMs = 0) {
       setLoading(false);
     }
   }, []);
+
+  // после восстановления связи — сразу свежие данные
+  useEffect(() => onReconnected(() => { reload(); }), [reload]);
 
   useEffect(() => {
     reload();

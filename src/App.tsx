@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { MotionConfig } from 'framer-motion';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ToastProvider } from './components/Toast';
+import { ConnectionBanner } from './components/ConnectionBanner';
 import { Layout, NavItem } from './components/Layout';
 import { LoginPage } from './pages/LoginPage';
 import { VideoWallPage } from './pages/VideoWallPage';
@@ -58,6 +59,7 @@ export default function App() {
     <MotionConfig reducedMotion="user">
       <ToastProvider>
         <AuthProvider>
+          <ConnectionBanner />
           <AppContent />
         </AuthProvider>
       </ToastProvider>

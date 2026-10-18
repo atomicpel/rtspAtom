@@ -49,8 +49,10 @@ export class ArchiveManager {
       return out;
     }
     for (const d of streams) {
-      if (!d.isDirectory()) continue;
+      // каталоги архива — по именам путей MediaMTX: s_<id потока>
+      if (!d.isDirectory() || !d.name.startsWith('s_')) continue;
       const sdir = path.join(this.dir, d.name);
+      const streamId = d.name.slice(2);
       let files = [];
       try {
         files = await fs.promises.readdir(sdir);
@@ -62,7 +64,7 @@ export class ArchiveManager {
         if (start === null) continue;
         try {
           const st = await fs.promises.stat(path.join(sdir, f));
-          out.push({ stream: d.name, file: f, full: path.join(sdir, f), start, size: st.size, mtime: st.mtimeMs });
+          out.push({ stream: streamId, file: f, full: path.join(sdir, f), start, size: st.size, mtime: st.mtimeMs });
         } catch {
           /* файл удалён между readdir и stat */
         }
@@ -142,7 +144,7 @@ export class ArchiveManager {
   /** Удаляет архив потока целиком (при удалении потока). */
   async removeStream(streamId) {
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(streamId)) return;
-    await fs.promises.rm(path.join(this.dir, streamId), { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(path.join(this.dir, `s_${streamId}`), { recursive: true, force: true }).catch(() => {});
     this.cache = null;
   }
 
