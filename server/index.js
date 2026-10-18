@@ -7,6 +7,7 @@ import { openDb } from './lib/db.js';
 import { EventLog } from './lib/eventlog.js';
 import { getSettings } from './lib/settings.js';
 import { MediaMtxClient, StreamSync } from './lib/mediamtx.js';
+import { ArchiveManager } from './lib/archive.js';
 import { createHandler } from './lib/app.js';
 import { APP_VERSION } from './routes/system.js';
 
@@ -14,9 +15,11 @@ const config = loadConfig();
 const db = openDb(path.join(config.dataDir, 'rtspatom.db'));
 const log = new EventLog(db);
 const client = new MediaMtxClient(config.mediamtx.apiUrl);
-const sync = new StreamSync({ db, client, log, settings: () => getSettings(db) });
+const settings = () => getSettings(db);
+const sync = new StreamSync({ db, client, log, settings, archiveDir: config.archiveDir });
+const archive = new ArchiveManager({ dir: config.archiveDir, log, settings });
 
-const app = { db, config, log, sync, startedAt: Date.now() };
+const app = { db, config, log, sync, archive, startedAt: Date.now() };
 const handler = createHandler(app);
 
 let server;
@@ -52,6 +55,11 @@ server.listen(config.port, config.host, () => {
   }
 });
 
+try {
+  archive.start();
+} catch (err) {
+  log.error('error', `Каталог архива ${config.archiveDir} недоступен: ${err.message}`);
+}
 sync.start();
 
 function housekeeping() {
@@ -72,6 +80,7 @@ setInterval(housekeeping, 6 * 3600 * 1000).unref();
 function shutdown(signal) {
   log.info('admin', `Остановка сервера (${signal})`);
   sync.stop();
+  archive.stop();
   server.close(() => {
     db.close();
     process.exit(0);

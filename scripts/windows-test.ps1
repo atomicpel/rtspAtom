@@ -209,6 +209,26 @@ paths:
     if ($_.Exception.Response.StatusCode.value__ -ne 401) { Fail "без входа ожидался код 401, получен $($_.Exception.Response.StatusCode.value__)" }
   }
 
+  # ---------- Архив ----------
+  Step 'Архив: запись на диск и выдача через панель'
+  $dur = 0; $spans = @()
+  for ($i = 0; $i -lt 40; $i++) {
+    $from = [DateTime]::UtcNow.AddHours(-1).ToString('yyyy-MM-ddTHH:mm:ssZ'); $to = [DateTime]::UtcNow.AddMinutes(1).ToString('yyyy-MM-ddTHH:mm:ssZ')
+    try { $spans = @(Api GET "$B/api/archive/$($stream.id)/spans?start=$from&end=$to" $null $S) } catch { $spans = @() }
+    $dur = ($spans | Measure-Object -Property duration -Sum).Sum
+    if ($dur -ge 8) { break }
+    Start-Sleep -Seconds 1
+  }
+  $archDir = Join-Path $DataRoot "data\archive\$($stream.id)"
+  if ($dur -lt 8) { Fail "запись в архив не идёт (записано $dur с; файлы: $((Get-ChildItem $archDir -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name) -join ', '))" }
+  if (-not (Get-ChildItem $archDir -Filter *.mp4 -ErrorAction SilentlyContinue)) { Fail "в $archDir нет файлов записи" }
+  $st = $spans[0].start
+  $st0 = if ($st -is [DateTime]) { $st.ToUniversalTime() } else { [DateTimeOffset]::Parse([string]$st, [Globalization.CultureInfo]::InvariantCulture).UtcDateTime }
+  $astart = $st0.AddSeconds(2).ToString('yyyy-MM-ddTHH:mm:ssZ', [Globalization.CultureInfo]::InvariantCulture)
+  $r = Invoke-WebRequest "$B/archive/$($stream.id)/video?start=$astart&duration=4" -WebSession $S
+  if ($r.RawContentLength -lt 10000) { Fail "видео из архива слишком мало ($($r.RawContentLength) байт)" }
+  Write-Host "Архив: записано $([math]::Round($dur)) с, фрагмент $($r.RawContentLength) байт, каталог $archDir"
+
   # ---------- Энкодер отправляет поток сам (RTMP и SRT) ----------
   Step 'Приём от энкодера: RTMP и SRT'
   foreach ($proto in 'rtmp', 'srt') {
@@ -262,7 +282,7 @@ paths:
     if (Get-NetFirewallRule -Name $r -ErrorAction SilentlyContinue) { Fail "правило брандмауэра $r не удалено" }
   }
 
-  Write-Host "::notice title=Windows::Занятые порты обойдены (панель на $Port), установка, службы (LocalService), камера RTSP -> MediaMTX -> панель -> HLS ($size байт), приём от энкодера по RTMP и SRT, HTTPS, обновление и удаление проверены на $((Get-CimInstance Win32_OperatingSystem).Caption)"
+  Write-Host "::notice title=Windows::Занятые порты обойдены (панель на $Port), установка, службы (LocalService), камера RTSP -> MediaMTX -> панель -> HLS ($size байт), архив (запись и выдача), приём от энкодера по RTMP и SRT, HTTPS, обновление и удаление проверены на $((Get-CimInstance Win32_OperatingSystem).Caption)"
   Write-Host 'Windows: всё работает' -ForegroundColor Green
 } catch {
   Fail "$($_.Exception.Message) (строка $($_.InvocationInfo.ScriptLineNumber))"

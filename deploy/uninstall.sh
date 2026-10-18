@@ -16,8 +16,13 @@ fi
 rm -f /usr/local/bin/rtspatom-admin
 rm -rf /opt/rtspatom
 
+ARCHIVE_DIR="$(sed -n 's/^ *"archiveDir": *"\(.*\)",\{0,1\} *$/\1/p' /etc/rtspatom/config.json 2>/dev/null | head -1)"
 if [ $PURGE -eq 1 ]; then
   rm -rf /var/lib/rtspatom /etc/rtspatom
+  case "$ARCHIVE_DIR" in
+    ""|/var/lib/rtspatom/*) ;;
+    *) echo "Архив в $ARCHIVE_DIR оставлен — это отдельный каталог, удалите его вручную, если он не нужен." ;;
+  esac
   userdel rtspatom 2>/dev/null || true
   echo "RTSP Atom удалён полностью."
 else

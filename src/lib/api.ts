@@ -1,4 +1,5 @@
 import type {
+  ArchiveInfo, ArchiveSpan, Bookmark,
   IpRule, LogEntry, ProbeResult, Settings, Stream, SystemInfo, User, WallConfig, WallState,
 } from './types';
 
@@ -58,6 +59,7 @@ export interface StreamInput {
   sourcePassword?: string;
   clearPassword?: boolean;
   isActive?: boolean;
+  record?: boolean;
 }
 
 export interface UserInput {
@@ -102,6 +104,20 @@ export const api = {
   updateStream: (id: string, s: StreamInput) => put<Stream>(`/api/streams/${id}`, s),
   deleteStream: (id: string) => del<void>(`/api/streams/${id}`),
   newPushKey: (id: string) => post<Stream>(`/api/streams/${id}/push-key`),
+
+  archive: () => get<ArchiveInfo>('/api/archive'),
+  archiveSpans: (id: string, start: Date, end: Date) =>
+    get<ArchiveSpan[]>(`/api/archive/${id}/spans?start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(end.toISOString())}`),
+  bookmarks: (q: { streamId?: string; from?: Date; to?: Date; q?: string }) => {
+    const p = new URLSearchParams();
+    if (q.streamId) p.set('streamId', q.streamId);
+    if (q.from) p.set('from', q.from.toISOString());
+    if (q.to) p.set('to', q.to.toISOString());
+    if (q.q) p.set('q', q.q);
+    return get<Bookmark[]>(`/api/bookmarks?${p}`);
+  },
+  addBookmark: (b: { streamId: string; ts: string; note: string }) => post<Bookmark>('/api/bookmarks', b),
+  deleteBookmark: (id: string) => del<void>(`/api/bookmarks/${id}`),
   probeStream: (s: StreamInput & { streamId?: string }) => post<ProbeResult>('/api/streams/probe', s),
 
   users: () => get<User[]>('/api/users'),

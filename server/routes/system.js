@@ -5,7 +5,7 @@ import { nowIso } from '../lib/db.js';
 import { getSettings, saveSettings, validateSettings } from '../lib/settings.js';
 import { PLATFORM } from '../lib/config.js';
 
-export const APP_VERSION = '1.5.1';
+export const APP_VERSION = '1.6.0';
 const LOG_LEVELS = ['info', 'warning', 'error', 'debug'];
 const LOG_CATEGORIES = ['auth', 'access', 'stream', 'error', 'admin'];
 
@@ -53,9 +53,9 @@ export function registerSystem(router, app) {
     const before = getSettings(db);
     saveSettings(db, clean);
     log.info('admin', `Обновлены настройки: ${Object.keys(clean).join(', ') || 'без изменений'}`, { user: ctx.user.login, ip: ctx.ip });
-    if (clean.camerasAlwaysOn !== undefined && clean.camerasAlwaysOn !== before.camerasAlwaysOn) {
-      app.sync?.trigger().catch(() => {});
-    }
+    const changed = (k) => clean[k] !== undefined && clean[k] !== before[k];
+    if (changed('camerasAlwaysOn') || changed('archiveDays')) app.sync?.trigger().catch(() => {});
+    if (changed('archiveMinFreeGb')) app.archive?.guard().catch(() => {});
     return { ...getSettings(db), tlsEnabled: !!app.config.tls?.enabled };
   }, { auth: 'admin' });
 

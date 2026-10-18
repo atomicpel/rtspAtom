@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { newId } from './security.js';
 
 export const PATH_PREFIX = 's_';
@@ -178,8 +180,9 @@ export class MediaMtxClient {
  * кеширует их состояние (готовность, зрители, трафик).
  */
 export class StreamSync {
-  constructor({ db, client, log, settings }) {
+  constructor({ db, client, log, settings, archiveDir = '' }) {
     this.db = db;
+    this.archiveDir = archiveDir; // каталог архива; пусто — запись выключена совсем
     this.client = client;
     this.log = log;
     this.settings = settings; // () => текущие настройки
@@ -195,21 +198,50 @@ export class StreamSync {
     this.timers = [];
   }
 
+  /** Параметры записи пути: каталог по id потока (не зависит от ключа энкодера), срок хранения. */
+  archiveConf(stream) {
+    if (!this.archiveDir) return {};
+    const days = this.settings().archiveDays || 14;
+    return {
+      recordPath: `${this.archiveDir.replace(/\\/g, '/')}/${stream.id}/%Y-%m-%d_%H-%M-%S-%f`,
+      recordFormat: 'fmp4',
+      recordSegmentDuration: '10m',
+      recordDeleteAfter: `${days * 24}h`,
+    };
+  }
+
+  /** Есть ли у потока записи на диске. */
+  hasRecordings(streamId) {
+    if (!this.archiveDir) return false;
+    try {
+      return fs.readdirSync(path.join(this.archiveDir, streamId)).some((f) => f.endsWith('.mp4'));
+    } catch {
+      return false;
+    }
+  }
+
   desired() {
-    const rows = this.db
-      .prepare(
-        'SELECT * FROM streams WHERE is_active = 1',
-      )
-      .all();
+    const rows = this.db.prepare('SELECT * FROM streams').all();
     const alwaysOn = this.settings().camerasAlwaysOn;
     const map = new Map();
     const byId = new Map();
     for (const s of rows) {
+      if (!s.is_active) {
+        // Отключённый поток с записями: путь без источника, только чтобы архив можно было смотреть
+        // и чтобы MediaMTX продолжал удалять старые записи. Публиковать в s_* нельзя (authInternalUsers).
+        if (this.hasRecordings(s.id)) {
+          const name = pathNameFor(s.id);
+          map.set(name, { conf: { source: 'publisher', record: false, ...this.archiveConf(s) }, stream: s, archiveOnly: true });
+          byId.set(s.id, name);
+        }
+        continue;
+      }
       // Энкодер публикует сам: путь ждёт входящий поток по секретному имени
       const conf = s.push_key
         ? { source: 'publisher' }
         : { source: buildSourceUrl(s.url, s.source_login, s.source_password), sourceOnDemand: !alwaysOn };
       if (s.protocol === 'rtsp' && s.transport !== 'auto') conf.rtspTransport = s.transport;
+      if (this.archiveDir) Object.assign(conf, { record: !!s.record, ...this.archiveConf(s) });
       const name = pathNameOf(s);
       map.set(name, { conf, stream: s });
       byId.set(s.id, name);
@@ -321,7 +353,8 @@ export class StreamSync {
   #logTransitions() {
     const want = this.desired();
     const onDemand = !this.settings().camerasAlwaysOn;
-    for (const [name, { stream }] of want) {
+    for (const [name, { stream, archiveOnly }] of want) {
+      if (archiveOnly) continue;
       const ready = !!this.status.get(name)?.ready;
       const prev = this.prevReady.get(name);
       if (prev === undefined) {
@@ -370,8 +403,28 @@ export class StreamSync {
   }
 }
 
+/** Длительность Go («336h0m0s», «10m») или число секунд → секунды. */
+export function durationSec(v) {
+  if (typeof v === 'number') return v;
+  let total = 0;
+  for (const [, n, u] of String(v || '').matchAll(/([\d.]+)(h|ms|m|s)/g)) {
+    total += Number(n) * (u === 'h' ? 3600 : u === 'm' ? 60 : u === 's' ? 1 : 0.001);
+  }
+  return total;
+}
+
+function recordChanged(cur, conf) {
+  if (conf.recordPath === undefined) return false;
+  if (!!cur.record !== !!conf.record) return true;
+  if ((cur.recordPath || '') !== conf.recordPath) return true;
+  if ((cur.recordFormat || 'fmp4') !== conf.recordFormat) return true;
+  if (durationSec(cur.recordSegmentDuration) !== durationSec(conf.recordSegmentDuration)) return true;
+  return durationSec(cur.recordDeleteAfter) !== durationSec(conf.recordDeleteAfter);
+}
+
 function needsUpdate(cur, conf) {
   if (cur.source !== conf.source) return true;
+  if (recordChanged(cur, conf)) return true;
   if (conf.source === 'publisher') return false;
   if (!!cur.sourceOnDemand !== !!conf.sourceOnDemand) return true;
   const curTransport = cur.rtspTransport ?? cur.sourceProtocol ?? 'automatic';

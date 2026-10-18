@@ -27,6 +27,9 @@ grep -q '^rtmpAddress: :1936' /etc/rtspatom/mediamtx.yml || { echo "порт RTM
 grep -q '^srtAddress: :8891' /etc/rtspatom/mediamtx.yml || { echo "порт SRT не подобран"; exit 1; }
 grep -q '"srtPort": 8891' /etc/rtspatom/config.json || { echo "srtPort не записан в config.json"; exit 1; }
 grep -q '^webrtcAddress: 127.0.0.1:8890' /etc/rtspatom/mediamtx.yml || { echo "WHEP не должен уступать порт SRT (разные протоколы)"; exit 1; }
+grep -q '^playbackAddress: 127.0.0.1:9996' /etc/rtspatom/mediamtx.yml || { echo "нет адреса выдачи архива"; exit 1; }
+grep -q '"archiveDir": "/var/lib/rtspatom/archive"' /etc/rtspatom/config.json || { echo "каталог архива не записан"; cat /etc/rtspatom/config.json; exit 1; }
+[ "$(stat -c %U /var/lib/rtspatom/archive)" = "rtspatom" ] || { echo "каталог архива не принадлежит службе"; exit 1; }
 test -x /opt/rtspatom/node/bin/node
 test -x /opt/rtspatom/mediamtx/mediamtx
 test -f /etc/rtspatom/config.json

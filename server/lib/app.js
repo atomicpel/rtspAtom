@@ -9,6 +9,7 @@ import { userFromRow, hasRole } from './access.js';
 import { registerRoutes } from '../routes/index.js';
 import { handleHls } from '../routes/hls.js';
 import { handleWebrtc } from '../routes/webrtc.js';
+import { handleArchiveVideo } from '../routes/archive.js';
 
 export const SESSION_COOKIE = 'rtspatom_sid';
 /**
@@ -123,6 +124,12 @@ export function createHandler(app) {
         return await handleWebrtc(app, req, res, url, session, ip);
       }
 
+      if (pathname.startsWith('/archive/')) {
+        if (rateLimited(ip)) throw new HttpError(429, 'Слишком много запросов, повторите позже');
+        const session = loadSession(req, ip);
+        return await handleArchiveVideo(app, req, res, url, session, ip);
+      }
+
       if (pathname.startsWith('/hls/')) {
         const session = loadSession(req, ip);
         return await handleHls(app, req, res, url, session, ip);
@@ -176,7 +183,7 @@ export function createHandler(app) {
         app.log.error('error', `Внутренняя ошибка ${req.method} ${pathname}: ${err.stack || err.message}`, { ip });
       }
       const message = status === 500 ? 'Внутренняя ошибка сервера' : err.message;
-      if (isApi || pathname.startsWith('/hls/') || pathname.startsWith('/webrtc/')) {
+      if (isApi || /^\/(hls|webrtc|archive)\//.test(pathname)) {
         sendJson(res, status, { error: message, ...(err.extra || {}) });
       } else {
         res.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8', ...SECURITY_HEADERS });

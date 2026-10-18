@@ -128,6 +128,19 @@ const MIGRATIONS = [
   `
   ALTER TABLE streams ADD COLUMN push_key TEXT;
   `,
+  // 4 — архив: запись потока и закладки операторов
+  `
+  ALTER TABLE streams ADD COLUMN record INTEGER NOT NULL DEFAULT 0;
+  CREATE TABLE bookmarks (
+    id TEXT PRIMARY KEY,
+    stream_id TEXT NOT NULL REFERENCES streams(id) ON DELETE CASCADE,
+    ts TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    user_login TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX bookmarks_stream_ts ON bookmarks(stream_id, ts);
+  `,
 ];
 
 export function openDb(file) {

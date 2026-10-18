@@ -8,6 +8,7 @@ import { openDb } from '../lib/db.js';
 import { EventLog } from '../lib/eventlog.js';
 import { getSettings, saveSettings } from '../lib/settings.js';
 import { MediaMtxClient, StreamSync } from '../lib/mediamtx.js';
+import { ArchiveManager, segmentStart } from '../lib/archive.js';
 import { createHandler } from '../lib/app.js';
 import { startFakeMediaMtx } from './fake-mediamtx.js';
 
@@ -43,7 +44,8 @@ before(async () => {
   const log = new EventLog(db, { quiet: true });
   const config = {
     publicDir: tmp, trustProxy: true, tls: { enabled: false },
-    mediamtx: { apiUrl: fakeUrl, hlsUrl: fakeUrl, webrtcUrl: fakeUrl, cdnSecret: 'test-cdn-secret' },
+    mediamtx: { apiUrl: fakeUrl, hlsUrl: fakeUrl, webrtcUrl: fakeUrl, playbackUrl: fakeUrl, cdnSecret: 'test-cdn-secret' },
+    archiveDir: path.join(tmp, 'archive'),
   };
   const sync = new StreamSync({ db, client: new MediaMtxClient(fakeUrl), log, settings: () => getSettings(db) });
   app = { db, config, log, sync, startedAt: Date.now() };
@@ -403,6 +405,166 @@ test('поток от энкодера (push): секретный путь, кл
   r = await admin.post(`/api/streams/${streamId}/push-key`);
   assert.equal(r.status, 400);
   await admin.del(`/api/streams/${id}`);
+});
+
+test('архив: запись в MediaMTX, архивный путь отключённого потока, промежутки, видео, закладки', async () => {
+  const dir = app.config.archiveDir;
+  app.sync.archiveDir = dir;
+  let free = 500 * 1024 ** 3;
+  app.archive = new ArchiveManager({
+    dir, log: app.log, settings: () => getSettings(app.db),
+    statfs: async () => ({ bavail: free / 4096, bsize: 4096, blocks: 1e9 }),
+  });
+  fs.mkdirSync(dir, { recursive: true });
+
+  let r = await admin.post('/api/streams', { name: 'Архивная', url: 'rtsp://10.9.9.9/main' });
+  const id = r.data.id;
+  assert.equal(r.data.record, true, 'новым потокам запись включается (настройка по умолчанию)');
+  await app.sync.trigger();
+  let conf = fake.paths.get(`s_${id}`);
+  assert.equal(conf.record, true);
+  assert.equal(conf.recordPath, `${dir.replace(/\\/g, '/')}/${id}/%Y-%m-%d_%H-%M-%S-%f`);
+  assert.equal(conf.recordDeleteAfter, '336h');
+  assert.equal(conf.recordSegmentDuration, '10m');
+
+  // срок хранения из настроек
+  r = await admin.put('/api/settings', { archiveDays: 3 });
+  assert.equal(r.status, 200);
+  await app.sync.trigger();
+  assert.equal(fake.paths.get(`s_${id}`).recordDeleteAfter, '72h');
+  // запись выключена — путь хранения остаётся (старые записи смотрятся и удаляются по сроку)
+  r = await admin.put(`/api/streams/${id}`, { record: false });
+  assert.equal(r.data.record, false);
+  await app.sync.trigger();
+  conf = fake.paths.get(`s_${id}`);
+  assert.equal(conf.record, false);
+  assert.match(conf.recordPath, new RegExp(id));
+  await admin.put(`/api/streams/${id}`, { record: true });
+
+  // промежутки записи
+  fake.recordings.set(`s_${id}`, [{ start: '2026-10-18T10:00:00Z', duration: 600 }, { start: '2026-10-18T10:15:00Z', duration: 120.5 }]);
+  r = await admin.get(`/api/archive/${id}/spans?start=2026-10-18T00:00:00Z&end=2026-10-19T00:00:00Z`);
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.data, [{ start: '2026-10-18T10:00:00Z', duration: 600 }, { start: '2026-10-18T10:15:00Z', duration: 120.5 }]);
+  r = await admin.get(`/api/archive/${streamId}/spans?start=2026-10-18T00:00:00Z&end=2026-10-19T00:00:00Z`);
+  assert.deepEqual(r.data, [], 'нет записей — пустой список');
+  r = await admin.get(`/api/archive/${id}/spans?start=x&end=y`);
+  assert.equal(r.status, 400);
+
+  // видео: плеер (fMP4) и выгрузка (MP4)
+  let v = await fetch(`${base}/archive/${id}/video?start=2026-10-18T10:05:00Z&duration=600`, { headers: { Cookie: admin.cookie } });
+  assert.equal(v.status, 200);
+  assert.equal(v.headers.get('content-type'), 'video/mp4');
+  assert.equal(await v.text(), `ftypFAKE s_${id} 2026-10-18T10:05:00.000Z 600 fmp4`);
+  v = await fetch(`${base}/archive/${id}/video?start=2026-10-18T10:05:00Z&duration=60&download=1`, { headers: { Cookie: admin.cookie } });
+  assert.match(v.headers.get('content-disposition'), /attachment; filename=".*\.mp4"; filename\*=UTF-8''%D0%90%D1%80%D1%85/);
+  assert.match(await v.text(), / mp4$/);
+  v = await fetch(`${base}/archive/${id}/video?start=2026-10-18T10:05:00Z&duration=60`);
+  assert.equal(v.status, 401);
+  v = await fetch(`${base}/archive/${id}/video?start=2026-10-18T10:05:00Z&duration=99999`, { headers: { Cookie: admin.cookie } });
+  assert.equal(v.status, 400);
+  v = await fetch(`${base}/archive/${streamId}/video?start=2026-10-18T10:05:00Z&duration=60`, { headers: { Cookie: admin.cookie } });
+  assert.equal(v.status, 404);
+  r = await admin.get('/api/logs?category=access&limit=50');
+  const logs = (r.data.items || r.data.logs || r.data).map((e) => e.message).join('\n');
+  assert.match(logs, /Выгрузка из архива «Архивная»/);
+  assert.match(logs, /Просмотр архива «Архивная»/);
+
+  // наблюдателю архив недоступен
+  await admin.post('/api/users', { login: 'viewer-arch', password: 'viewer-pass', role: 'viewer' });
+  const viewer = new Client('10.0.0.31');
+  await viewer.post('/api/auth/login', { login: 'viewer-arch', password: 'viewer-pass' });
+  r = await viewer.get(`/api/archive/${id}/spans?start=2026-10-18T00:00:00Z&end=2026-10-19T00:00:00Z`);
+  assert.equal(r.status, 403);
+  v = await fetch(`${base}/archive/${id}/video?start=2026-10-18T10:05:00Z&duration=60`, { headers: { Cookie: viewer.cookie, 'X-Forwarded-For': '10.0.0.31' } });
+  assert.equal(v.status, 403);
+
+  // закладки
+  await admin.post('/api/users', { login: 'oper-arch', password: 'oper-pass1', role: 'operator' });
+  const op = new Client('10.0.0.32');
+  await op.post('/api/auth/login', { login: 'oper-arch', password: 'oper-pass1' });
+  r = await op.post('/api/bookmarks', { streamId: id, ts: '2026-10-18T10:07:30Z', note: 'Машина у ворот' });
+  assert.equal(r.status, 200);
+  const bm = r.data;
+  assert.equal(bm.canDelete, true);
+  r = await admin.post('/api/bookmarks', { streamId: id, ts: '2026-10-18T10:16:00Z', note: 'Смена караула' });
+  const bm2 = r.data;
+  r = await op.get(`/api/bookmarks?streamId=${id}&q=машина`);
+  assert.deepEqual(r.data.map((b) => b.id), [bm.id]);
+  r = await op.get(`/api/bookmarks?from=2026-10-18T10:00:00Z&to=2026-10-18T11:00:00Z`);
+  assert.equal(r.data.length, 2);
+  r = await op.del(`/api/bookmarks/${bm2.id}`);
+  assert.equal(r.status, 403, 'чужую закладку оператор не удаляет');
+  r = await op.del(`/api/bookmarks/${bm.id}`);
+  assert.equal(r.status, 204);
+
+  // сводка архива
+  fs.mkdirSync(path.join(dir, id), { recursive: true });
+  fs.writeFileSync(path.join(dir, id, '2026-10-18_10-00-00-000000.mp4'), Buffer.alloc(2048));
+  r = await admin.get('/api/archive');
+  assert.equal(r.status, 200);
+  const st = r.data.streams.find((s) => s.id === id);
+  assert.equal(st.bytes, 2048);
+  assert.equal(r.data.days, 3);
+  assert.equal(r.data.disk.free, free);
+
+  // отключённый поток с записями: архивный путь без источника
+  await admin.put(`/api/streams/${id}`, { isActive: false });
+  await app.sync.trigger();
+  conf = fake.paths.get(`s_${id}`);
+  assert.equal(conf.source, 'publisher');
+  assert.equal(conf.record, false);
+  r = await admin.get(`/api/archive/${id}/spans?start=2026-10-18T00:00:00Z&end=2026-10-19T00:00:00Z`);
+  assert.equal(r.data.length, 2, 'архив отключённого потока виден');
+  assert.equal((await admin.get('/api/streams')).data.find((s) => s.id === id).status, 'offline');
+
+  // удаление потока удаляет архив и закладки
+  await admin.del(`/api/streams/${id}`);
+  await new Promise((res) => setTimeout(res, 50));
+  assert.equal(fs.existsSync(path.join(dir, id)), false);
+  await app.sync.trigger();
+  assert.equal(fake.paths.has(`s_${id}`), false);
+  await admin.put('/api/settings', { archiveDays: 14 });
+  app.sync.archiveDir = '';
+});
+
+test('архив: при нехватке места удаляются самые старые записи, идущая запись не трогается', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rtspatom-arch-'));
+  const mk = (stream, name, size, ageMin) => {
+    fs.mkdirSync(path.join(dir, stream), { recursive: true });
+    const f = path.join(dir, stream, name);
+    fs.writeFileSync(f, Buffer.alloc(size));
+    const t = new Date(Date.now() - ageMin * 60_000);
+    fs.utimesSync(f, t, t);
+    return f;
+  };
+  const GB = 1024 ** 3;
+  const a1 = mk('a', '2026-10-01_10-00-00-000000.mp4', 1000, 600);
+  const b1 = mk('b', '2026-10-01_11-00-00-000000.mp4', 1000, 500);
+  const a2 = mk('a', '2026-10-02_10-00-00-000000.mp4', 1000, 400);
+  const live = mk('b', '2026-10-01_09-00-00-000000.mp4', 1000, 0); // старое имя, но файл пишется сейчас
+  let free = 20 * GB - 1500; // не хватает 1 ГБ запаса + 1500 байт
+  const warns = [];
+  const m = new ArchiveManager({
+    dir, log: { warn: (c, msg) => warns.push(msg), error: () => {} },
+    settings: () => ({ archiveMinFreeGb: 20 }),
+    statfs: async () => ({ bavail: free, bsize: 1, blocks: 100 * GB }),
+  });
+  assert.equal(segmentStart('2026-10-01_10-00-00-000000.mp4'), new Date(2026, 9, 1, 10).getTime());
+  assert.equal(segmentStart('notes.txt'), null);
+  // нужно освободить 1 ГБ + 1500 байт — удалятся все старые, кроме идущей записи
+  const removed = await m.guard();
+  assert.equal(removed, 3);
+  assert.equal(fs.existsSync(a1) || fs.existsSync(b1) || fs.existsSync(a2), false);
+  assert.equal(fs.existsSync(live), true, 'файл, который пишется, не удалён');
+  assert.match(warns[0], /мало места/);
+  // места хватает — ничего не удаляется
+  free = 100 * GB;
+  mk('a', '2026-10-03_10-00-00-000000.mp4', 1000, 300);
+  assert.equal(await m.guard(), 0);
+  const st = await m.refresh();
+  assert.equal(st.streams.a.files, 1);
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('удаление потока удаляет путь MediaMTX', async () => {

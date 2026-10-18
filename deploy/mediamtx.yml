@@ -17,7 +17,11 @@ apiAddress: 127.0.0.1:9997
 
 metrics: no
 pprof: no
-playback: no
+
+# Выдача записей архива — только панели на этом компьютере.
+# Что и куда писать (record, recordPath, срок хранения), панель задаёт для каждого потока сама.
+playback: yes
+playbackAddress: 127.0.0.1:9996
 
 # Доступ: читать потоки и управлять MediaMTX может только панель на этом же компьютере.
 # Энкодеры публикуют только в пути live/<20 символов ключа>: путь существует, лишь пока
@@ -29,6 +33,7 @@ authInternalUsers:
     permissions:
       - action: read
       - action: api
+      - action: playback
   - user: any
     pass:
     ips: []

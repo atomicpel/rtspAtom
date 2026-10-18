@@ -73,8 +73,13 @@ if (Test-Path $InstallDir) {
   Write-Host "!!  Не все файлы удалось удалить из $InstallDir — удалите каталог вручную после перезагрузки" -ForegroundColor Yellow
 }
 
+$archiveDir = ''
+try { $archiveDir = ([IO.File]::ReadAllText((Join-Path $DataRoot 'config.json')).TrimStart([char]0xFEFF) | ConvertFrom-Json).archiveDir } catch {}
 if ($Purge) {
   Remove-Item -LiteralPath $DataRoot -Recurse -Force -ErrorAction SilentlyContinue
+  if ($archiveDir -and -not $archiveDir.StartsWith($DataRoot, [StringComparison]::OrdinalIgnoreCase)) {
+    Write-Host "!!  Архив в $archiveDir оставлен — это отдельный каталог, удалите его вручную, если он не нужен." -ForegroundColor Yellow
+  }
   Write-Host '==> RTSP Atom удалён полностью.' -ForegroundColor Cyan
 } else {
   Write-Host "==> RTSP Atom удалён. Данные и настройки сохранены в $DataRoot" -ForegroundColor Cyan

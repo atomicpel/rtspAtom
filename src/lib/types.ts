@@ -21,6 +21,8 @@ export interface Stream {
   sourceLogin: string;
   hasPassword: boolean;
   isActive: boolean;
+  /** Запись в архив включена */
+  record: boolean;
   status: StreamStatus;
   tracks: string[];
   viewers: number;
@@ -72,6 +74,46 @@ export interface Settings {
   logRetentionDays: number;
   camerasAlwaysOn: boolean;
   lowLatency: boolean;
+  archiveDays: number;
+  archiveMinFreeGb: number;
+  archiveNewStreams: boolean;
+}
+
+export interface ArchiveSpan {
+  start: string; // ISO
+  duration: number; // секунды
+}
+
+export interface ArchiveStreamInfo {
+  id: string;
+  name: string;
+  description: string;
+  record: boolean;
+  isActive: boolean;
+  bytes: number;
+  oldest: string | null;
+}
+
+export interface ArchiveInfo {
+  enabled: boolean;
+  days: number;
+  minFreeGb: number;
+  dir?: string;
+  totalBytes: number;
+  bytesPerDay: number;
+  capacityDays: number | null;
+  disk: { free: number; size: number } | null;
+  streams: ArchiveStreamInfo[];
+}
+
+export interface Bookmark {
+  id: string;
+  streamId: string;
+  ts: string;
+  note: string;
+  user: string;
+  createdAt: string;
+  canDelete: boolean;
 }
 
 export interface SystemInfo {

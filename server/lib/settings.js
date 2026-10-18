@@ -10,6 +10,11 @@ export const SETTINGS_SCHEMA = {
   camerasAlwaysOn: { def: true, bool: true },
   // Показ видео: WebRTC (минимальная задержка, с откатом на HLS) или только LL-HLS
   lowLatency: { def: true, bool: true },
+  // Архив: срок хранения и минимум свободного места на диске (старые записи удаляются раньше срока)
+  archiveDays: { def: 14, min: 1, max: 365, int: true },
+  archiveMinFreeGb: { def: 20, min: 1, max: 100000, int: true },
+  // Новым потокам сразу включать запись
+  archiveNewStreams: { def: true, bool: true },
 };
 
 export function getSettings(db) {

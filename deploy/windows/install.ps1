@@ -10,6 +10,7 @@
     -AdminPassword ...  пароль первого администратора (без него будет запрошен)
     -NoStart            не запускать службы
     -NoFirewall         не создавать правило брандмауэра
+    -ArchiveDir D:\Archive  каталог архива видео (по умолчанию C:\ProgramData\RTSPAtom\data\archive)
 #>
 [CmdletBinding()]
 param(
@@ -19,6 +20,7 @@ param(
   [string]$AdminPassword = '',
   [switch]$NoStart,
   [switch]$NoFirewall,
+  [string]$ArchiveDir = '',
   [string]$InstallDir = (Join-Path $env:ProgramFiles 'RTSPAtom'),
   [switch]$Elevated
 )
@@ -78,6 +80,7 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
   if ($Tls) { $a += '-Tls' }
   if ($NoStart) { $a += '-NoStart' }
   if ($NoFirewall) { $a += '-NoFirewall' }
+  if ($ArchiveDir) { $a += @('-ArchiveDir', "`"$ArchiveDir`"") }
   $a += @('-InstallDir', "`"$InstallDir`"")
   try {
     Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $a | Out-Null
@@ -194,7 +197,7 @@ try {
   # --- Свободные порты ----------------------------------------------------------------
   # Желаемые порты: из -Port / прежней установки / по умолчанию. Если порт занят другой
   # программой (наши службы уже остановлены), берётся следующий свободный.
-  $wantPanel = 8080; $wantHls = 8888; $wantApi = 9997; $wantWhep = 8890; $wantIce = 8189; $wantRtmp = 1935; $wantSrt = 8890
+  $wantPanel = 8080; $wantHls = 8888; $wantApi = 9997; $wantWhep = 8890; $wantIce = 8189; $wantRtmp = 1935; $wantSrt = 8890; $wantPlay = 9996
   if (Test-Path $ConfigFile) {
     try {
       $old = [IO.File]::ReadAllText($ConfigFile).TrimStart([char]0xFEFF) | ConvertFrom-Json
@@ -205,15 +208,16 @@ try {
       if ($old.mediamtx.icePort) { $wantIce = [int]$old.mediamtx.icePort }
       if ($old.mediamtx.rtmpPort) { $wantRtmp = [int]$old.mediamtx.rtmpPort }
       if ($old.mediamtx.srtPort) { $wantSrt = [int]$old.mediamtx.srtPort }
+      if ($old.mediamtx.playbackUrl) { $wantPlay = ([Uri]$old.mediamtx.playbackUrl).Port }
     } catch { Warn "не удалось прочитать прежний $ConfigFile — используются порты по умолчанию" }
   }
   if ($Port) { $wantPanel = $Port }
   Say 'Проверяю, свободны ли порты'
-  $r = Invoke-Native $Node @((Join-Path $InstallDir 'deploy\ports.mjs'), "panel=$wantPanel@0.0.0.0", "hls=$wantHls@127.0.0.1", "api=$wantApi@127.0.0.1", "whep=$wantWhep@127.0.0.1", "ice=$wantIce@0.0.0.0+udp", "rtmp=$wantRtmp@0.0.0.0", "srt=$wantSrt@0.0.0.0/udp")
+  $r = Invoke-Native $Node @((Join-Path $InstallDir 'deploy\ports.mjs'), "panel=$wantPanel@0.0.0.0", "hls=$wantHls@127.0.0.1", "api=$wantApi@127.0.0.1", "whep=$wantWhep@127.0.0.1", "ice=$wantIce@0.0.0.0+udp", "rtmp=$wantRtmp@0.0.0.0", "srt=$wantSrt@0.0.0.0/udp", "playback=$wantPlay@127.0.0.1")
   if ($r.Code -ne 0) { Die "не удалось подобрать порты: $($r.Output)" }
   $ports = ($r.Output -split "`n" | Select-Object -Last 1) | ConvertFrom-Json
-  $labels = @{ panel = 'веб-интерфейса'; hls = 'видео HLS (внутренний)'; api = 'управления MediaMTX (внутренний)'; whep = 'подключения WebRTC (внутренний)'; ice = 'видео WebRTC'; rtmp = 'приёма RTMP от энкодеров'; srt = 'приёма SRT от энкодеров' }
-  foreach ($k in 'panel', 'hls', 'api', 'whep', 'ice', 'rtmp', 'srt') {
+  $labels = @{ panel = 'веб-интерфейса'; hls = 'видео HLS (внутренний)'; api = 'управления MediaMTX (внутренний)'; whep = 'подключения WebRTC (внутренний)'; ice = 'видео WebRTC'; rtmp = 'приёма RTMP от энкодеров'; srt = 'приёма SRT от энкодеров'; playback = 'выдачи архива (внутренний)' }
+  foreach ($k in 'panel', 'hls', 'api', 'whep', 'ice', 'rtmp', 'srt', 'playback') {
     $pr = $ports.$k
     if ($pr.busyBy) { Warn "Порт $($pr.wanted) занят ($($pr.busyBy)) — для $($labels[$k]) взят свободный порт $($pr.port)" }
   }
@@ -228,12 +232,20 @@ try {
     '--public', (Join-Path $InstallDir 'app\public')
   )
   $cfgArgs += @('--port', $ports.panel.port, '--mtx-hls-port', $ports.hls.port, '--mtx-api-port', $ports.api.port,
-    '--mtx-whep-port', $ports.whep.port, '--ice-port', $ports.ice.port, '--rtmp-port', $ports.rtmp.port, '--srt-port', $ports.srt.port)
+    '--mtx-whep-port', $ports.whep.port, '--ice-port', $ports.ice.port, '--rtmp-port', $ports.rtmp.port, '--srt-port', $ports.srt.port, '--playback-port', $ports.playback.port)
+  if ($ArchiveDir) { $cfgArgs += @('--archive-dir', [IO.Path]::GetFullPath($ArchiveDir)) }
   $cfgArgs += $pfxArgs
   $r = Invoke-Native $Node $cfgArgs
   if ($r.Code -ne 0) { Die "не удалось записать конфигурацию: $($r.Output)" }
   $summary = ($r.Output -split "`n" | Select-Object -Last 1) | ConvertFrom-Json
   if ($summary.ymlNew) { Warn "Ваш $YmlFile изменён и оставлен как есть; новая версия — mediamtx.yml.new" }
+
+  # --- Каталог архива -----------------------------------------------------------------
+  # Пишет MediaMTX и чистит панель — обе службы работают от LocalService.
+  Say "Каталог архива $($summary.archiveDir)"
+  New-Item -ItemType Directory -Force -Path $summary.archiveDir | Out-Null
+  $r = Invoke-Native 'icacls.exe' @($summary.archiveDir, '/grant', '*S-1-5-19:(OI)(CI)M', '/Q')
+  if ($r.Code -ne 0) { Warn "права на каталог архива настроены не полностью: $($r.Output)" }
   $env:RTSPATOM_CONFIG = $ConfigFile
 
   # --- Службы (WinSW) -----------------------------------------------------------------
@@ -353,6 +365,10 @@ try {
   Write-Host "    Панель на этом компьютере:  $url  (ярлык «RTSP Atom» на рабочем столе)"
   if ($ip) { Write-Host "    С других компьютеров:       ${proto}://${ip}:$($summary.port)/" }
   Write-Host "    Видео WebRTC:               порт $($summary.icePort) UDP/TCP (открыт в брандмауэре Windows)"
+  try {
+    $drive = (Get-Item $summary.archiveDir).PSDrive
+    Write-Host "    Архив:                      $($summary.archiveDir) (свободно $([math]::Round($drive.Free / 1GB)) ГБ)"
+  } catch { Write-Host "    Архив:                      $($summary.archiveDir)" }
   Write-Host "    Энкодеры:                   RTMP порт $($summary.rtmpPort), SRT порт $($summary.srtPort) (адреса и ключ — в панели, «Потоки»)"
   Write-Host "    Журналы:                    $LogDir"
   Write-Host '    Утилита:                    rtspatom-admin help  (командная строка от имени администратора)'

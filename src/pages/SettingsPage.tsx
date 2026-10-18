@@ -7,7 +7,8 @@ import { usePolling } from '../lib/usePolling';
 import { useAuth } from '../contexts/AuthContext';
 import { hints } from '../lib/platform';
 import { useToast } from '../components/Toast';
-import { Button, Field, IconButton, Notice, PageHeader, Section, inputCls } from '../components/ui';
+import { Button, Field, IconButton, Notice, PageHeader, Section, Toggle, inputCls } from '../components/ui';
+import { fmtBytes } from '../lib/archiveTime';
 
 const TTL = [
   { v: 900, l: '15 минут' }, { v: 3600, l: '1 час' }, { v: 4 * 3600, l: '4 часа' },
@@ -22,6 +23,7 @@ export function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const { data: sys } = usePolling(api.system, 10000);
   const { data: ipData, setData: setIpData } = usePolling(api.ipRules);
+  const { data: arch } = usePolling(api.archive, 60000);
   const [rule, setRule] = useState({ cidr: '', type: 'white' as IpRule['type'], comment: '' });
   const [ruleError, setRuleError] = useState('');
 
@@ -109,6 +111,38 @@ export function SettingsPage() {
               onChange={(e) => set({ maxConnections: num(e.target.value, 100) })} />
           </Field>
         </div>
+      </Section>
+
+      <Section title="Архив" desc="Запись видео на диск сервера">
+        <div className="grid sm:grid-cols-3 gap-4">
+          <Field label="Хранить записи, суток" hint="Старше — удаляются автоматически">
+            <input type="number" min={1} max={365} className={inputCls} value={settings.archiveDays}
+              onChange={(e) => set({ archiveDays: num(e.target.value, 14) })} />
+          </Field>
+          <Field label="Оставлять свободным на диске, ГБ" hint="Если места меньше — самые старые записи удаляются раньше срока">
+            <input type="number" min={1} max={100000} className={inputCls} value={settings.archiveMinFreeGb}
+              onChange={(e) => set({ archiveMinFreeGb: num(e.target.value, 20) })} />
+          </Field>
+          <div className="pt-6">
+            <Toggle checked={settings.archiveNewStreams} onChange={(v) => set({ archiveNewStreams: v })} label="Записывать новые потоки" />
+          </div>
+        </div>
+        {arch && (
+          <div className="mt-4 text-[13px] text-muted space-y-1">
+            <p>
+              Занято {fmtBytes(arch.totalBytes)}
+              {arch.disk && <>, свободно {fmtBytes(arch.disk.free)} из {fmtBytes(arch.disk.size)}</>}
+              {arch.bytesPerDay > 0 && <>; запись ≈ {fmtBytes(arch.bytesPerDay)} в сутки</>}
+              {arch.dir && <>. Каталог: <span className="text-fg">{arch.dir}</span></>}
+            </p>
+            {arch.capacityDays !== null && (
+              arch.capacityDays < settings.archiveDays
+                ? <Notice tone="warn">Места хватит примерно на {Math.floor(arch.capacityDays)} сут. — меньше срока хранения. Старые записи будут удаляться раньше; освободите диск, уменьшите битрейт камер или срок.</Notice>
+                : <p>Места хватит примерно на {Math.floor(arch.capacityDays)} сут. при текущем объёме записи.</p>
+            )}
+            <p>Запись включается для каждого потока на странице «Потоки». Записи потока удаляются вместе с ним.</p>
+          </div>
+        )}
       </Section>
 
       <Section title="Вход в систему" desc="Сеансы и защита от подбора пароля">

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
-  Bookmark, Crop, Expand, Maximize, Minimize, MonitorPlay, Plus, RefreshCw, Replace, Search, Trash2, Video, Wand2, X,
+  Bookmark, Crop, Expand, History, Maximize, Minimize, MonitorPlay, Plus, RefreshCw, Replace, Search, Trash2, Video, Wand2, X,
 } from 'lucide-react';
 import type { Stream, WallCell, WallConfig, WallLayout } from '../lib/types';
 import { api, errorMessage } from '../lib/api';
@@ -330,6 +330,10 @@ export function VideoWallPage({ onNavigate }: { onNavigate: (page: string) => vo
                     </div>
                     <div className="absolute top-1.5 right-1.5 flex gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                       {[
+                        ...(user && (user.isAdmin || user.role === 'operator') ? [{
+                          icon: History, label: 'Архив этой камеры: последние минуты',
+                          fn: () => { window.location.hash = `/archive?stream=${s.id}&t=${new Date(Date.now() - 2 * 60_000).toISOString()}`; },
+                        }] : []),
                         { icon: Expand, label: 'Во весь экран (двойной щелчок)', fn: () => cellFullscreen(i) },
                         { icon: Replace, label: 'Заменить камеру', fn: () => openPicker(i) },
                         { icon: X, label: 'Убрать из ячейки', fn: () => setCell(i, null) },

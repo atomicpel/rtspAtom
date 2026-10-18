@@ -22,12 +22,16 @@ function defaults() {
     dataDir: path.resolve(process.cwd(), 'data'),
     publicDir: fs.existsSync(bundled) ? bundled : dev,
     trustProxy: false,
+    // Каталог архива видео; пусто — <dataDir>/archive
+    archiveDir: '',
     // TLS: PEM-пара cert/key (Linux) или файл pfx + passphrase (Windows).
     tls: { enabled: false, cert: '', key: '', pfx: '', passphrase: '' },
     mediamtx: {
       apiUrl: 'http://127.0.0.1:9997',
       hlsUrl: 'http://127.0.0.1:8888',
       webrtcUrl: 'http://127.0.0.1:8890',
+      // Сервер выдачи записей MediaMTX (playback), только 127.0.0.1
+      playbackUrl: 'http://127.0.0.1:9996',
       // Должен совпадать с hlsCDNSecret в mediamtx.yml (MediaMTX 1.21+).
       cdnSecret: '',
     },
@@ -68,8 +72,11 @@ export function loadConfig(overrides = {}) {
   if (env.RTSPATOM_MEDIAMTX_HLS) cfg.mediamtx.hlsUrl = env.RTSPATOM_MEDIAMTX_HLS;
   if (env.RTSPATOM_MEDIAMTX_WEBRTC) cfg.mediamtx.webrtcUrl = env.RTSPATOM_MEDIAMTX_WEBRTC;
   if (env.RTSPATOM_MEDIAMTX_SECRET) cfg.mediamtx.cdnSecret = env.RTSPATOM_MEDIAMTX_SECRET;
+  if (env.RTSPATOM_MEDIAMTX_PLAYBACK) cfg.mediamtx.playbackUrl = env.RTSPATOM_MEDIAMTX_PLAYBACK;
+  if (env.RTSPATOM_ARCHIVE_DIR) cfg.archiveDir = env.RTSPATOM_ARCHIVE_DIR;
   cfg = merge(cfg, overrides);
   cfg.dataDir = path.resolve(cfg.dataDir);
   cfg.publicDir = path.resolve(cfg.publicDir);
+  cfg.archiveDir = path.resolve(cfg.archiveDir || path.join(cfg.dataDir, 'archive'));
   return cfg;
 }

@@ -23,6 +23,7 @@ export default defineConfig({
       "/api": backend,
       "/hls": backend,
       "/webrtc": backend,
+      "/archive": backend,
     },
   },
 });

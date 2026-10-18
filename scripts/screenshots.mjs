@@ -188,4 +188,86 @@ async function measure(page, name, label, file) {
   await ctx.close();
 }
 
+// Архив: страница просмотрщика, точность времени (часы в кадре против запрошенного момента), звук G.711
+{
+  const { ctx, page } = await session({ width: 1440, height: 900 }, 'arc-', { bypassCSP: true });
+  fs.rmSync(path.join(out, 'arc-01-login.png'), { force: true });
+  try {
+    const ids = await page.evaluate(async () => {
+      const arr = await (await fetch('/api/streams')).json();
+      const byName = (n) => arr.find((s) => s.name === n)?.id;
+      return { clock: byName('Задержка RTSP'), g711: byName('Звук G711'), others: arr.slice(0, 4).map((s) => s.id) };
+    });
+    // Просмотрщик: камера-часы и ещё три, 40 секунд назад
+    await page.evaluate((sel) => localStorage.setItem('rtspatom_archive_selected', JSON.stringify(sel)), [ids.clock, ...ids.others.filter((x) => x !== ids.clock).slice(0, 3)]);
+    await page.goto(`${base}/#/archive?t=${encodeURIComponent(new Date(Date.now() - 40_000).toISOString())}`);
+    await page.getByRole('navigation').waitFor();
+    await wait(7000);
+    await shot(page, '12-archive');
+    await page.getByRole('button', { name: '10 мин' }).click();
+    await wait(1500);
+    await page.getByRole('button', { name: 'Закладки' }).click();
+    await page.keyboard.press('b');
+    await wait(400);
+    await page.keyboard.type('Проверка закладки');
+    await page.keyboard.press('Enter');
+    await wait(1500);
+    await shot(page, '13-archive-zoom-bookmarks');
+
+    // Точность: запрошенный момент X против часов в кадре (время UTC в момент кодирования)
+    const probe = async (id, startMs, playMs) => page.evaluate(async ({ id, startMs, playMs }) => {
+      document.getElementById('arc-probe')?.remove();
+      const v = document.createElement('video');
+      v.id = 'arc-probe';
+      v.muted = true;
+      Object.assign(v.style, { position: 'fixed', left: '0', top: '0', width: '1280px', height: '720px', zIndex: 99999, background: '#000' });
+      document.body.appendChild(v);
+      v.src = `/archive/${id}/video?start=${encodeURIComponent(new Date(startMs).toISOString())}&duration=20`;
+      const ok = await new Promise((res) => {
+        const t = setTimeout(() => res(false), 15000);
+        v.addEventListener('loadeddata', () => { clearTimeout(t); res(true); }, { once: true });
+        v.addEventListener('error', () => { clearTimeout(t); res(false); }, { once: true });
+      });
+      if (!ok) return { ok: false, err: v.error ? v.error.message || `код ${v.error.code}` : 'нет данных' };
+      if (playMs) {
+        await v.play().catch(() => {});
+        await new Promise((r) => setTimeout(r, playMs));
+        v.pause();
+      }
+      await new Promise((r) => setTimeout(r, 400));
+      return { ok: true, t: v.currentTime, ready: v.readyState };
+    }, { id, startMs, playMs });
+
+    const utcMs = (ms) => { const d = new Date(ms); return ((d.getUTCHours() * 60 + d.getUTCMinutes()) * 60 + d.getUTCSeconds()) * 1000 + d.getUTCMilliseconds(); };
+    const results = [];
+    const X = Date.now() - 35_000;
+    for (const [label, playMs] of [['начало фрагмента', 0], ['после 3 с воспроизведения', 3000]]) {
+      const r = await probe(ids.clock, X, playMs);
+      if (!r.ok) { console.log(`::warning title=Архив: точность::видео не загрузилось (${r.err})`); break; }
+      const f = path.join(out, `arc-probe-${playMs}.png`);
+      await page.screenshot({ path: f, clip: { x: 0, y: 0, width: 760, height: 160 } });
+      const frame = ocrTimes(f)[0];
+      fs.rmSync(f);
+      if (frame === undefined) { console.log(`::warning title=Архив: точность::часы в кадре не распознаны (${label})`); continue; }
+      let diff = frame - utcMs(X + r.t * 1000);
+      if (diff > 43_200_000) diff -= 86_400_000;
+      if (diff < -43_200_000) diff += 86_400_000;
+      results.push(`${label}: ${diff >= 0 ? '+' : ''}${diff} мс`);
+      if (Math.abs(diff) > 1500) console.log(`::warning title=Архив: точность::${label}: кадр расходится с временем шкалы на ${diff} мс`);
+    }
+    if (results.length) console.log(`::notice title=Архив: точность времени::кадр против шкалы — ${results.join('; ')}`);
+
+    // Звук G.711: такой архив должен показываться в браузере
+    if (ids.g711) {
+      const r = await probe(ids.g711, Date.now() - 12_000, 2500);
+      if (r.ok && r.t > 1) console.log(`::notice title=Архив: G.711::видео со звуком G.711 воспроизводится в браузере (${r.t.toFixed(1)} с)`);
+      else console.log(`::warning title=Архив: G.711::видео со звуком G.711 в браузере не воспроизводится: ${JSON.stringify(r)}`);
+    }
+    await page.evaluate(() => document.getElementById('arc-probe')?.remove());
+  } catch (err) {
+    console.log(`::warning title=Архив (скриншоты)::${String(err.message || err).split('\n')[0]}`);
+  }
+  await ctx.close();
+}
+
 await browser.close();

@@ -6,7 +6,7 @@
 //   node configure.mjs --config <config.json> --template <mediamtx.yml> --yml <mediamtx.yml>
 //                     --data <каталог данных> --public <каталог фронтенда>
 //                     [--port N] [--mtx-api-port N] [--mtx-hls-port N] [--mtx-whep-port N] [--ice-port N]
-//                     [--rtmp-port N] [--srt-port N]
+//                     [--rtmp-port N] [--srt-port N] [--playback-port N] [--archive-dir <каталог>]
 //                     [--tls-pfx <файл> --tls-pass <пароль>]
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -60,6 +60,11 @@ if (args['rtmp-port']) cfg.mediamtx.rtmpPort = Number(args['rtmp-port']);
 cfg.mediamtx.rtmpPort = cfg.mediamtx.rtmpPort || 1935;
 if (args['srt-port']) cfg.mediamtx.srtPort = Number(args['srt-port']);
 cfg.mediamtx.srtPort = cfg.mediamtx.srtPort || 8890;
+if (args['playback-port']) cfg.mediamtx.playbackUrl = `http://127.0.0.1:${Number(args['playback-port'])}`;
+cfg.mediamtx.playbackUrl = cfg.mediamtx.playbackUrl || 'http://127.0.0.1:9996';
+const playbackAddr = new URL(cfg.mediamtx.playbackUrl).host;
+if (args['archive-dir']) cfg.archiveDir = args['archive-dir'];
+if (!cfg.archiveDir) cfg.archiveDir = path.join(args.data, 'archive');
 const whepAddr = new URL(cfg.mediamtx.webrtcUrl).host;
 const apiAddr = new URL(cfg.mediamtx.apiUrl).host;
 const hlsAddr = new URL(cfg.mediamtx.hlsUrl).host;
@@ -74,13 +79,14 @@ const setAddrs = (text) => text
   .replace(/^webrtcLocalUDPAddress:.*$/m, `webrtcLocalUDPAddress: :${cfg.mediamtx.icePort}`)
   .replace(/^webrtcLocalTCPAddress:.*$/m, `webrtcLocalTCPAddress: :${cfg.mediamtx.icePort}`)
   .replace(/^rtmpAddress:.*$/m, `rtmpAddress: :${cfg.mediamtx.rtmpPort}`)
-  .replace(/^srtAddress:.*$/m, `srtAddress: :${cfg.mediamtx.srtPort}`);
+  .replace(/^srtAddress:.*$/m, `srtAddress: :${cfg.mediamtx.srtPort}`)
+  .replace(/^playbackAddress:.*$/m, `playbackAddress: ${playbackAddr}`);
 const rendered = setAddrs(readText(args.template).replace('@CDN_SECRET@', cfg.mediamtx.cdnSecret)).replace(/\r?\n/g, '\r\n');
 let ymlNew = false;
 if (!fs.existsSync(args.yml)) {
   write(args.yml, rendered);
-} else if (!/^srtAddress:/m.test(readText(args.yml))) {
-  // Файл от версии без WebRTC / приёма от энкодеров — заменяем новым, прежний сохраняем
+} else if (!/^playbackAddress:/m.test(readText(args.yml))) {
+  // Файл от версии без архива / WebRTC / приёма от энкодеров — заменяем новым, прежний сохраняем
   fs.copyFileSync(args.yml, args.yml + '.bak');
   write(args.yml, rendered);
 } else {
@@ -97,4 +103,4 @@ if (!fs.existsSync(args.yml)) {
 }
 
 fs.mkdirSync(path.join(args.data), { recursive: true });
-console.log(JSON.stringify({ port: cfg.port, icePort: cfg.mediamtx.icePort, rtmpPort: cfg.mediamtx.rtmpPort, srtPort: cfg.mediamtx.srtPort, apiAddr, hlsAddr, whepAddr, tls: !!cfg.tls.enabled, ymlNew }));
+console.log(JSON.stringify({ port: cfg.port, icePort: cfg.mediamtx.icePort, rtmpPort: cfg.mediamtx.rtmpPort, srtPort: cfg.mediamtx.srtPort, archiveDir: cfg.archiveDir, apiAddr, hlsAddr, whepAddr, tls: !!cfg.tls.enabled, ymlNew }));

@@ -6,6 +6,7 @@ export function startFakeMediaMtx() {
   const ready = new Set();
   const calls = [];
   const whep = new Map(); // сеанс -> путь
+  const recordings = new Map(); // путь -> [{ start, duration }]
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
     const chunks = [];
@@ -19,6 +20,20 @@ export function startFakeMediaMtx() {
     };
     let m;
     if (url.pathname === '/v3/info') return json(200, { version: 'fake-1.0' });
+    // Сервер выдачи записей (playback)
+    if (url.pathname === '/list') {
+      const p = url.searchParams.get('path');
+      if (!paths.has(p)) return json(400, { error: 'path configuration not found' });
+      const list = recordings.get(p);
+      if (!list || !list.length) return json(404, { error: 'no recordings found' });
+      return json(200, list.map((e) => ({ ...e, url: `http://x/get?path=${p}` })));
+    }
+    if (url.pathname === '/get') {
+      const p = url.searchParams.get('path');
+      if (!recordings.get(p)?.length) return json(404, { error: 'no recordings found' });
+      res.writeHead(200, { 'Content-Type': 'video/mp4', 'Accept-Ranges': 'none' });
+      return res.end(`ftypFAKE ${p} ${url.searchParams.get('start')} ${url.searchParams.get('duration')} ${url.searchParams.get('format')}`);
+    }
     if (url.pathname === '/v3/config/paths/list') {
       return json(200, { items: [...paths].map(([name, c]) => ({ name, ...c })) });
     }
@@ -75,7 +90,7 @@ export function startFakeMediaMtx() {
     json(404, { error: 'unknown' });
   });
   const fake = {
-    paths, ready, calls, server, whep, legacyTransport: false, probeReady: true, cdnSecret: 'test-cdn-secret',
+    paths, ready, calls, server, whep, recordings, legacyTransport: false, probeReady: true, cdnSecret: 'test-cdn-secret',
     listen: () => new Promise((r) => server.listen(0, '127.0.0.1', () => r(`http://127.0.0.1:${server.address().port}`))),
     close: () => new Promise((r) => server.close(r)),
   };

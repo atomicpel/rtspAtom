@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { HttpError, badRequest, notFound } from '../lib/http.js';
 import { newId } from '../lib/security.js';
 import { nowIso } from '../lib/db.js';
+import { getSettings } from '../lib/settings.js';
 import { canAccessStream, hasRole } from '../lib/access.js';
 import { detectProtocol, redactUrl, buildSourceUrl, pathNameOf, SOURCE_PROTOCOLS } from '../lib/mediamtx.js';
 
@@ -70,6 +71,7 @@ function parseStream(body, partial) {
   }
   if (body.clearPassword) out.sourcePassword = '';
   if (body.isActive !== undefined) out.isActive = !!body.isActive;
+  if (body.record !== undefined) out.record = !!body.record;
   if (out.extractedLogin && !out.sourceLogin) out.sourceLogin = out.extractedLogin;
   if (out.extractedLogin && out.sourcePassword === undefined) out.sourcePassword = out.extractedPassword;
   delete out.extractedLogin;
@@ -103,6 +105,7 @@ export function registerStreams(router, app) {
       sourceLogin: user.isAdmin ? s.source_login : '',
       hasPassword: !!s.source_password,
       isActive: !!s.is_active,
+      record: !!s.record,
       status: app.sync ? app.sync.streamState(s) : 'offline',
       tracks: st?.tracks || [],
       viewers: viewersOf(s.id),
@@ -120,11 +123,12 @@ export function registerStreams(router, app) {
     const id = newId();
     const sort = db.prepare('SELECT COALESCE(MAX(sort), 0) + 1 AS n FROM streams').get().n;
     db.prepare(
-      `INSERT INTO streams (id, name, url, protocol, source_login, source_password, transport, description, is_active, sort, created_at, push_key)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO streams (id, name, url, protocol, source_login, source_password, transport, description, is_active, sort, created_at, push_key, record)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(id, s.name, s.url, s.protocol, s.sourceLogin || '', s.sourcePassword || '',
       s.transport || 'auto', s.description || '', s.isActive === false ? 0 : 1, sort, nowIso(),
-      s.mode === 'push' ? newPushKey() : null);
+      s.mode === 'push' ? newPushKey() : null,
+      (s.record ?? getSettings(db).archiveNewStreams) ? 1 : 0);
     log.info('admin', `Добавлен поток «${s.name}»`, { user: ctx.user.login, ip: ctx.ip, stream: s.name });
     sync();
     return streamToApi(getStream(id), ctx.user);
@@ -145,15 +149,18 @@ export function registerStreams(router, app) {
       is_active: s.isActive === undefined ? cur.is_active : s.isActive ? 1 : 0,
       // Смена режима: в push выдаём ключ (прежний сохраняется), в pull — убираем
       push_key: s.mode === 'push' ? cur.push_key || newPushKey() : s.url !== undefined ? null : cur.push_key,
+      record: s.record === undefined ? cur.record : s.record ? 1 : 0,
     };
     if (s.mode === 'push') { next.source_login = ''; next.source_password = ''; }
     db.prepare(
       `UPDATE streams SET name = ?, description = ?, url = ?, protocol = ?, source_login = ?, source_password = ?,
-       transport = ?, is_active = ?, push_key = ? WHERE id = ?`,
+       transport = ?, is_active = ?, push_key = ?, record = ? WHERE id = ?`,
     ).run(next.name, next.description, next.url, next.protocol, next.source_login, next.source_password,
-      next.transport, next.is_active, next.push_key, cur.id);
-    const what = s.isActive !== undefined && Object.keys(s).length === 1
-      ? (next.is_active ? 'Включён' : 'Отключён') : 'Изменён';
+      next.transport, next.is_active, next.push_key, next.record, cur.id);
+    const only = Object.keys(s).length === 1;
+    const what = s.isActive !== undefined && only ? (next.is_active ? 'Включён' : 'Отключён')
+      : s.record !== undefined && only ? (next.record ? 'Включена запись в архив: поток' : 'Выключена запись в архив: поток')
+        : 'Изменён';
     log.info('admin', `${what} поток «${next.name}»`, { user: ctx.user.login, ip: ctx.ip, stream: next.name });
     sync();
     return streamToApi(getStream(cur.id), ctx.user);
@@ -183,8 +190,9 @@ export function registerStreams(router, app) {
     const cur = getStream(ctx.params.id);
     if (!cur) throw notFound('Поток не найден');
     db.prepare('DELETE FROM streams WHERE id = ?').run(cur.id);
-    log.info('admin', `Удалён поток «${cur.name}»`, { user: ctx.user.login, ip: ctx.ip, stream: cur.name });
+    log.info('admin', `Удалён поток «${cur.name}» вместе с архивом`, { user: ctx.user.login, ip: ctx.ip, stream: cur.name });
     sync();
+    app.archive?.removeStream(cur.id);
   }, { auth: 'admin' });
 
   router.post('/api/streams/probe', async (ctx) => {

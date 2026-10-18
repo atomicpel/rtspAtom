@@ -55,7 +55,7 @@ MTX_PID=$!
 
 # 3. Сервер панели
 cat > "$W/config.json" <<EOF
-{ "host": "127.0.0.1", "port": 18080, "dataDir": "$W/data", "publicDir": "$APP/public",
+{ "host": "127.0.0.1", "port": 18080, "dataDir": "$W/data", "publicDir": "$APP/public", "archiveDir": "$W/archive",
   "mediamtx": { "apiUrl": "http://127.0.0.1:9997", "hlsUrl": "http://127.0.0.1:8888", "cdnSecret": "$SECRET" } }
 EOF
 export RTSPATOM_CONFIG="$W/config.json"
@@ -150,6 +150,31 @@ WHEP=$(curl -s -w ' %{http_code}' -b "$J" -H 'X-RTSPAtom: 1' -H 'Content-Type: a
 echo "WHEP с неверным SDP: $WHEP"
 case "$WHEP" in *WebRTC:*) ;; *) fail "WHEP-прокси не дошёл до MediaMTX: $WHEP" ;; esac
 
+# Архив: поток пишется на диск, промежутки записи и видео отдаются через панель
+SPANS=""
+for i in $(seq 1 40); do
+  FROM=$(date -u -d '-1 hour' +%Y-%m-%dT%H:%M:%SZ); TO=$(date -u -d '+1 minute' +%Y-%m-%dT%H:%M:%SZ)
+  SPANS=$(curl -sf -b "$J" "$B/api/archive/$STREAM/spans?start=$FROM&end=$TO" || true)
+  DUR=$(echo "${SPANS:-[]}" | "$NODE" -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const a=JSON.parse(d||"[]");console.log(Math.floor(a.reduce((n,x)=>n+x.duration,0)))})')
+  [ "${DUR:-0}" -ge 8 ] && break
+  sleep 1
+done
+echo "Архив: промежутки $SPANS"
+[ "${DUR:-0}" -ge 8 ] || { ls -la "$W/archive" "$W/archive/$STREAM" 2>&1; grep -i 'record\|playback' "$W/mediamtx.log" | tail -20; fail "запись в архив не идёт (записано ${DUR:-0} с)"; }
+ls "$W/archive/$STREAM/"*.mp4 >/dev/null || fail "в каталоге архива нет файлов"
+ASTART=$(echo "$SPANS" | "$NODE" -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const a=JSON.parse(d);console.log(new Date(Date.parse(a[0].start)+2000).toISOString())})')
+CODE=$(curl -s -o "$W/archive.mp4" -w '%{http_code}' -b "$J" "$B/archive/$STREAM/video?start=$ASTART&duration=4")
+ASIZE=$(stat -c %s "$W/archive.mp4" 2>/dev/null || echo 0)
+[ "$CODE" = "200" ] && [ "$ASIZE" -gt 10000 ] || fail "видео из архива не отдаётся (код $CODE, $ASIZE байт): $(head -c 300 "$W/archive.mp4")"
+[ "$(head -c 8 "$W/archive.mp4" | tail -c 4)" = "ftyp" ] || fail "из архива пришёл не MP4"
+ffprobe -v error -show_entries format=duration -of csv=p=0 "$W/archive.mp4" > "$W/archive.dur" 2>&1 || true
+echo "Фрагмент архива: $ASIZE байт, длительность $(cat "$W/archive.dur")"
+curl -s -D - -o /dev/null -b "$J" "$B/archive/$STREAM/video?start=$ASTART&duration=3&download=1" | grep -qi 'content-disposition: attachment' \
+  || fail "выгрузка из архива без Content-Disposition"
+CODE=$(curl -s -o /dev/null -w '%{http_code}' "$B/archive/$STREAM/video?start=$ASTART&duration=3")
+[ "$CODE" = "401" ] || fail "архив без входа вернул $CODE"
+[ -n "${GITHUB_ACTIONS:-}" ] && echo "::notice title=Архив::записано $DUR с, фрагмент MP4 $ASIZE байт ($(cat "$W/archive.dur") с) отдан через панель; без входа — 401"
+
 # Скриншоты интерфейса (только в CI): ещё три тестовые камеры с разными картинками
 if [ -n "${SHOTS_DIR:-}" ]; then
   i=2
@@ -198,15 +223,24 @@ EOF
     fail "MediaMTX принял публикацию по неверному ключу"
   fi
   [ -n "${GITHUB_ACTIONS:-}" ] && echo "::notice title=Энкодеры::RTMP и SRT от энкодера приняты по ключу, неверный ключ отклонён; UDP: $S_UDP"
+  # Камера со звуком G.711 — проверка показа такого архива в браузере
+  ffmpeg -hide_banner -loglevel error -re -f lavfi -i "testsrc=size=640x360:rate=25" -f lavfi -i "sine=frequency=440:sample_rate=8000" \
+    -c:v libx264 -preset ultrafast -tune zerolatency -g 25 -pix_fmt yuv420p -c:a pcm_alaw -ar 8000 -ac 1 \
+    -f rtsp -rtsp_transport tcp "rtsp://127.0.0.1:18554/g711" > "$W/ffmpeg-g711.log" 2>&1 & PIDS+=($!)
+  sleep 2
+  curl -sf "${H[@]}" -d '{"name":"Звук G711","description":"видео + G.711","url":"rtsp://127.0.0.1:18554/g711","transport":"tcp"}' "$B/api/streams" >/dev/null
   curl -sf "${H[@]}" -d '{"login":"operator","password":"operator-pass","role":"operator"}' "$B/api/users" >/dev/null
   sleep 6
   node "$ROOT/scripts/screenshots.mjs" "$B" admin e2e-password "$SHOTS_DIR" || echo "::warning title=Скриншоты::не удалось снять скриншоты"
 fi
 
-# Отключение потока убирает его из MediaMTX
+# Отключение потока: камера в MediaMTX больше не подключается, остаётся только архивный путь без источника
 curl -sf "${H[@]}" -X PUT -d '{"isActive":false}' "$B/api/streams/$STREAM" >/dev/null
 sleep 2
-curl -sf http://127.0.0.1:9997/v3/config/paths/list | grep -q "s_$STREAM" && fail "путь не удалён из MediaMTX"
+SRC=$(curl -sf "http://127.0.0.1:9997/v3/config/paths/get/s_$STREAM" | "$NODE" -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const p=JSON.parse(d||"{}");console.log(p.source+"/"+p.record)})' || echo "нет")
+[ "$SRC" = "publisher/false" ] || fail "отключённый поток в MediaMTX: $SRC (ожидался архивный путь publisher/false)"
+curl -sf -b "$J" "$B/api/archive/$STREAM/spans?start=$(date -u -d '-1 hour' +%Y-%m-%dT%H:%M:%SZ)&end=$(date -u -d '+1 minute' +%Y-%m-%dT%H:%M:%SZ)" | grep -q '"start"' \
+  || fail "архив отключённого потока не виден"
 
 echo "E2E: всё работает"
 [ -n "${GITHUB_ACTIONS:-}" ] && echo "::notice title=E2E::Камера RTSP -> MediaMTX -> панель -> HLS: сегмент $SEG ($SIZE байт) получен через прокси; MediaMTX снаружи открыт только портами ICE 8189, RTMP 1935, SRT 8890"

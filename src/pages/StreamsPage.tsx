@@ -14,6 +14,7 @@ import {
 
 const emptyForm = {
   mode: 'pull' as 'pull' | 'push', name: '', description: '', url: '', transport: 'auto' as StreamTransport, sourceLogin: '', sourcePassword: '',
+  record: undefined as boolean | undefined, // не задано — как в настройках архива
 };
 
 const MODES = [
@@ -44,7 +45,7 @@ export function StreamsPage() {
 
   const openEdit = (s: Stream) => {
     setEditing(s);
-    setForm({ mode: s.mode, name: s.name, description: s.description, url: s.url, transport: s.transport, sourceLogin: s.sourceLogin, sourcePassword: '' });
+    setForm({ mode: s.mode, name: s.name, description: s.description, url: s.url, transport: s.transport, sourceLogin: s.sourceLogin, sourcePassword: '', record: s.record });
     setCheck({ state: 'idle', text: '' });
     setOpen(true);
   };
@@ -57,7 +58,7 @@ export function StreamsPage() {
     }
     setBusy(true);
     try {
-      const body = push ? { mode: 'push' as const, name: form.name, description: form.description } : form;
+      const body = push ? { mode: 'push' as const, name: form.name, description: form.description, record: form.record } : form;
       const saved = editing ? await api.updateStream(editing.id, body) : await api.createStream(body);
       toast('success', editing ? `Поток «${form.name}» сохранён` : `Поток «${form.name}» добавлен`);
       reload();
@@ -116,8 +117,20 @@ export function StreamsPage() {
     }
   };
 
+  const toggleRecord = async (s: Stream) => {
+    setData((prev) => prev?.map((x) => (x.id === s.id ? { ...x, record: !s.record } : x)) || prev);
+    try {
+      await api.updateStream(s.id, { record: !s.record });
+      toast('info', !s.record ? `Запись «${s.name}» в архив включена` : `Запись «${s.name}» в архив выключена — сохранённое остаётся до конца срока хранения`);
+      reload();
+    } catch (err) {
+      toast('error', errorMessage(err));
+      reload();
+    }
+  };
+
   const remove = async (s: Stream) => {
-    if (!confirm(`Удалить поток «${s.name}»?`)) return;
+    if (!confirm(`Удалить поток «${s.name}»? Его архив тоже будет удалён.`)) return;
     try {
       await api.deleteStream(s.id);
       toast('info', `Поток «${s.name}» удалён`);
@@ -200,6 +213,12 @@ export function StreamsPage() {
                     <Eye className="w-3.5 h-3.5" /> {s.viewers}
                   </span>
                 )}
+                <button type="button" onClick={() => toggleRecord(s)} aria-pressed={s.record}
+                  title={s.record ? 'Запись в архив включена — выключить' : 'Запись в архив выключена — включить'}
+                  className={`hidden sm:inline-flex items-center gap-1.5 h-7 px-2 rounded text-[12px] transition-colors ${s.record ? 'text-fg hover:bg-raised' : 'text-muted hover:text-fg hover:bg-raised'}`}>
+                  <span className={`w-2 h-2 rounded-full ${s.record ? (s.status === 'online' ? 'bg-alarm animate-pulse' : 'bg-alarm/60') : 'border border-line-strong'}`} />
+                  Запись
+                </button>
                 <Toggle checked={s.isActive} onChange={() => toggle(s)} />
                 <IconButton icon={Pencil} label="Изменить" onClick={() => openEdit(s)} />
                 <IconButton icon={Trash2} label="Удалить" onClick={() => remove(s)} className="hover:!text-alarm" />
@@ -284,6 +303,10 @@ export function StreamsPage() {
             </AnimatePresence>
           </div>
           </>)}
+          <div className="flex items-center gap-2 flex-wrap">
+            <Toggle checked={form.record ?? true} onChange={(v) => setForm({ ...form, record: v })} label="Записывать в архив" />
+            <span className="text-muted text-[13px]">срок хранения и запас места — в настройках</span>
+          </div>
           <EncoderTips />
           <button type="submit" className="hidden" />
         </form>
