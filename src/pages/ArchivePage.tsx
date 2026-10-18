@@ -163,9 +163,10 @@ export function ArchivePage() {
     reports.current.clear();
     setSeekNonce((n) => n + 1);
     if (!keepView) {
-      setView(([vs, ve]) => {
+      setView((prev) => {
+        const [vs, ve] = prev;
         const len = ve - vs;
-        if (target >= vs && target <= ve) return [vs, ve];
+        if (target >= vs && target <= ve) return prev; // то же окно — тот же объект, иначе загрузка промежутков откладывается бесконечно
         const ns = len >= DAY ? startOfDay(target) : target - len / 2;
         return [ns, ns + len];
       });
@@ -204,11 +205,12 @@ export function ArchivePage() {
       tRef.current = next;
       setT(next);
       // окно шкалы следует за временем просмотра
-      setView(([vs, ve]) => {
+      setView((prev) => {
+        const [vs, ve] = prev;
         const len = ve - vs;
         if (next > ve - len * 0.02) return [next - len * 0.1, next - len * 0.1 + len];
         if (next < vs) return [next - len * 0.1, next - len * 0.1 + len];
-        return [vs, ve];
+        return prev; // то же окно — тот же объект, иначе загрузка промежутков откладывается бесконечно
       });
     }, 250);
     return () => clearInterval(id);
