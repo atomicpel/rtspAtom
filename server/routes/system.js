@@ -4,8 +4,9 @@ import { checkIpRules, isValidCidr, newId } from '../lib/security.js';
 import { nowIso } from '../lib/db.js';
 import { getSettings, saveSettings, validateSettings } from '../lib/settings.js';
 import { canAccessComputer } from '../lib/access.js';
+import { PLATFORM } from '../lib/config.js';
 
-export const APP_VERSION = '1.1.0';
+export const APP_VERSION = '1.2.0';
 const LOG_LEVELS = ['info', 'warning', 'error', 'debug'];
 const LOG_CATEGORIES = ['auth', 'access', 'stream', 'error', 'admin'];
 
@@ -163,6 +164,7 @@ export function registerSystem(router, app) {
     node: process.version,
     hostname: os.hostname(),
     platform: `${os.type()} ${os.release()} ${os.arch()}`,
+    os: PLATFORM,
     tlsEnabled: !!app.config.tls?.enabled,
     mediamtx: {
       reachable: !!app.sync?.reachable,

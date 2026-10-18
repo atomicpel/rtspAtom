@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import type { User } from '../lib/types';
 import { api, errorMessage, UNAUTHORIZED_EVENT } from '../lib/api';
+import type { Platform } from '../lib/platform';
 
 interface AuthContextType {
   user: User | null;
@@ -10,6 +11,8 @@ interface AuthContextType {
   setupRequired: boolean;
   /** Первичную настройку можно выполнить с этого компьютера (localhost). */
   setupAllowedHere: boolean;
+  /** ОС сервера — для подсказок с командами обслуживания. */
+  platform: Platform;
   login: (login: string, password: string) => Promise<{ success: boolean; error?: string }>;
   setup: (login: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
@@ -23,12 +26,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [checking, setChecking] = useState(true);
   const [setupRequired, setSetupRequired] = useState(false);
   const [setupAllowedHere, setSetupAllowedHere] = useState(false);
+  const [platform, setPlatform] = useState<Platform>('linux');
 
   const checkStatus = useCallback(async () => {
     try {
       const st = await api.authStatus();
       setSetupRequired(st.setupRequired);
       setSetupAllowedHere(st.setupAllowedHere);
+      if (st.platform) setPlatform(st.platform);
       if (st.authenticated) {
         const { user: u } = await api.me();
         setUser(u);
@@ -89,7 +94,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, checking, setupRequired, setupAllowedHere, login, setup, logout, refreshUser }}>
+    <AuthContext.Provider value={{ user, checking, setupRequired, setupAllowedHere, platform, login, setup, logout, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );

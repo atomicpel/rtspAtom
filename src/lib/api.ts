@@ -95,7 +95,7 @@ export function logQueryString(q: LogQuery): string {
 }
 
 export const api = {
-  authStatus: () => get<{ setupRequired: boolean; setupAllowedHere: boolean; authenticated: boolean }>('/api/auth/status'),
+  authStatus: () => get<{ setupRequired: boolean; setupAllowedHere: boolean; authenticated: boolean; platform: 'linux' | 'windows' }>('/api/auth/status'),
   me: () => get<{ user: User }>('/api/auth/me'),
   login: (login: string, password: string) => post<{ user: User }>('/api/auth/login', { login, password }),
   setup: (login: string, password: string) => post<{ user: User }>('/api/auth/setup', { login, password }),

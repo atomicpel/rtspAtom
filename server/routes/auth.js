@@ -5,6 +5,7 @@ import {
 import { getSettings } from '../lib/settings.js';
 import { nowIso } from '../lib/db.js';
 import { userFromRow } from '../lib/access.js';
+import { PLATFORM } from '../lib/config.js';
 
 export const MIN_PASSWORD = 8;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
@@ -48,6 +49,7 @@ export function registerAuth(router, app) {
     setupRequired: countUsers() === 0,
     setupAllowedHere: isLoopback(ctx.ip),
     authenticated: !!ctx.user,
+    platform: PLATFORM,
   }), { auth: 'public' });
 
   // Первичное создание администратора — только когда пользователей нет

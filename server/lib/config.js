@@ -5,7 +5,11 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const serverRoot = path.resolve(here, '..');
 
-export const DEFAULT_CONFIG_FILE = '/etc/rtspatom/config.json';
+export const IS_WINDOWS = process.platform === 'win32';
+export const PLATFORM = IS_WINDOWS ? 'windows' : 'linux';
+export const DEFAULT_CONFIG_FILE = IS_WINDOWS
+  ? path.join(process.env.ProgramData || 'C:\\ProgramData', 'RTSPAtom', 'config.json')
+  : '/etc/rtspatom/config.json';
 
 function defaults() {
   // В пакете фронтенд лежит рядом с сервером (app/public),
@@ -18,7 +22,8 @@ function defaults() {
     dataDir: path.resolve(process.cwd(), 'data'),
     publicDir: fs.existsSync(bundled) ? bundled : dev,
     trustProxy: false,
-    tls: { enabled: false, cert: '', key: '' },
+    // TLS: PEM-пара cert/key (Linux) или файл pfx + passphrase (Windows).
+    tls: { enabled: false, cert: '', key: '', pfx: '', passphrase: '' },
     mediamtx: {
       apiUrl: 'http://127.0.0.1:9997',
       hlsUrl: 'http://127.0.0.1:8888',
@@ -45,7 +50,9 @@ export function loadConfig(overrides = {}) {
   const file = process.env.RTSPATOM_CONFIG || DEFAULT_CONFIG_FILE;
   if (fs.existsSync(file)) {
     try {
-      cfg = merge(cfg, JSON.parse(fs.readFileSync(file, 'utf8')));
+      // Блокнот Windows может сохранить файл с BOM — убираем его.
+      const text = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
+      cfg = merge(cfg, JSON.parse(text));
       cfg.configFile = file;
     } catch (err) {
       throw new Error(`Не удалось прочитать конфигурацию ${file}: ${err.message}`);

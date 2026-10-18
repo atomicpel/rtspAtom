@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import path from 'node:path';
-import { loadConfig } from './lib/config.js';
+import { loadConfig, IS_WINDOWS } from './lib/config.js';
 import { openDb } from './lib/db.js';
 import { EventLog } from './lib/eventlog.js';
 import { getSettings } from './lib/settings.js';
@@ -23,10 +23,10 @@ const handler = createHandler(app);
 
 let server;
 if (config.tls?.enabled) {
-  server = https.createServer(
-    { cert: fs.readFileSync(config.tls.cert), key: fs.readFileSync(config.tls.key) },
-    handler,
-  );
+  const tlsOpts = config.tls.pfx
+    ? { pfx: fs.readFileSync(config.tls.pfx), passphrase: config.tls.passphrase || '' }
+    : { cert: fs.readFileSync(config.tls.cert), key: fs.readFileSync(config.tls.key) };
+  server = https.createServer(tlsOpts, handler);
 } else {
   server = http.createServer(handler);
 }
@@ -43,7 +43,9 @@ server.listen(config.port, config.host, () => {
   log.info('admin', `RTSP Atom ${APP_VERSION} запущен: ${proto}://${config.host}:${config.port}`);
   const users = db.prepare('SELECT COUNT(*) AS n FROM users').get().n;
   if (users === 0) {
-    console.log('Пользователей нет. Создайте администратора: sudo rtspatom-admin create-admin');
+    console.log(IS_WINDOWS
+      ? 'Пользователей нет. Создайте администратора: rtspatom-admin create-admin (командная строка от имени администратора)'
+      : 'Пользователей нет. Создайте администратора: sudo rtspatom-admin create-admin');
   }
 });
 
@@ -77,3 +79,5 @@ function shutdown(signal) {
 }
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
+// Windows: служба останавливается сигналом Ctrl+Break / закрытием консоли
+process.on('SIGBREAK', () => shutdown('SIGBREAK'));

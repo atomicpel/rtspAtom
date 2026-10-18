@@ -67,5 +67,9 @@ app/server/  app/public/  — сервер и собранный фронтен�
 deploy/                   — службы systemd, mediamtx.yml, rtspatom-admin
 ```
 
-После установки файлы лежат так: `/opt/rtspatom` — программа, `/etc/rtspatom` — `config.json`, `mediamtx.yml` и `tls/`,
+Windows-пакет (`scripts/build-bundle-windows.sh`) устроен так же: `node\node.exe`, `mediamtx\mediamtx.exe`,
+`service\WinSW.exe` (из него делаются службы `rtspatom` и `rtspatom-mediamtx`), `install.cmd`/`install.ps1`.
+После установки программа лежит в `C:\Program Files\RTSPAtom`, а настройки, база и журналы — в `C:\ProgramData\RTSPAtom`.
+
+На Linux после установки файлы лежат так: `/opt/rtspatom` — программа, `/etc/rtspatom` — `config.json`, `mediamtx.yml` и `tls/`,
 `/var/lib/rtspatom` — база. Обе службы работают от пользователя `rtspatom`.

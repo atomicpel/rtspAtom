@@ -7,6 +7,8 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { api } from '../lib/api';
 import { usePolling } from '../lib/usePolling';
 import { Computer, Metrics } from '../lib/types';
+import { useAuth } from '../contexts/AuthContext';
+import { hints } from '../lib/platform';
 import { AnimatedCard, StaggerContainer, StaggerItem } from '../components/AnimatedCard';
 
 interface MetricCardProps {
@@ -50,6 +52,7 @@ function MetricCard({ title, value, icon: Icon, color, subtitle }: MetricCardPro
 }
 
 export function DashboardPage() {
+  const h = hints(useAuth().platform);
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [cpuHistory, setCpuHistory] = useState<Array<{ time: string; cpu: number; ram: number }>>([]);
   const [networkHistory, setNetworkHistory] = useState<Array<{ time: string; in: number; out: number }>>([]);
@@ -92,7 +95,7 @@ export function DashboardPage() {
     <div className="space-y-6">
       {metrics && !metrics.mediamtx.reachable && (
         <div className="p-3 rounded-xl bg-red-950/40 border border-red-700/40 text-red-300 text-sm">
-          Служба MediaMTX недоступна — видео с камер не транслируется. Проверьте: <span className="font-mono">systemctl status rtspatom-mediamtx</span>
+          Служба MediaMTX недоступна — видео с камер не транслируется. Проверьте: <span className="font-mono">{h.mediamtxStatus}</span>
         </div>
       )}
       <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

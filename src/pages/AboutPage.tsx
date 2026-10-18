@@ -138,7 +138,7 @@ export function AboutPage() {
               <h3 className="text-sm font-medium text-white group-hover:text-purple-400 transition-colors">Изолированная сеть</h3>
             </div>
             <p className="text-xs text-gray-400">
-              Полностью автономная работа без доступа в Интернет. Astra Linux совместимость.
+              Полностью автономная работа без доступа в Интернет. Astra Linux SE 1.8 и Windows 11.
             </p>
           </AnimatedCard>
         </StaggerItem>
@@ -220,7 +220,7 @@ export function AboutPage() {
           <div className="text-gray-400">Интерфейс:</div>
           <div className="text-white">React + TypeScript + Vite + Tailwind CSS</div>
           <div className="text-gray-400">ОС:</div>
-          <div className="text-white">Astra Linux SE 1.8 (изолированная сеть)</div>
+          <div className="text-white">{info ? (info.os === 'windows' ? 'Windows' : 'Linux (Astra Linux SE 1.8)') : '—'}</div>
           <div className="text-gray-400">Обозначение:</div>
           <div className="text-gradient font-bold">115 обрОсН</div>
         </div>

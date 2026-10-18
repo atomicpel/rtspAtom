@@ -100,6 +100,7 @@ export interface SystemInfo {
   node: string;
   hostname: string;
   platform: string;
+  os: 'linux' | 'windows';
   tlsEnabled: boolean;
   mediamtx: { reachable: boolean; version: string | null; lastError: string; lastSyncAt: string | null };
 }

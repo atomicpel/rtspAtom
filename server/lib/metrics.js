@@ -1,5 +1,27 @@
 import fs from 'node:fs';
 import os from 'node:os';
+import { execFile } from 'node:child_process';
+
+const IS_WINDOWS = process.platform === 'win32';
+
+/**
+ * Windows: суммарные байты из «netstat -e». Первая строка вида «<подпись> <число> <число>»
+ * — это байты (подпись зависит от языка системы: Bytes / Байт).
+ */
+export function parseNetstatE(text) {
+  for (const line of String(text).split(/\r?\n/)) {
+    const m = /^\s*\S.*?\s+(\d+)\s+(\d+)\s*$/.exec(line);
+    if (m) return { rx: Number(m[1]), tx: Number(m[2]) };
+  }
+  return null;
+}
+
+let winNet = null;
+function refreshWindowsNet() {
+  execFile('netstat', ['-e'], { windowsHide: true, timeout: 5000 }, (err, stdout) => {
+    if (!err) winNet = parseNetstatE(stdout);
+  });
+}
 
 function cpuTimes() {
   let idle = 0;
@@ -25,6 +47,7 @@ function memUsedPercent() {
 }
 
 function netBytes() {
+  if (IS_WINDOWS) return winNet;
   try {
     const lines = fs.readFileSync('/proc/net/dev', 'utf8').split('\n').slice(2);
     let rx = 0;
@@ -45,6 +68,7 @@ function netBytes() {
 /** Снимает показатели раз в несколько секунд и считает скорость по разнице. */
 export class SystemMetrics {
   constructor() {
+    if (IS_WINDOWS) refreshWindowsNet();
     this.prevCpu = cpuTimes();
     this.prevNet = netBytes();
     this.prevAt = Date.now();
@@ -53,6 +77,7 @@ export class SystemMetrics {
   }
 
   sample() {
+    if (IS_WINDOWS) refreshWindowsNet(); // результат придёт к следующему замеру
     const now = Date.now();
     const cpu = cpuTimes();
     const dTotal = cpu.total - this.prevCpu.total;

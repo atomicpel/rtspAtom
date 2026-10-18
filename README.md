@@ -1,6 +1,6 @@
 # RTSP Atom — панель управления видеотрансляцией
 
-**115 обрОсН** • веб-панель для просмотра IP-камер в изолированной сети на Astra Linux SE 1.8.
+**115 обрОсН** • веб-панель для просмотра IP-камер в изолированной сети. Ставится на **Astra Linux SE 1.8** и **Windows 11**.
 
 - Видеостена 1×1 … 4×4, сохранённые раскладки, полноэкранный режим.
 - Камеры по RTSP, RTMP, HLS, SRT и UDP. Приём через MediaMTX, показ в браузере по LL-HLS.
@@ -11,16 +11,20 @@
 
 ## Установка
 
-См. **[INSTALL.md](INSTALL.md)**. Коротко:
+Готовые офлайн-пакеты лежат в **Releases**:
 
-```bash
-tar -xzf rtspatom-*-astra-x86_64.tar.gz && cd rtspatom-*-astra-x86_64
-sudo ./install.sh
-```
+| Система | Пакет | Инструкция |
+|---|---|---|
+| Astra Linux SE 1.8 (x86_64) | `rtspatom-<версия>-astra-x86_64.tar.gz` → `sudo ./install.sh` | [INSTALL.md](INSTALL.md) |
+| Windows 11 (x64) | `rtspatom-<версия>-windows-x64.zip` → `install.cmd` | [INSTALL-WINDOWS.md](INSTALL-WINDOWS.md) |
 
-Готовый пакет собирает GitHub Actions (`.github/workflows/offline-bundle.yml`) и выкладывает его в **Releases**.
-Перед публикацией сборка проходит проверку типов, тесты сервера, сквозной тест «камера → MediaMTX → панель → HLS»
-и пробную установку в чистом Debian 12, на котором основана Astra 1.8.
+Пакеты собирает GitHub Actions (`.github/workflows/offline-bundle.yml`). Перед публикацией сборка проходит:
+
+- проверку типов и тесты сервера;
+- сквозной тест «камера → MediaMTX → панель → HLS» на Linux;
+- пробную установку в Debian 12 и в образе Astra Linux 1.8;
+- на Windows Server 2025 (основа та же, что у Windows 11): установку служб, тот же видеотест,
+  включение HTTPS при обновлении и удаление.
 
 ## Устройство
 
@@ -29,8 +33,9 @@ sudo ./install.sh
 | `src/` | веб-интерфейс: React, TypeScript, Vite, Tailwind |
 | `server/` | сервер на Node.js без внешних зависимостей: `node:http`, `node:sqlite`, `node:crypto` |
 | `server/test/` | тесты API (`npm run test:server`) |
-| `deploy/` | установщик, службы systemd, конфигурация MediaMTX, утилита `rtspatom-admin` |
-| `scripts/` | сборка офлайн-пакета, сквозной тест, тест установщика |
+| `deploy/` | установщик для Linux, службы systemd, конфигурация MediaMTX, утилита `rtspatom-admin` |
+| `deploy/windows/` | установщик для Windows (`install.ps1`), шаблоны служб WinSW, `rtspatom-admin.cmd` |
+| `scripts/` | сборка офлайн-пакетов, сквозной тест, тесты установщиков |
 
 Подробнее — [ARCHITECTURE.md](ARCHITECTURE.md).
 

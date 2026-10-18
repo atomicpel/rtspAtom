@@ -3,11 +3,14 @@ import { motion } from 'framer-motion';
 import { Save, Shield, Clock, Wifi, FileText, AlertTriangle, Check, Video, Archive } from 'lucide-react';
 import { api, errorMessage } from '../lib/api';
 import { Settings as SettingsType } from '../lib/types';
+import { useAuth } from '../contexts/AuthContext';
+import { hints } from '../lib/platform';
 import { useToast } from '../components/Toast';
 import { AnimatedCard, StaggerContainer, StaggerItem } from '../components/AnimatedCard';
 
 export function SettingsPage() {
   const { toast } = useToast();
+  const h = hints(useAuth().platform);
   const [settings, setSettings] = useState<SettingsType | null>(null);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -72,9 +75,9 @@ export function SettingsPage() {
             <p className="text-xs text-gray-500 mt-2 flex items-start gap-1 bg-gray-800/30 p-2 rounded-lg border border-gray-700/30">
               <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0 text-yellow-500" />
               <span>
-                Включается при установке (<span className="font-mono">sudo ./install.sh --tls</span>) или в файле
-                {' '}<span className="font-mono">/etc/rtspatom/config.json</span> (раздел tls) с последующим
-                {' '}<span className="font-mono">systemctl restart rtspatom</span>.
+                Включается при установке (<span className="font-mono">{h.installTls}</span>) или в файле
+                {' '}<span className="font-mono">{h.configFile}</span> (раздел tls) с последующим
+                {' '}<span className="font-mono">{h.restart}</span>.
               </span>
             </p>
           </AnimatedCard>
@@ -200,7 +203,7 @@ export function SettingsPage() {
               </motion.div>
               <div>
                 <h3 className="text-sm font-medium text-white group-hover:text-cyan-400 transition-colors">Формат логов</h3>
-                <p className="text-xs text-gray-500">Формат вывода событий в системный журнал (journalctl -u rtspatom)</p>
+                <p className="text-xs text-gray-500">Формат вывода событий в системный журнал ({h.logs})</p>
               </div>
             </div>
             <div className="flex gap-3">

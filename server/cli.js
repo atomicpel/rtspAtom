@@ -63,6 +63,12 @@ async function main() {
     console.log(HELP);
     return;
   }
+  if (cmd === 'need-admin') {
+    // Вызывается из rtspatom-admin.cmd, если консоль запущена без прав администратора.
+    console.error('Запустите командную строку от имени администратора и повторите команду.');
+    process.exitCode = 1;
+    return;
+  }
   const config = loadConfig();
   const db = openDb(path.join(config.dataDir, 'rtspatom.db'));
   const logAdmin = (msg) =>

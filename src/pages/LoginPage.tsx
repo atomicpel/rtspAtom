@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
+import { hints } from '../lib/platform';
 import { Monitor, AlertTriangle, Loader2, Sparkles } from 'lucide-react';
 
 export function LoginPage() {
-  const { login, setup, setupRequired, setupAllowedHere } = useAuth();
+  const { login, setup, setupRequired, setupAllowedHere, platform } = useAuth();
+  const h = hints(platform);
   const isFirstRun = setupRequired;
   const [loginStr, setLoginStr] = useState('');
   const [password, setPassword] = useState('');
@@ -41,9 +43,9 @@ export function LoginPage() {
           </p>
           <ul className="text-sm text-gray-300 list-disc pl-5 space-y-1">
             <li>откройте панель в браузере на сервере по адресу <span className="font-mono text-blue-400">http://127.0.0.1:8080</span>;</li>
-            <li>или выполните в терминале сервера:</li>
+            <li>или выполните {h.adminShell}:</li>
           </ul>
-          <pre className="text-xs bg-gray-900/70 border border-gray-700/50 rounded-xl p-3 font-mono text-green-400">sudo rtspatom-admin create-admin</pre>
+          <pre className="text-xs bg-gray-900/70 border border-gray-700/50 rounded-xl p-3 font-mono text-green-400">{h.createAdmin}</pre>
           <p className="text-xs text-gray-500">После этого обновите страницу.</p>
         </div>
       </div>
@@ -222,7 +224,7 @@ export function LoginPage() {
           transition={{ delay: 1 }}
           className="text-center text-xs text-gray-600 mt-6"
         >
-          Изолированная локальная сеть • Astra Linux
+          Изолированная локальная сеть • {h.osName}
         </motion.p>
       </motion.div>
     </div>
