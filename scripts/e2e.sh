@@ -160,8 +160,8 @@ for i in $(seq 1 40); do
   sleep 1
 done
 echo "Архив: промежутки $SPANS"
-[ "${DUR:-0}" -ge 8 ] || { ls -la "$W/archive" "$W/archive/$STREAM" 2>&1; grep -i 'record\|playback' "$W/mediamtx.log" | tail -20; fail "запись в архив не идёт (записано ${DUR:-0} с)"; }
-ls "$W/archive/$STREAM/"*.mp4 >/dev/null || fail "в каталоге архива нет файлов"
+[ "${DUR:-0}" -ge 8 ] || { ls -la "$W/archive" "$W/archive/s_$STREAM" 2>&1; grep -i 'record\|playback' "$W/mediamtx.log" | tail -20; fail "запись в архив не идёт (записано ${DUR:-0} с)"; }
+ls "$W/archive/s_$STREAM/"*.mp4 >/dev/null || fail "в каталоге архива нет файлов"
 ASTART=$(echo "$SPANS" | "$NODE" -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const a=JSON.parse(d);console.log(new Date(Date.parse(a[0].start)+2000).toISOString())})')
 CODE=$(curl -s -o "$W/archive.mp4" -w '%{http_code}' -b "$J" "$B/archive/$STREAM/video?start=$ASTART&duration=4")
 ASIZE=$(stat -c %s "$W/archive.mp4" 2>/dev/null || echo 0)

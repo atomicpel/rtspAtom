@@ -219,7 +219,7 @@ paths:
     if ($dur -ge 8) { break }
     Start-Sleep -Seconds 1
   }
-  $archDir = Join-Path $DataRoot "data\archive\$($stream.id)"
+  $archDir = Join-Path $DataRoot "data\archive\s_$($stream.id)"
   if ($dur -lt 8) { Fail "запись в архив не идёт (записано $dur с; файлы: $((Get-ChildItem $archDir -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name) -join ', '))" }
   if (-not (Get-ChildItem $archDir -Filter *.mp4 -ErrorAction SilentlyContinue)) { Fail "в $archDir нет файлов записи" }
   $st = $spans[0].start
