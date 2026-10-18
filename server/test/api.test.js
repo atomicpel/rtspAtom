@@ -461,6 +461,13 @@ test('архив: запись в MediaMTX, архивный путь отклю
   assert.equal(fake.paths.has(`s_${pid}`), false);
   await admin.del(`/api/streams/${pid}`);
 
+  // режим «по запросу»: камера с записью всё равно подключена постоянно
+  await admin.put('/api/settings', { camerasAlwaysOn: false });
+  await app.sync.trigger();
+  assert.equal(fake.paths.get(`s_${id}`).sourceOnDemand, false, 'запись не работает в режиме по запросу');
+  await admin.put('/api/settings', { camerasAlwaysOn: true });
+  await app.sync.trigger();
+
   // промежутки записи
   fake.recordings.set(`s_${id}`, [{ start: '2026-10-18T10:00:00Z', duration: 600 }, { start: '2026-10-18T10:15:00Z', duration: 120.5 }]);
   r = await admin.get(`/api/archive/${id}/spans?start=2026-10-18T00:00:00Z&end=2026-10-19T00:00:00Z`);

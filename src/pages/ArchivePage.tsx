@@ -335,12 +335,14 @@ export function ArchivePage() {
   keys.current = (e: KeyboardEvent) => {
     const tag = (e.target as HTMLElement)?.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || bmOpen || exportOpen) return;
+    // пробел на кнопке в фокусе нажал бы её ещё раз — снимаем фокус и обрабатываем сами
+    if (e.key === ' ' && tag === 'BUTTON') (e.target as HTMLElement).blur();
     if (e.key === ' ') { e.preventDefault(); setPlaying((p) => !p); }
     else if (e.key === 'ArrowLeft') { e.preventDefault(); seek(tRef.current - (e.shiftKey ? MIN : 10 * SEC)); }
     else if (e.key === 'ArrowRight') { e.preventDefault(); seek(tRef.current + (e.shiftKey ? MIN : 10 * SEC)); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); changeRate(1); }
     else if (e.key === 'ArrowDown') { e.preventDefault(); changeRate(-1); }
-    else if (e.key.toLowerCase() === 'b' || e.key.toLowerCase() === 'и') { e.preventDefault(); setBmOpen(true); }
+    else if ((e.key.toLowerCase() === 'b' || e.key.toLowerCase() === 'и') && focused) { e.preventDefault(); setBmOpen(true); }
     else if (e.key.toLowerCase() === 's' || e.key.toLowerCase() === 'ы') { e.preventDefault(); snapshot(); }
   };
   useEffect(() => {

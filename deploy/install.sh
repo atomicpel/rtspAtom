@@ -35,6 +35,14 @@ while [ $# -gt 0 ]; do
 done
 
 [ "$(id -u)" -eq 0 ] || die "запустите от root: sudo ./install.sh"
+# Каталог архива проверяем до записи в config.json, чтобы неверный путь не застрял в настройках
+if [ -n "${ARCHIVE_DIR:-}" ]; then
+  case "$ARCHIVE_DIR" in
+    /home/*|/root/*) die "каталог архива не может быть в /home или /root (службы его не увидят): $ARCHIVE_DIR" ;;
+    /*) ARCHIVE_DIR="${ARCHIVE_DIR%/}" ;;
+    *) die "каталог архива должен быть абсолютным путём: $ARCHIVE_DIR" ;;
+  esac
+fi
 [ "$(uname -m)" = "x86_64" ] || die "пакет собран для x86_64, а эта машина: $(uname -m)"
 [ -x "$SRC/node/bin/node" ] && [ -x "$SRC/mediamtx/mediamtx" ] && [ -f "$SRC/app/server/index.js" ] \
   || die "пакет неполный — распакуйте архив целиком и запускайте install.sh из его каталога"
@@ -157,7 +165,7 @@ read -r P_PANEL P_HLS P_API P_WHEP P_ICE P_RTMP P_SRT P_PLAY P_RTSP < <("$NODE" 
   }
   console.log(r.panel.port, r.hls.port, r.api.port, r.whep.port, r.ice.port, r.rtmp.port, r.srt.port, r.playback.port, r.rtsp.port);
 ' "$PORTS_JSON")
-"$NODE" -e '
+ARCHIVE_NOW="$("$NODE" -e '
   const fs = require("fs");
   const [file, panel, hls, api, whep, ice, rtmp, srt, play, rtsp, archiveDir] = process.argv.slice(1);
   const c = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -176,9 +184,8 @@ read -r P_PANEL P_HLS P_API P_WHEP P_ICE P_RTMP P_SRT P_PLAY P_RTSP < <("$NODE" 
   if (archiveDir) c.archiveDir = archiveDir;
   if (!c.archiveDir) c.archiveDir = require("path").join(c.dataDir || "/var/lib/rtspatom", "archive");
   fs.writeFileSync(file, JSON.stringify(c, null, 2) + "\n");
-  console.error(c.archiveDir);
-' "$CONF" "$P_PANEL" "$P_HLS" "$P_API" "$P_WHEP" "$P_ICE" "$P_RTMP" "$P_SRT" "$P_PLAY" "$P_RTSP" "${ARCHIVE_DIR:-}" 2> "$CONF_DIR/.archive-dir"
-ARCHIVE_NOW="$(tail -n 1 "$CONF_DIR/.archive-dir")"; rm -f "$CONF_DIR/.archive-dir"
+  console.log(c.archiveDir);
+' "$CONF" "$P_PANEL" "$P_HLS" "$P_API" "$P_WHEP" "$P_ICE" "$P_RTMP" "$P_SRT" "$P_PLAY" "$P_RTSP" "${ARCHIVE_DIR:-}")"
 case "$ARCHIVE_NOW" in
   /home/*|/root/*) die "каталог архива не может быть в /home или /root (службы его не увидят): $ARCHIVE_NOW" ;;
   /*) ;;

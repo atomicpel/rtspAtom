@@ -43,7 +43,12 @@ server.on('error', (err) => {
   } else {
     log.error('error', `Не удалось запустить сервер: ${err.message}`);
   }
-  process.exit(1);
+  // причина уже записана — следующий запуск не должен считать это «нештатной остановкой»
+  health.clean();
+  sync.stop();
+  archive.stop();
+  // служба перезапустит панель; ждём 30 с, чтобы при занятом порте не забивать журнал каждые 3 с
+  setTimeout(() => process.exit(1), err.code === 'EADDRINUSE' ? 30_000 : 0);
 });
 
 server.listen(config.port, config.host, () => {

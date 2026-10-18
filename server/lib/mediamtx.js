@@ -267,7 +267,8 @@ export class StreamSync {
         }
         continue;
       }
-      const conf = { source: buildSourceUrl(s.url, s.source_login, s.source_password), sourceOnDemand: !alwaysOn };
+      // Запись не считается зрителем: камеру с записью в режиме «по запросу» всё равно держим подключённой
+      const conf = { source: buildSourceUrl(s.url, s.source_login, s.source_password), sourceOnDemand: !alwaysOn && !this.#recording(s) };
       if (s.protocol === 'rtsp') conf.rtspTransport = rtspTransportFor(s.transport);
       if (this.archiveDir) Object.assign(conf, { record: !!s.record, ...this.archiveConf() });
       const name = pathNameOf(s);
@@ -385,7 +386,8 @@ export class StreamSync {
   }
 
   #logTransitions() {
-    const want = this.desired();
+    // последний расчёт путей (раз в 5 с не читаем базу и каталоги архива заново)
+    const want = this.lastWanted || this.desired();
     const onDemand = !this.settings().camerasAlwaysOn;
     for (const [name, { stream, archiveOnly }] of want) {
       if (archiveOnly) continue;
@@ -399,7 +401,7 @@ export class StreamSync {
         this.prevReady.set(name, ready);
         const label = stream.name;
         if (ready) this.log.info('stream', `Поток в сети: ${label}`, { stream: stream.name });
-        else if (!onDemand || stream.push_key) this.log.warn('stream', `Поток недоступен: ${label}`, { stream: stream.name });
+        else if (!onDemand || stream.push_key || this.#recording(stream)) this.log.warn('stream', `Поток недоступен: ${label}`, { stream: stream.name });
       }
     }
     for (const name of [...this.prevReady.keys()]) if (!want.has(name)) this.prevReady.delete(name);
@@ -412,7 +414,12 @@ export class StreamSync {
     const st = this.status.get(pathNameOf(streamRow));
     if (st?.ready) return 'online';
     if (streamRow.push_key) return 'reconnecting'; // энкодер ещё не прислал поток
-    return this.settings().camerasAlwaysOn ? 'reconnecting' : 'idle';
+    return this.settings().camerasAlwaysOn || this.#recording(streamRow) ? 'reconnecting' : 'idle';
+  }
+
+  /** Поток пишется в архив (значит, подключён постоянно, даже в режиме «по запросу»). */
+  #recording(row) {
+    return !!(this.archiveDir && row.record);
   }
 
   /** Состояние пути по id потока (для счёта зрителей и списка потоков). */

@@ -132,7 +132,9 @@ export class ArchiveManager {
         this.log.warn('stream', `Архив: на диске мало места, удалено старых записей: ${removed} ` +
           `(до ${new Date(lastStart).toLocaleString('ru-RU')}). Порог свободного места — ${this.settings().archiveMinFreeGb} ГБ.`);
         this.cache = null;
-      } else if (need > 0) {
+      } else if (need > 0 && Date.now() - (this.lastFullWarn || 0) > 3600_000) {
+        // не чаще раза в час, иначе журнал забьётся одинаковыми записями
+        this.lastFullWarn = Date.now();
         this.log.error('stream', `Архив: на диске мало места (свободно ${(disk.free / GB).toFixed(1)} ГБ), удалять больше нечего`);
       }
       return removed;

@@ -96,10 +96,20 @@ export function ArchivePlayer({
 
   useEffect(() => {
     const v = videoRef.current;
-    if (!v || srcStart.current === null) return;
+    if (!v) return;
+    // после ошибки (обрыв, долгая пауза) — при нажатии «воспроизвести» загружаем заново
+    if (playing && (state === 'error' || v.error)) { load(position() ?? clockT); return; }
+    if (srcStart.current === null) return;
     if (playing) v.play().catch(() => {});
     else v.pause();
-  }, [playing]);
+  }, [playing]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ошибка во время воспроизведения — повтор через 3 с с того же места
+  useEffect(() => {
+    if (state !== 'error' || !playing) return;
+    const h = setTimeout(() => load(position() ?? clockT), 3000);
+    return () => clearTimeout(h);
+  }, [state]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (videoRef.current) videoRef.current.playbackRate = rate;

@@ -25,7 +25,11 @@ function playbackRequest(app, endpoint, params) {
   const url = new URL(endpoint, app.config.mediamtx.playbackUrl);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
   return new Promise((resolve, reject) => {
-    const r = http.get(url, { headers: { 'user-agent': 'rtspatom-proxy' } }, resolve);
+    const r = http.get(url, { headers: { 'user-agent': 'rtspatom-proxy' } }, (up) => {
+      // ответ пришёл — дальше видео может долго не читаться (плеер на паузе), это не ошибка
+      r.setTimeout(0);
+      resolve(up);
+    });
     r.on('error', () => reject(new HttpError(503, 'Сервер архива MediaMTX недоступен')));
     r.setTimeout(30_000, () => r.destroy(new Error('timeout')));
   });
@@ -203,7 +207,9 @@ export async function handleArchiveVideo(app, req, res, url, session, ip) {
   if (download) headers['Content-Disposition'] = attachmentName(row.name, start);
   res.writeHead(200, headers);
   if (req.method === 'HEAD') { up.destroy(); res.end(); return; }
-  req.on('close', () => up.destroy());
+  // зритель ушёл или перемотал — прекращаем чтение из MediaMTX; сбой MediaMTX посреди передачи — обрываем ответ
+  res.on('close', () => up.destroy());
+  up.on('error', () => res.destroy());
   up.pipe(res);
   await new Promise((resolve) => { up.on('end', resolve); up.on('close', resolve); up.on('error', resolve); });
 }

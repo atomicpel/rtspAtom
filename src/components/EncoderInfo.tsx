@@ -80,7 +80,7 @@ export function EncoderTips() {
       </summary>
       <ul className="px-4 pb-3 pt-1 space-y-1 text-[13px] text-muted list-disc list-inside">
         <li><b className="text-fg">Кодек H.264</b>, профиль Main или High. H.265 браузеры по WebRTC не везде показывают.</li>
-        <li><b className="text-fg">B-кадры: 0</b> (B-frames off). С B-кадрами WebRTC в браузере дёргается.</li>
+        <li><b className="text-fg">B-кадры: 0</b> (B-frames off). С B-кадрами WebRTC в браузере дёргается. Нет такого пункта — выберите профиль <b className="text-fg">Baseline</b>: в нём B-кадров нет.</li>
         <li><b className="text-fg">GOP / I-frame interval = частоте кадров</b> (25 при 25 к/с) — картинка открывается за долю секунды.</li>
         <li><b className="text-fg">CBR</b>, 4–8 Мбит/с для 1080p; 25–30 к/с.</li>
         <li><b className="text-fg">Low latency / Zero latency</b> — включить, если есть.</li>

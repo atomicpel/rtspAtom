@@ -49,7 +49,10 @@ export function VideoPlayer({ streamId, name, className = '', reloadKey = 0, dis
   useEffect(() => { onStatus?.(status === 'playing' && !disabled, transport); }, [status, disabled, transport]);
 
   // Связь с сервером восстановилась — переподключаемся сразу, не дожидаясь очередной попытки
-  useEffect(() => onReconnected(() => setAttempt((a) => a + 1)), []);
+  // (камеры, которые и так показывают, не трогаем: MediaMTX работает отдельно от панели)
+  const statusRef = useRef(status);
+  statusRef.current = status;
+  useEffect(() => onReconnected(() => { if (statusRef.current !== 'playing') setAttempt((a) => a + 1); }), []);
 
   // Новая попытка подключения — снова с предпочтительным способом
   useEffect(() => { setTransport(preferredTransport(lowLatency)); }, [streamId, reloadKey, attempt, lowLatency]);
