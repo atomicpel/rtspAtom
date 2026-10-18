@@ -57,20 +57,34 @@ function listeningPorts() {
   return map;
 }
 
+// Ошибки, означающие «IPv6 на этом компьютере нет» — порт при этом не занят.
+const NO_IPV6 = new Set(['EAFNOSUPPORT', 'EADDRNOTAVAIL', 'EPROTONOSUPPORT', 'EINVAL']);
+
 function canBind(port, host) {
   return new Promise((resolve) => {
     const srv = net.createServer();
-    srv.once('error', () => resolve(false));
-    srv.listen({ port, host, exclusive: true }, () => srv.close(() => resolve(true)));
+    srv.once('error', (e) => resolve(host === '::' && NO_IPV6.has(e.code)));
+    srv.listen({ port, host, exclusive: true, ipv6Only: false }, () => srv.close(() => resolve(true)));
   });
 }
 
 function canBindUdp(port, host) {
   return new Promise((resolve) => {
-    const sock = dgram.createSocket(host.includes(':') ? 'udp6' : 'udp4');
-    sock.once('error', () => { sock.close(); resolve(false); });
+    const v6 = host.includes(':');
+    const sock = dgram.createSocket({ type: v6 ? 'udp6' : 'udp4', ipv6Only: false });
+    sock.once('error', (e) => { try { sock.close(); } catch { /* уже закрыт */ } resolve(v6 && NO_IPV6.has(e.code)); });
     sock.bind({ port, address: host, exclusive: true }, () => sock.close(() => resolve(true)));
   });
+}
+
+/**
+ * Порт для всех адресов. Программы на Go (например, другой MediaMTX) слушают «:порт» —
+ * двойной сокет IPv6 [::]; на Windows он не мешает занять 0.0.0.0:порт при проверке,
+ * но сам MediaMTX потом не запустится. Поэтому проверяем и 0.0.0.0, и [::].
+ */
+async function canBindAll(port, udp) {
+  const check = udp ? canBindUdp : canBind;
+  return (await check(port, '0.0.0.0')) && (await check(port, '::'));
 }
 
 async function main() {
@@ -80,7 +94,7 @@ async function main() {
     return { name: m[1], port: Number(m[2]), host: m[3], tcp: m[4] !== '/udp', udp: !!m[4] };
   });
   const listening = listeningPorts(); // слушающие TCP-порты
-  const taken = new Set(); // 'tcp:порт' / 'udp:порт', уже выданные в этом запуске
+  const taken = new Map(); // 'tcp:порт' / 'udp:порт' -> имя, уже выданные в этом запуске
   const result = {};
   for (const w of wants) {
     let chosen = null;
@@ -89,19 +103,23 @@ async function main() {
       if (w.udp && taken.has(`udp:${p}`)) continue;
       // Проверяем и 0.0.0.0, и нужный адрес: на Windows занятый 127.0.0.1:порт
       // не мешает занять 0.0.0.0:порт, но конфликт всё равно будет.
-      if (w.tcp && !(await canBind(p, w.host))) continue;
-      if (w.tcp && w.host !== '0.0.0.0' && !(await canBind(p, '0.0.0.0'))) continue;
-      if (w.udp && !(await canBindUdp(p, w.host))) continue;
+      if (w.tcp && w.host !== '0.0.0.0' && !(await canBind(p, w.host))) continue;
+      if (w.tcp && !(await canBindAll(p, false))) continue;
+      if (w.udp && w.host !== '0.0.0.0' && !(await canBindUdp(p, w.host))) continue;
+      if (w.udp && !(await canBindAll(p, true))) continue;
       chosen = p;
       break;
     }
     if (chosen === null) throw new Error(`нет свободного порта в диапазоне ${w.port}–${w.port + RANGE}`);
-    if (w.tcp) taken.add(`tcp:${chosen}`);
-    if (w.udp) taken.add(`udp:${chosen}`);
+    if (w.tcp) taken.set(`tcp:${chosen}`, w.name);
+    if (w.udp) taken.set(`udp:${chosen}`, w.name);
     result[w.name] = {
       port: chosen,
       wanted: w.port,
-      busyBy: chosen !== w.port ? (w.tcp && listening.get(w.port)) || 'другая программа или резерв системы' : null,
+      busyBy: chosen !== w.port
+        ? (w.tcp && listening.get(w.port)) || (taken.get(`tcp:${w.port}`) || taken.get(`udp:${w.port}`) ? 'отдан другой службе RTSP Atom' : null)
+          || 'другая программа или резерв системы'
+        : null,
     };
   }
   console.log(JSON.stringify(result));

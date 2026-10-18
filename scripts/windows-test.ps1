@@ -79,6 +79,11 @@ try {
     $procs += Start-Process "$bundle\node\node.exe" -PassThru -NoNewWindow `
       -ArgumentList @('-e', "`"require('net').createServer().listen($($bp[0]),'$($bp[1])')`"")
   }
+  # Как второй MediaMTX на этом же компьютере: UDP 8189 (ICE) и 8890 (SRT) на [::] (двойной сокет Go)
+  foreach ($up in 8189, 8890) {
+    $procs += Start-Process "$bundle\node\node.exe" -PassThru -NoNewWindow `
+      -ArgumentList @('-e', "`"require('dgram').createSocket({type:'udp6',ipv6Only:false}).bind($up,'::')`"")
+  }
   Start-Sleep -Seconds 1
 
   # ---------- Установка ----------
@@ -87,6 +92,8 @@ try {
   $cfg = Get-Content "$DataRoot\config.json" -Raw | ConvertFrom-Json
   if ($cfg.port -eq $Port) { Fail "установщик занял уже занятый порт $Port" }
   if (([Uri]$cfg.mediamtx.hlsUrl).Port -eq 8888) { Fail 'установщик занял уже занятый порт 8888' }
+  if ([int]$cfg.mediamtx.icePort -eq 8189) { Fail 'установщик занял порт ICE 8189, занятый на [::] другой программой' }
+  if ([int]$cfg.mediamtx.srtPort -eq 8890) { Fail 'установщик занял порт SRT 8890, занятый на [::] другой программой' }
   if ((Get-Content "$DataRoot\mediamtx.yml" -Raw) -notmatch "hlsAddress: 127\.0\.0\.1:$(([Uri]$cfg.mediamtx.hlsUrl).Port)") { Fail 'адрес HLS в mediamtx.yml не совпадает с config.json' }
   Write-Host "Порты подобраны: панель $($cfg.port), HLS $(([Uri]$cfg.mediamtx.hlsUrl).Port), API $(([Uri]$cfg.mediamtx.apiUrl).Port)"
   $Port = [int]$cfg.port

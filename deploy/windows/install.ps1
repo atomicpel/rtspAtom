@@ -331,7 +331,18 @@ try {
     Start-Service -Name 'rtspatom'
     Start-Sleep -Seconds 3
     $bad = $Services | Where-Object { (Get-Service -Name $_).Status -ne 'Running' }
-    if ($bad) { Warn "Не запустились: $($bad -join ', '). Журналы: $LogDir" } else { Say 'Службы работают' }
+    if ($bad) {
+      Warn "Не запустились: $($bad -join ', '). Журналы: $LogDir"
+      # Последняя ошибка из журнала MediaMTX — чаще всего это занятый порт
+      $mtxLog = Join-Path $LogDir 'rtspatom-mediamtx.out.log'
+      if (Test-Path $mtxLog) {
+        $err = Get-Content $mtxLog -Tail 50 -ErrorAction SilentlyContinue | Where-Object { $_ -match ' ERR ' } | Select-Object -Last 1
+        if ($err) {
+          Warn "MediaMTX: $err"
+          if ($err -match 'bind|Only one usage|address already in use') { Warn 'Порт занят другой программой. Запустите install.cmd ещё раз — он подберёт свободный.' }
+        }
+      }
+    } else { Say 'Службы работают' }
   }
 
   $ip = (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
