@@ -177,7 +177,7 @@ export function StreamsPage() {
         </>}>
         <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); save(); }}>
           {editing?.isActive && (
-            <div className="aspect-video bg-black rounded-md overflow-hidden">
+            <div className="aspect-video h-[min(28vh,200px)] mx-auto bg-black rounded-md overflow-hidden">
               <VideoPlayer streamId={editing.id} name={editing.name} className="w-full h-full" />
             </div>
           )}

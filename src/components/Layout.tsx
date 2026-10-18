@@ -68,8 +68,8 @@ export function Layout({
 
   return (
     <div className="h-full flex flex-col">
-      <header className="h-12 shrink-0 flex items-center gap-6 px-4 border-b border-line bg-ink">
-        <span className="font-bold tracking-tight select-none">RTSP Atom</span>
+      <header className="h-12 shrink-0 flex items-center gap-3 sm:gap-6 px-2 sm:px-4 border-b border-line bg-ink">
+        <span className="hidden sm:inline font-bold tracking-tight select-none whitespace-nowrap">RTSP Atom</span>
 
         <nav className="flex items-stretch h-full gap-1 overflow-x-auto" aria-label="Разделы">
           {items.map((item) => {

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
-  Bookmark, Crop, Expand, Maximize, Minimize, Plus, RefreshCw, Replace, Search, Trash2, Video, Wand2, X,
+  Bookmark, Crop, Expand, Maximize, Minimize, MonitorPlay, Plus, RefreshCw, Replace, Search, Trash2, Video, Wand2, X,
 } from 'lucide-react';
 import type { Stream, WallCell, WallConfig, WallLayout } from '../lib/types';
 import { api, errorMessage } from '../lib/api';
@@ -65,6 +65,10 @@ export function VideoWallPage({ onNavigate }: { onNavigate: (page: string) => vo
   const [fit, setFit] = useState<'contain' | 'cover'>(() => {
     try { return localStorage.getItem('rtspatom_fit') === 'cover' ? 'cover' : 'contain'; } catch { return 'contain'; }
   });
+  // Разворачивать стену на весь экран при первом действии пользователя (браузеры не дают сделать это без него)
+  const [autoFs, setAutoFs] = useState(() => {
+    try { return localStorage.getItem('rtspatom_autofs') === '1'; } catch { return false; }
+  });
   const [picker, setPicker] = useState<number | null>(null);
   const [search, setSearch] = useState('');
   const [presetsOpen, setPresetsOpen] = useState(false);
@@ -105,6 +109,21 @@ export function VideoWallPage({ onNavigate }: { onNavigate: (page: string) => vo
   }, [layout, cells, refreshInterval, loaded]);
 
   useEffect(() => { try { localStorage.setItem('rtspatom_fit', fit); } catch { /* хранилище недоступно */ } }, [fit]);
+  useEffect(() => { try { localStorage.setItem('rtspatom_autofs', autoFs ? '1' : '0'); } catch { /* хранилище недоступно */ } }, [autoFs]);
+
+  useEffect(() => {
+    if (!autoFs) return;
+    const go = (e: Event) => {
+      if ((e.target as HTMLElement)?.closest?.('[data-autofs-skip]')) return;
+      if (!document.fullscreenElement) wallRef.current?.requestFullscreen().catch(() => {});
+    };
+    window.addEventListener('pointerdown', go, { once: true });
+    window.addEventListener('keydown', go, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', go);
+      window.removeEventListener('keydown', go);
+    };
+  }, [autoFs]);
 
   const autoFill = useCallback((pickLayout: boolean) => {
     const list = streams.filter((s) => s.isActive);
@@ -248,11 +267,15 @@ export function VideoWallPage({ onNavigate }: { onNavigate: (page: string) => vo
           {REFRESH.map((r) => <option key={r.v} value={r.v} className="bg-panel">{r.l}</option>)}
         </select>
       </label>
-      <div className="ml-auto flex items-center gap-3">
-        {isFs && <Clock className="text-[13px] text-muted whitespace-pre" />}
+      <div className="ml-auto flex items-center gap-2">
+        {isFs && <Clock className="hidden md:inline text-[13px] text-muted whitespace-pre mr-1" />}
+        <span data-autofs-skip>
+          <IconButton icon={MonitorPlay} active={autoFs} onClick={() => setAutoFs(!autoFs)}
+            label={autoFs ? 'Не разворачивать стену автоматически' : 'Разворачивать стену на весь экран при первом щелчке или нажатии клавиши'} />
+        </span>
         <Button variant={isFs ? 'subtle' : 'primary'} icon={isFs ? Minimize : Maximize} onClick={toggleFullscreen} className="h-8"
-          title="Клавиша F">
-          {isFs ? 'Выйти из полноэкранного режима' : 'На весь экран'}
+          title="Клавиша F" aria-label={isFs ? 'Выйти из полноэкранного режима' : 'На весь экран'}>
+          <span className="hidden sm:inline">{isFs ? 'Выйти из полноэкранного режима' : 'На весь экран'}</span>
         </Button>
       </div>
     </div>
@@ -272,7 +295,8 @@ export function VideoWallPage({ onNavigate }: { onNavigate: (page: string) => vo
         </AnimatePresence>
       ) : toolbar}
 
-      <div className="flex-1 min-h-0 grid gap-[2px] bg-ink"
+      {/* На узком экране (телефон) — одна колонка камер с прокруткой */}
+      <div className="flex-1 min-h-0 grid gap-[2px] bg-ink max-sm:!grid-cols-1 max-sm:!grid-rows-none max-sm:auto-rows-[56.25vw] max-sm:overflow-y-auto"
         style={{ gridTemplateColumns: `repeat(${L.cols}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${L.cols}, minmax(0, 1fr))` }}>
         {Array.from({ length: L.n }).map((_, i) => {
           const id = cells[i]?.streamId;
