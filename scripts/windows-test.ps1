@@ -220,7 +220,14 @@ paths:
     Start-Sleep -Seconds 1
   }
   $archDir = Join-Path $DataRoot "data\archive\s_$($stream.id)"
-  if ($dur -lt 8) { Fail "запись в архив не идёт (записано $dur с; файлы: $((Get-ChildItem $archDir -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name) -join ', '))" }
+  if ($dur -lt 8) {
+    # диагностика: ответ панели и сервера выдачи записей MediaMTX напрямую
+    try { $pr = Invoke-WebRequest "$B/api/archive/$($stream.id)/spans?start=$from&end=$to" -WebSession $S -SkipHttpErrorCheck; Write-Host "панель: $($pr.StatusCode) $($pr.Content)" } catch { Write-Host "панель: $_" }
+    $pb = ([Uri]$cfg.mediamtx.playbackUrl).Port
+    try { $pr = Invoke-WebRequest "http://127.0.0.1:$pb/list?path=s_$($stream.id)" -SkipHttpErrorCheck; Write-Host "MediaMTX /list: $($pr.StatusCode) $($pr.Content)" } catch { Write-Host "MediaMTX /list: $_" }
+    try { $pc = Invoke-RestMethod "$(($cfg.mediamtx.apiUrl).TrimEnd('/'))/v3/config/paths/get/s_$($stream.id)"; Write-Host "recordPath: $($pc.recordPath)" } catch { Write-Host "конфиг пути: $_" }
+    Get-Content "$DataRoot\logs\rtspatom-mediamtx.out.log" -Tail 15 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+    Fail "запись в архив не идёт (записано $dur с; файлы: $((Get-ChildItem $archDir -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name) -join ', '))" }
   if (-not (Get-ChildItem $archDir -Filter *.mp4 -ErrorAction SilentlyContinue)) { Fail "в $archDir нет файлов записи" }
   $st = $spans[0].start
   $st0 = if ($st -is [DateTime]) { $st.ToUniversalTime() } else { [DateTimeOffset]::Parse([string]$st, [Globalization.CultureInfo]::InvariantCulture).UtcDateTime }
