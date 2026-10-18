@@ -210,7 +210,7 @@ paths:
     $target = if ($proto -eq 'rtmp') { @('-f', 'flv', "rtmp://127.0.0.1:$($push.push.rtmpPort)/live/$($push.push.key)") }
               else { @('-f', 'mpegts', "srt://127.0.0.1:$($push.push.srtPort)?streamid=publish:live/$($push.push.key)&latency=20000") }
     Start-Sleep -Seconds 2
-    $procs += Start-Process ffmpeg -PassThru -NoNewWindow -RedirectStandardError "$Wfmpeg-$proto.log" -ArgumentList (@(
+    $procs += Start-Process ffmpeg -PassThru -NoNewWindow -RedirectStandardError "$W\ffmpeg-$proto.log" -ArgumentList (@(
       '-hide_banner', '-loglevel', 'error', '-re', '-f', 'lavfi', '-i', 'testsrc=size=640x360:rate=25',
       '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-g', '25', '-bf', '0', '-pix_fmt', 'yuv420p') + $target)
     $status = ''

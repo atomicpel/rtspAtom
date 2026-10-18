@@ -53,13 +53,13 @@ export function EncoderInfo({ stream, addresses, onNewKey, busy }: {
   const srt = `srt://${host}:${p.srtPort}?streamid=publish:${p.path}&latency=20000`;
   return (
     <div className="space-y-4">
-      <div className="grid sm:grid-cols-[1fr_220px] gap-4">
+      <div className="grid sm:grid-cols-[1fr_270px] gap-4">
         <CopyRow label="RTMP: адрес сервера (URL)" value={rtmpServer} />
         <CopyRow label="RTMP: ключ потока (Stream key)" value={p.key} />
       </div>
       <CopyRow label="RTMP: полный адрес — если в энкодере одно поле" value={`${rtmpServer}/${p.key}`} />
-      <CopyRow label="SRT (режим Caller)" value={srt}
-        hint="Режим SRT в энкодере — Caller (вызывающий). latency=20000 — буфер 20 мс в микросекундах; в поле «Latency» энкодера ставьте 20–50 мс." />
+      <CopyRow label="SRT (режим Caller) — только для сети с потерями" value={srt}
+        hint="Режим SRT в энкодере — Caller. Поле «Latency» — минимальное (20 мс). Даже так SRT добавляет около 0,15 с буфера на сервере: в локальной сети берите RTMP или RTSP." />
       <div className="flex items-center gap-3 flex-wrap">
         <button type="button" onClick={onNewKey} disabled={busy}
           className="inline-flex items-center gap-2 h-8 px-3 rounded-md text-[13px] text-muted hover:text-fg hover:bg-raised transition-colors disabled:opacity-50">
@@ -85,7 +85,8 @@ export function EncoderTips() {
         <li><b className="text-fg">CBR</b>, 4–8 Мбит/с для 1080p; 25–30 к/с.</li>
         <li><b className="text-fg">Low latency / Zero latency</b> — включить, если есть.</li>
         <li><b className="text-fg">Звук:</b> Opus или G.711 — идёт по WebRTC; AAC — только по HLS; не нужен — выключить.</li>
-        <li><b className="text-fg">Протокол:</b> лучше всего RTSP-сервер энкодера (добавьте поток «по адресу»); если энкодер умеет только отправлять — RTMP; SRT — для плохой сети.</li>
+        <li><b className="text-fg">Протокол</b> (замер: задержка камера → экран): RTSP-сервер энкодера ≈ 0,05 с (добавьте поток «по адресу»),
+          RTMP ≈ 0,05 с, UDP MPEG-TS ≈ 0,08 с, SRT ≈ 0,2 с, HLS ≈ 0,7 с и больше. Берите RTSP или RTMP.</li>
       </ul>
     </details>
   );
