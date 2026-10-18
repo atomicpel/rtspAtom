@@ -21,7 +21,8 @@ function defaults() {
     port: 8080,
     dataDir: path.resolve(process.cwd(), 'data'),
     publicDir: fs.existsSync(bundled) ? bundled : dev,
-    trustProxy: false,
+    // 'loopback' — верить X-Forwarded-For только от 127.0.0.1 (туннель через внешний сервер); true / false
+    trustProxy: 'loopback',
     // Каталог архива видео; пусто — <dataDir>/archive
     archiveDir: '',
     // TLS: PEM-пара cert/key (Linux) или файл pfx + passphrase (Windows).

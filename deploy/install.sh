@@ -111,7 +111,7 @@ if [ ! -f "$CONF" ]; then
       port: 8080,
       dataDir: "/var/lib/rtspatom",
       publicDir: "/opt/rtspatom/app/public",
-      trustProxy: false,
+      trustProxy: "loopback",
       tls: { enabled: false, cert: "/etc/rtspatom/tls/cert.pem", key: "/etc/rtspatom/tls/key.pem" },
       mediamtx: { apiUrl: "http://127.0.0.1:9997", hlsUrl: "http://127.0.0.1:8888" },
     };
@@ -170,6 +170,8 @@ read -r P_PANEL P_HLS P_API P_WHEP P_ICE P_RTMP P_SRT P_PLAY P_RTSP < <("$NODE" 
   c.mediamtx.rtmpPort = Number(rtmp);
   c.mediamtx.srtPort = Number(srt);
   c.mediamtx.playbackUrl = `http://127.0.0.1:${play}`;
+  // доступ через туннель с внешнего сервера: настоящий адрес гостя — из X-Forwarded-For от 127.0.0.1
+  if (c.trustProxy === false || c.trustProxy === undefined) c.trustProxy = "loopback";
   c.mediamtx.rtspUrl = `rtsp://127.0.0.1:${rtsp}`;
   if (archiveDir) c.archiveDir = archiveDir;
   if (!c.archiveDir) c.archiveDir = require("path").join(c.dataDir || "/var/lib/rtspatom", "archive");

@@ -49,12 +49,21 @@ export function createHandler(app) {
   );
   const dropSessionStmt = app.db.prepare('DELETE FROM sessions WHERE token_hash = ?');
 
+  /**
+   * Адрес клиента. trustProxy: true — панель стоит за прокси; 'loopback' (по умолчанию) — заголовку
+   * X-Forwarded-For верим, только если соединение пришло с 127.0.0.1/::1 (SSH-туннель с внешнего
+   * сервера, Caddy/nginx на этом же компьютере). Берётся последний адрес — его дописал ближайший
+   * прокси; первый может подделать сам клиент.
+   */
   app.clientIp = (req) => {
-    if (app.config.trustProxy) {
-      const xff = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-      if (xff) return normalizeIp(xff);
+    const sock = normalizeIp(req.socket.remoteAddress);
+    const mode = app.config.trustProxy;
+    const trusted = mode === true || ((mode === 'loopback' || mode === undefined) && (sock === '127.0.0.1' || sock === '::1'));
+    if (trusted) {
+      const parts = String(req.headers['x-forwarded-for'] || '').split(',').map((x) => x.trim()).filter(Boolean);
+      if (parts.length) return normalizeIp(parts[parts.length - 1]);
     }
-    return normalizeIp(req.socket.remoteAddress);
+    return sock;
   };
 
   app.cookie = (token, maxAge) =>

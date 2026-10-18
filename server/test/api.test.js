@@ -611,6 +611,19 @@ test('обрыв связи браузера записывается в жур�
   assert.equal(r.status, 401);
 });
 
+test('адрес клиента: X-Forwarded-For только от 127.0.0.1 и последний адрес цепочки', () => {
+  const prev = app.config.trustProxy;
+  app.config.trustProxy = 'loopback';
+  const req = (sock, xff) => ({ socket: { remoteAddress: sock }, headers: xff ? { 'x-forwarded-for': xff } : {} });
+  assert.equal(app.clientIp(req('127.0.0.1', '203.0.113.7')), '203.0.113.7', 'туннель: настоящий адрес гостя');
+  assert.equal(app.clientIp(req('127.0.0.1', '127.0.0.1, 203.0.113.7')), '203.0.113.7', 'подделанный первый адрес не учитывается');
+  assert.equal(app.clientIp(req('192.168.0.50', '127.0.0.1')), '192.168.0.50', 'из локальной сети заголовку не верим');
+  assert.equal(app.clientIp(req('::ffff:127.0.0.1')), '127.0.0.1');
+  app.config.trustProxy = false;
+  assert.equal(app.clientIp(req('127.0.0.1', '203.0.113.7')), '127.0.0.1');
+  app.config.trustProxy = prev;
+});
+
 test('выход завершает сессию', async () => {
   let r = await admin.post('/api/auth/logout');
   assert.equal(r.status, 200);

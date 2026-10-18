@@ -33,12 +33,14 @@ if (fs.existsSync(args.config)) {
   cfg = {
     host: '0.0.0.0',
     port: 8080,
-    trustProxy: false,
+    trustProxy: 'loopback',
     tls: { enabled: false, pfx: '', passphrase: '' },
     mediamtx: { apiUrl: 'http://127.0.0.1:9997', hlsUrl: 'http://127.0.0.1:8888' },
   };
 }
 cfg.dataDir = args.data;
+// доступ через туннель с внешнего сервера: настоящий адрес гостя — из X-Forwarded-For от 127.0.0.1
+if (cfg.trustProxy === false || cfg.trustProxy === undefined) cfg.trustProxy = 'loopback';
 cfg.publicDir = args.public;
 if (args.port) cfg.port = Number(args.port);
 cfg.tls = cfg.tls || { enabled: false };
