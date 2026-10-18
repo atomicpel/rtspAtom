@@ -214,8 +214,12 @@ paths:
   $dur = 0; $spans = @()
   for ($i = 0; $i -lt 40; $i++) {
     $from = [DateTime]::UtcNow.AddHours(-1).ToString('yyyy-MM-ddTHH:mm:ssZ'); $to = [DateTime]::UtcNow.AddMinutes(1).ToString('yyyy-MM-ddTHH:mm:ssZ')
-    try { $spans = @(Api GET "$B/api/archive/$($stream.id)/spans?start=$from&end=$to" $null $S) } catch { $spans = @() }
-    $dur = ($spans | Measure-Object -Property duration -Sum).Sum
+    $spans = @()
+    try {
+      $resp = Invoke-WebRequest "$B/api/archive/$($stream.id)/spans?start=$from&end=$to" -WebSession $S -SkipHttpErrorCheck
+      if ($resp.StatusCode -eq 200) { $spans = @($resp.Content | ConvertFrom-Json) }
+    } catch { $spans = @() }
+    $dur = 0; foreach ($x in $spans) { $dur += [double]$x.duration }
     if ($dur -ge 8) { break }
     Start-Sleep -Seconds 1
   }
