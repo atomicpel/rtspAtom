@@ -124,6 +124,10 @@ const MIGRATIONS = [
   DROP TABLE computers;
   ALTER TABLE streams_new RENAME TO streams;
   `,
+  // 3 — потоки, которые энкодер отправляет сам (RTMP/SRT): секретный ключ публикации
+  `
+  ALTER TABLE streams ADD COLUMN push_key TEXT;
+  `,
 ];
 
 export function openDb(file) {

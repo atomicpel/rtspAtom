@@ -28,7 +28,7 @@ export function createHandler(app) {
     const now = Date.now();
     let n = 0;
     for (const [k, t] of app.viewers) if (k.endsWith(`|${streamId}`) && now - t < 20_000) n++;
-    return n + (app.sync?.status.get(`s_${streamId}`)?.webrtcReaders || 0);
+    return n + (app.sync?.statusOf(streamId)?.webrtcReaders || 0);
   };
   app.activeViewerCount = () => {
     const now = Date.now();

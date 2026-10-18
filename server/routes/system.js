@@ -5,7 +5,7 @@ import { nowIso } from '../lib/db.js';
 import { getSettings, saveSettings, validateSettings } from '../lib/settings.js';
 import { PLATFORM } from '../lib/config.js';
 
-export const APP_VERSION = '1.4.0';
+export const APP_VERSION = '1.5.0';
 const LOG_LEVELS = ['info', 'warning', 'error', 'debug'];
 const LOG_CATEGORIES = ['auth', 'access', 'stream', 'error', 'admin'];
 
@@ -128,13 +128,17 @@ export function registerSystem(router, app) {
   }, { auth: 'operator' });
 
   // ---------- Сведения о системе ----------
-  router.get('/api/system', () => ({
+  router.get('/api/system', (ctx) => ({
     version: APP_VERSION,
     node: process.version,
     hostname: os.hostname(),
     platform: `${os.type()} ${os.release()} ${os.arch()}`,
     os: PLATFORM,
     tlsEnabled: !!app.config.tls?.enabled,
+    // Адреса сервера в сети — чтобы показать администратору, что вписать в энкодер
+    addresses: ctx.user?.isAdmin
+      ? Object.values(os.networkInterfaces()).flat().filter((a) => a && a.family === 'IPv4' && !a.internal).map((a) => a.address)
+      : undefined,
     mediamtx: {
       reachable: !!app.sync?.reachable,
       version: app.sync?.version || null,

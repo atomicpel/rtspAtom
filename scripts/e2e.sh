@@ -70,10 +70,10 @@ curl -sf "$B/" | grep -q '<div id="root">' || fail "фронтенд не отд
 H=(-H 'Content-Type: application/json' -H 'X-RTSPAtom: 1' -b "$J" -c "$J")
 curl -sf "${H[@]}" -d '{"login":"admin","password":"e2e-password"}' "$B/api/auth/login" >/dev/null || fail "вход"
 
-# MediaMTX панели снаружи доступен только портом медиа WebRTC (ICE 8189), остальное — 127.0.0.1
+# MediaMTX панели снаружи: ICE 8189 (видео WebRTC), RTMP 1935 и SRT 8890 (приём от энкодеров); остальное — 127.0.0.1
 sleep 1
 kill -0 "$MTX_PID" 2>/dev/null || fail "MediaMTX с deploy/mediamtx.yml не запустился"
-EXPOSED=$(ss -ltnupH 2>/dev/null | grep "pid=$MTX_PID," | awk '{print $5}' | grep -vE '^(127\.0\.0\.1|\[::1\]):' | grep -vE ':8189$' || true)
+EXPOSED=$(ss -ltnupH 2>/dev/null | grep "pid=$MTX_PID," | awk '{print $5}' | grep -vE '^(127\.0\.0\.1|\[::1\]):' | grep -vE ':(8189|1935|8890)$' || true)
 [ -z "$EXPOSED" ] || fail "MediaMTX слушает внешние адреса: $EXPOSED"
 echo "MediaMTX слушает: $(ss -ltnupH | grep "pid=$MTX_PID," | awk '{print $5}' | tr '\n' ' ')"
 
@@ -164,16 +164,40 @@ if [ -n "${SHOTS_DIR:-}" ]; then
     IFS='|' read -r num name desc <<<"$n"
     curl -sf "${H[@]}" -d "{\"name\":\"$name\",\"description\":\"$desc\",\"url\":\"rtsp://127.0.0.1:18554/cam$num\",\"transport\":\"tcp\"}" "$B/api/streams" >/dev/null
   done
-  # Камера-часы для замера задержки: в кадре время UTC с миллисекундами в момент кодирования кадра
+  # Замер задержки по протоколам: один кодировщик с часами в кадре (время UTC в момент кодирования)
+  # отдаёт одну и ту же картинку четырьмя способами, как это делает HDMI-энкодер:
+  #   RTSP (сервер забирает), RTMP и SRT (энкодер отправляет сам), MPEG-TS по UDP.
   [ -f /usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf ] || echo "::warning title=Замер задержки::нет шрифта DejaVu, часы в кадре не появятся"
   sed "s|@FONT@|/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf|" > "$W/clock.filter" <<'EOF'
 setpts=RTCTIME/(TB*1000000),drawtext=fontfile=@FONT@:fontsize=72:fontcolor=white:box=1:boxcolor=black@0.85:boxborderw=12:x=30:y=30:text='%{pts\:gmtime\:0\:%H\\\:%M\\\:%S}.%{eif\:1000*mod(t\,1)\:d\:3}',setpts=N/(30*TB)
 EOF
+  add_stream() { curl -sf "${H[@]}" -d "$1" "$B/api/streams" | "$NODE" -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const s=JSON.parse(d);console.log(s.id, s.push ? s.push.key : "-")})'; }
+  read -r ID_RTSP _ < <(add_stream '{"name":"Задержка RTSP","description":"сервер забирает","url":"rtsp://127.0.0.1:18554/clock","transport":"tcp"}')
+  read -r ID_RTMP KEY_RTMP < <(add_stream '{"name":"Задержка RTMP","description":"энкодер отправляет","mode":"push"}')
+  read -r ID_SRT KEY_SRT < <(add_stream '{"name":"Задержка SRT","description":"энкодер отправляет","mode":"push"}')
+  read -r ID_UDP _ < <(add_stream '{"name":"Задержка UDP","description":"MPEG-TS","url":"udp+mpegts://127.0.0.1:5004"}')
+  [[ "$KEY_RTMP" =~ ^[a-z0-9]{20}$ ]] || fail "push-поток без ключа: $KEY_RTMP"
+  sleep 3
   ffmpeg -hide_banner -loglevel error -re -f lavfi -i "testsrc2=size=1280x720:rate=30" -filter_script:v "$W/clock.filter" \
-    -c:v libx264 -preset ultrafast -tune zerolatency -g 30 -bf 0 -pix_fmt yuv420p \
-    -f rtsp -rtsp_transport tcp "rtsp://127.0.0.1:18554/clock" > "$W/ffmpeg-clock.log" 2>&1 & PIDS+=($!)
-  sleep 2
-  curl -sf "${H[@]}" -d '{"name":"Замер задержки","description":"часы в кадре","url":"rtsp://127.0.0.1:18554/clock","transport":"tcp"}' "$B/api/streams" >/dev/null
+    -map 0:v -c:v libx264 -preset ultrafast -tune zerolatency -g 30 -bf 0 -pix_fmt yuv420p -flags +global_header -x264-params repeat-headers=1 \
+    -f tee "[f=rtsp:rtsp_transport=tcp:onfail=ignore]rtsp://127.0.0.1:18554/clock|[f=flv:onfail=ignore]rtmp://127.0.0.1:1935/live/$KEY_RTMP|[f=mpegts:onfail=ignore]srt://127.0.0.1:8890?streamid=publish:live/$KEY_SRT&latency=20000&pkt_size=1316|[f=mpegts:onfail=ignore]udp://127.0.0.1:5004?pkt_size=1316" \
+    > "$W/ffmpeg-clock.log" 2>&1 & PIDS+=($!)
+  for i in $(seq 1 30); do
+    ST=$(curl -sf -b "$J" "$B/api/streams" | "$NODE" -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const a=JSON.parse(d);console.log(process.argv.slice(1).map(id=>(a.find(s=>s.id===id)||{}).status).join(" "))})' "$ID_RTSP" "$ID_RTMP" "$ID_SRT" "$ID_UDP")
+    [ "$ST" = "online online online online" ] && break
+    sleep 1
+  done
+  echo "Состояние RTSP RTMP SRT UDP: $ST"
+  read -r S_RTSP S_RTMP S_SRT S_UDP <<<"$ST"
+  [ "$S_RTMP" = "online" ] || { cat "$W/ffmpeg-clock.log"; grep -i 'rtmp\|live/' "$W/mediamtx.log" | tail -20; fail "энкодер по RTMP не принят ($S_RTMP)"; }
+  [ "$S_SRT" = "online" ] || { cat "$W/ffmpeg-clock.log"; grep -i 'srt\|live/' "$W/mediamtx.log" | tail -20; fail "энкодер по SRT не принят ($S_SRT)"; }
+  [ "$S_UDP" = "online" ] || echo "::warning title=UDP::поток MPEG-TS по UDP не принят ($S_UDP)"
+  # Публикация с неверным ключом должна отклоняться
+  if timeout 8 ffmpeg -hide_banner -loglevel error -re -f lavfi -i testsrc=size=320x240:rate=10 -t 4 -c:v libx264 -preset ultrafast -f flv \
+      "rtmp://127.0.0.1:1935/live/aaaaaaaaaaaaaaaaaaaa" >/dev/null 2>&1; then
+    fail "MediaMTX принял публикацию по неверному ключу"
+  fi
+  [ -n "${GITHUB_ACTIONS:-}" ] && echo "::notice title=Энкодеры::RTMP и SRT от энкодера приняты по ключу, неверный ключ отклонён; UDP: $S_UDP"
   curl -sf "${H[@]}" -d '{"login":"operator","password":"operator-pass","role":"operator"}' "$B/api/users" >/dev/null
   sleep 6
   node "$ROOT/scripts/screenshots.mjs" "$B" admin e2e-password "$SHOTS_DIR" || echo "::warning title=Скриншоты::не удалось снять скриншоты"
@@ -185,4 +209,4 @@ sleep 2
 curl -sf http://127.0.0.1:9997/v3/config/paths/list | grep -q "s_$STREAM" && fail "путь не удалён из MediaMTX"
 
 echo "E2E: всё работает"
-[ -n "${GITHUB_ACTIONS:-}" ] && echo "::notice title=E2E::Камера RTSP -> MediaMTX -> панель -> HLS: сегмент $SEG ($SIZE байт) получен через прокси; MediaMTX снаружи открыт только портом ICE 8189"
+[ -n "${GITHUB_ACTIONS:-}" ] && echo "::notice title=E2E::Камера RTSP -> MediaMTX -> панель -> HLS: сегмент $SEG ($SIZE байт) получен через прокси; MediaMTX снаружи открыт только портами ICE 8189, RTMP 1935, SRT 8890"

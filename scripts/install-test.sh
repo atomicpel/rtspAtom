@@ -15,11 +15,18 @@ cd "$W"/rtspatom-*
 BUNDLE_NODE="$(pwd)/node/bin/node"
 "$BUNDLE_NODE" -e "require('net').createServer().listen(18090,'0.0.0.0')" & B1=$!
 "$BUNDLE_NODE" -e "require('net').createServer().listen(8888,'127.0.0.1')" & B2=$!
+# и на порту RTMP (1935) и SRT (8890/udp)
+"$BUNDLE_NODE" -e "require('net').createServer().listen(1935,'0.0.0.0')" & B3=$!
+"$BUNDLE_NODE" -e "require('dgram').createSocket('udp4').bind(8890,'0.0.0.0')" & B4=$!
 sleep 1
 ./install.sh --no-start --port 18090 </dev/null
 grep -q '"port": 18091' /etc/rtspatom/config.json || { echo "порт панели не подобран"; cat /etc/rtspatom/config.json; exit 1; }
 grep -q 'hlsAddress: 127.0.0.1:8889' /etc/rtspatom/mediamtx.yml || { echo "порт HLS не подобран"; exit 1; }
 grep -q '"hlsUrl": "http://127.0.0.1:8889"' /etc/rtspatom/config.json || { echo "hlsUrl не совпадает"; exit 1; }
+grep -q '^rtmpAddress: :1936' /etc/rtspatom/mediamtx.yml || { echo "порт RTMP не подобран"; grep -n 'rtmp\|srt' /etc/rtspatom/mediamtx.yml; exit 1; }
+grep -q '^srtAddress: :8891' /etc/rtspatom/mediamtx.yml || { echo "порт SRT не подобран"; exit 1; }
+grep -q '"srtPort": 8891' /etc/rtspatom/config.json || { echo "srtPort не записан в config.json"; exit 1; }
+grep -q '^webrtcAddress: 127.0.0.1:8890' /etc/rtspatom/mediamtx.yml || { echo "WHEP не должен уступать порт SRT (разные протоколы)"; exit 1; }
 test -x /opt/rtspatom/node/bin/node
 test -x /opt/rtspatom/mediamtx/mediamtx
 test -f /etc/rtspatom/config.json
@@ -53,7 +60,7 @@ kill $SRV_PID $MTX_PID 2>/dev/null || true
 sleep 2
 cd "$W"/rtspatom-* && ./install.sh --no-start </dev/null
 grep -q '"port": 18091' /etc/rtspatom/config.json || { echo "порт сменился при обновлении"; exit 1; }
-kill $B1 $B2 2>/dev/null || true
+kill $B1 $B2 $B3 $B4 2>/dev/null || true
 rtspatom-admin list-users | grep -q admin
 /opt/rtspatom/uninstall.sh
 test ! -d /opt/rtspatom

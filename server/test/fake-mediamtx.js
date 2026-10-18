@@ -34,7 +34,7 @@ export function startFakeMediaMtx() {
       ready.delete(m[1]);
       return json(200);
     }
-    if ((m = /^\/(s_[^/]+)\/whep(?:\/([^/]+))?$/.exec(url.pathname))) {
+    if ((m = /^\/(s_[^/]+|live\/[^/]+)\/whep(?:\/([^/]+))?$/.exec(url.pathname))) {
       if (!m[2] && req.method === 'POST') {
         if (!ready.has(m[1])) return json(404, { error: 'no stream is available on path' });
         const id = `sess${whep.size + 1}${Date.now()}`;
@@ -59,7 +59,7 @@ export function startFakeMediaMtx() {
       if (!paths.has(m[1])) return json(404, { error: 'not found' });
       return json(200, { name: m[1], ready: ready.has(m[1]), tracks: ready.has(m[1]) ? ['H264', 'MPEG-4 Audio'] : [] });
     }
-    if ((m = /^\/(s_[^/]+)\/(.+)$/.exec(url.pathname))) {
+    if ((m = /^\/(s_[^/]+|live\/[^/]+)\/(.+)$/.exec(url.pathname))) {
       // Как MediaMTX 1.21: без секрета CDN — cookie-проверка через редирект.
       if (fake.cdnSecret && req.headers.authorization !== `Bearer ${fake.cdnSecret}`) {
         res.writeHead(302, { Location: `${url.pathname}?cookieCheck=1` });

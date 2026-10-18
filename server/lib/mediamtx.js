@@ -1,7 +1,12 @@
 import { newId } from './security.js';
 
 export const PATH_PREFIX = 's_';
+/** Пути потоков, которые энкодер отправляет сам: live/<ключ> (RTMP: приложение live, ключ потока). */
+export const PUSH_PREFIX = 'live/';
 export const pathNameFor = (streamId) => `${PATH_PREFIX}${streamId}`;
+/** Имя пути MediaMTX для строки потока из базы. */
+export const pathNameOf = (row) => (row.push_key ? `${PUSH_PREFIX}${row.push_key}` : pathNameFor(row.id));
+const isManagedPath = (name) => !!name && (name.startsWith(PATH_PREFIX) || name.startsWith(PUSH_PREFIX));
 
 /** Протоколы источников, которые MediaMTX умеет забирать сам. */
 export const SOURCE_PROTOCOLS = {
@@ -45,6 +50,9 @@ export function redactUrl(url) {
     return String(url);
   }
 }
+
+/** Имя пути в адресе API: слэши (live/<ключ>) остаются слэшами. */
+const encPath = (name) => encodeURIComponent(name).replace(/%2F/gi, '/');
 
 function trackNames(item) {
   const t = item?.tracks ?? item?.tracks2 ?? [];
@@ -105,24 +113,24 @@ export class MediaMtxClient {
   }
 
   getPath(name) {
-    return this.request('GET', `/v3/paths/get/${encodeURIComponent(name)}`);
+    return this.request('GET', `/v3/paths/get/${encPath(name)}`);
   }
 
   async addPath(name, conf) {
     return this.#withTransportFallback(conf, (c) =>
-      this.request('POST', `/v3/config/paths/add/${encodeURIComponent(name)}`, c),
+      this.request('POST', `/v3/config/paths/add/${encPath(name)}`, c),
     );
   }
 
   async replacePath(name, conf) {
     // replace сбрасывает поля, которых нет в conf, — поэтому старые настройки не «залипают».
     return this.#withTransportFallback(conf, (c) =>
-      this.request('POST', `/v3/config/paths/replace/${encodeURIComponent(name)}`, c),
+      this.request('POST', `/v3/config/paths/replace/${encPath(name)}`, c),
     );
   }
 
   deletePath(name) {
-    return this.request('DELETE', `/v3/config/paths/delete/${encodeURIComponent(name)}`);
+    return this.request('DELETE', `/v3/config/paths/delete/${encPath(name)}`);
   }
 
   /**
@@ -176,6 +184,7 @@ export class StreamSync {
     this.log = log;
     this.settings = settings; // () => текущие настройки
     this.status = new Map(); // pathName -> { ready, readers, bytesReceived, bytesSent, tracks }
+    this.pathById = new Map(); // streamId -> pathName (по последнему чтению базы)
     this.reachable = false;
     this.lastError = '';
     this.lastSyncAt = null;
@@ -194,14 +203,18 @@ export class StreamSync {
       .all();
     const alwaysOn = this.settings().camerasAlwaysOn;
     const map = new Map();
+    const byId = new Map();
     for (const s of rows) {
-      const conf = {
-        source: buildSourceUrl(s.url, s.source_login, s.source_password),
-        sourceOnDemand: !alwaysOn,
-      };
+      // Энкодер публикует сам: путь ждёт входящий поток по секретному имени
+      const conf = s.push_key
+        ? { source: 'publisher' }
+        : { source: buildSourceUrl(s.url, s.source_login, s.source_password), sourceOnDemand: !alwaysOn };
       if (s.protocol === 'rtsp' && s.transport !== 'auto') conf.rtspTransport = s.transport;
-      map.set(pathNameFor(s.id), { conf, stream: s });
+      const name = pathNameOf(s);
+      map.set(name, { conf, stream: s });
+      byId.set(s.id, name);
     }
+    this.pathById = byId;
     return map;
   }
 
@@ -246,7 +259,7 @@ export class StreamSync {
     }
 
     const have = new Map(
-      current.filter((p) => p.name?.startsWith(PATH_PREFIX)).map((p) => [p.name, p]),
+      current.filter((p) => isManagedPath(p.name)).map((p) => [p.name, p]),
     );
     for (const [name] of have) {
       if (!want.has(name)) {
@@ -319,7 +332,7 @@ export class StreamSync {
         this.prevReady.set(name, ready);
         const label = stream.name;
         if (ready) this.log.info('stream', `Поток в сети: ${label}`, { stream: stream.name });
-        else if (!onDemand) this.log.warn('stream', `Поток недоступен: ${label}`, { stream: stream.name });
+        else if (!onDemand || stream.push_key) this.log.warn('stream', `Поток недоступен: ${label}`, { stream: stream.name });
       }
     }
     for (const name of [...this.prevReady.keys()]) if (!want.has(name)) this.prevReady.delete(name);
@@ -329,9 +342,15 @@ export class StreamSync {
   streamState(streamRow) {
     if (!streamRow.is_active) return 'offline';
     if (!this.reachable) return 'offline';
-    const st = this.status.get(pathNameFor(streamRow.id));
+    const st = this.status.get(pathNameOf(streamRow));
     if (st?.ready) return 'online';
+    if (streamRow.push_key) return 'reconnecting'; // энкодер ещё не прислал поток
     return this.settings().camerasAlwaysOn ? 'reconnecting' : 'idle';
+  }
+
+  /** Состояние пути по id потока (для счёта зрителей и списка потоков). */
+  statusOf(streamId) {
+    return this.status.get(this.pathById.get(streamId) || pathNameFor(streamId));
   }
 
   start({ syncEveryMs = 30000, statusEveryMs = 5000 } = {}) {
@@ -353,6 +372,7 @@ export class StreamSync {
 
 function needsUpdate(cur, conf) {
   if (cur.source !== conf.source) return true;
+  if (conf.source === 'publisher') return false;
   if (!!cur.sourceOnDemand !== !!conf.sourceOnDemand) return true;
   const curTransport = cur.rtspTransport ?? cur.sourceProtocol ?? 'automatic';
   const wantTransport = conf.rtspTransport ?? 'automatic';

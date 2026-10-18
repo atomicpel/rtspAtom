@@ -348,6 +348,63 @@ test('настройки: проверка значений', async () => {
   assert.equal(fake.paths.get(`s_${streamId}`).sourceOnDemand, true);
 });
 
+test('поток от энкодера (push): секретный путь, ключ только администратору, смена ключа', async () => {
+  let r = await admin.post('/api/streams', { name: 'Энкодер HDMI', mode: 'push' });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  const id = r.data.id;
+  assert.equal(r.data.mode, 'push');
+  assert.equal(r.data.status, 'reconnecting');
+  const key = r.data.push.key;
+  assert.match(key, /^[a-z0-9]{20}$/);
+  assert.equal(r.data.push.path, `live/${key}`);
+  assert.equal(r.data.push.rtmpPort, 1935);
+  assert.equal(r.data.push.srtPort, 8890);
+  await app.sync.trigger();
+  assert.deepEqual(fake.paths.get(`live/${key}`), { source: 'publisher' });
+  assert.equal(fake.paths.has(`s_${id}`), false);
+
+  // энкодер начал передачу — поток в сети, видео через панель по секретному пути
+  fake.ready.add(`live/${key}`);
+  await app.sync.refreshStatus();
+  r = await admin.get('/api/streams');
+  assert.equal(r.data.find((x) => x.id === id).status, 'online');
+  r = await admin.get(`/hls/${id}/index.m3u8`);
+  assert.equal(r.status, 200);
+  assert.match(r.data, new RegExp(`#FAKE live/${key} index.m3u8`));
+  const sdp = { method: 'POST', headers: { 'Content-Type': 'application/sdp', 'X-RTSPAtom': '1', Cookie: admin.cookie }, body: 'v=0 offer' };
+  const w = await fetch(`${base}/webrtc/${id}/whep`, sdp);
+  assert.equal(w.status, 201);
+  assert.doesNotMatch(w.headers.get('location'), new RegExp(key), 'ключ не утекает в адрес сеанса');
+  await fetch(base + w.headers.get('location'), { method: 'DELETE', headers: { 'X-RTSPAtom': '1', Cookie: admin.cookie } });
+
+  // проверять push-поток нельзя
+  r = await admin.post('/api/streams/probe', { mode: 'push' });
+  assert.equal(r.status, 400);
+
+  // новый ключ — новый путь, старый удалён
+  r = await admin.post(`/api/streams/${id}/push-key`);
+  assert.equal(r.status, 200);
+  const key2 = r.data.push.key;
+  assert.notEqual(key2, key);
+  await app.sync.trigger();
+  assert.equal(fake.paths.has(`live/${key}`), false);
+  assert.equal(fake.paths.has(`live/${key2}`), true);
+
+  // переключение в режим «по адресу» убирает ключ
+  r = await admin.put(`/api/streams/${id}`, { mode: 'pull', url: 'rtsp://10.1.1.9/main' });
+  assert.equal(r.data.mode, 'pull');
+  assert.equal(r.data.push, null);
+  await app.sync.trigger();
+  assert.equal(fake.paths.has(`live/${key2}`), false);
+  assert.equal(fake.paths.get(`s_${id}`).source, 'rtsp://10.1.1.9/main');
+  r = await admin.put(`/api/streams/${id}`, { mode: 'push' });
+  assert.equal(r.data.mode, 'push');
+  assert.equal(r.data.url, '');
+  r = await admin.post(`/api/streams/${streamId}/push-key`);
+  assert.equal(r.status, 400);
+  await admin.del(`/api/streams/${id}`);
+});
+
 test('удаление потока удаляет путь MediaMTX', async () => {
   let r = await admin.del(`/api/streams/${streamId}`);
   assert.equal(r.status, 204);

@@ -1,21 +1,31 @@
 import React, { useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Eye, GripVertical, Pencil, Plus, Trash2, Video } from 'lucide-react';
+import { AlertTriangle, Eye, GripVertical, Pencil, Plus, Trash2, Video } from 'lucide-react';
 import type { Stream, StreamTransport } from '../lib/types';
 import { api, errorMessage, protocolFromUrl } from '../lib/api';
 import { usePolling } from '../lib/usePolling';
+import { codecHints } from '../lib/codecs';
 import { useToast } from '../components/Toast';
 import { VideoPlayer } from '../components/VideoPlayer';
+import { EncoderInfo, EncoderTips } from '../components/EncoderInfo';
 import {
   Button, Empty, Field, IconButton, Modal, Notice, PageHeader, STATUS_TEXT, StatusDot, Toggle, inputCls,
 } from '../components/ui';
 
-const emptyForm = { name: '', description: '', url: '', transport: 'auto' as StreamTransport, sourceLogin: '', sourcePassword: '' };
+const emptyForm = {
+  mode: 'pull' as 'pull' | 'push', name: '', description: '', url: '', transport: 'auto' as StreamTransport, sourceLogin: '', sourcePassword: '',
+};
+
+const MODES = [
+  { v: 'pull' as const, t: 'Забирать по адресу', d: 'Камера или энкодер с RTSP-сервером, SRT listener, UDP, HLS' },
+  { v: 'push' as const, t: 'Энкодер отправляет сам', d: 'Энкодер передаёт поток на сервер по RTMP или SRT (caller)' },
+];
 type Check = { state: 'idle' | 'checking' | 'ok' | 'warn' | 'error'; text: string };
 
 export function StreamsPage() {
   const { toast } = useToast();
   const { data, setData, reload, error } = usePolling(api.streams, 5000);
+  const { data: sys } = usePolling(api.system, 60000);
   const streams = data || [];
 
   const [open, setOpen] = useState(false);
@@ -34,23 +44,30 @@ export function StreamsPage() {
 
   const openEdit = (s: Stream) => {
     setEditing(s);
-    setForm({ name: s.name, description: s.description, url: s.url, transport: s.transport, sourceLogin: s.sourceLogin, sourcePassword: '' });
+    setForm({ mode: s.mode, name: s.name, description: s.description, url: s.url, transport: s.transport, sourceLogin: s.sourceLogin, sourcePassword: '' });
     setCheck({ state: 'idle', text: '' });
     setOpen(true);
   };
 
   const save = async () => {
-    if (!form.name.trim() || !form.url.trim()) {
-      toast('error', 'Укажите название и адрес потока');
+    const push = form.mode === 'push';
+    if (!form.name.trim() || (!push && !form.url.trim())) {
+      toast('error', push ? 'Укажите название потока' : 'Укажите название и адрес потока');
       return;
     }
     setBusy(true);
     try {
-      if (editing) await api.updateStream(editing.id, form);
-      else await api.createStream(form);
+      const body = push ? { mode: 'push' as const, name: form.name, description: form.description } : form;
+      const saved = editing ? await api.updateStream(editing.id, body) : await api.createStream(body);
       toast('success', editing ? `Поток «${form.name}» сохранён` : `Поток «${form.name}» добавлен`);
-      setOpen(false);
       reload();
+      // Новый поток от энкодера: окно остаётся открытым, чтобы скопировать адреса в энкодер
+      if (push && (!editing || editing.mode !== 'push')) {
+        setEditing(saved);
+        setForm({ ...form, mode: 'push' });
+        return;
+      }
+      setOpen(false);
     } catch (err) {
       toast('error', errorMessage(err));
     } finally {
@@ -63,10 +80,28 @@ export function StreamsPage() {
     try {
       const r = await api.probeStream({ ...form, streamId: editing?.id });
       if (!r.ok) setCheck({ state: 'error', text: 'Видео не получено. Проверьте адрес, логин и пароль, доступность камеры по сети.' });
-      else if (r.warning) setCheck({ state: 'warn', text: `Видео получено (${r.tracks.join(', ')}). ${r.warning}` });
-      else setCheck({ state: 'ok', text: `Видео получено: ${r.tracks.join(', ')}` });
+      else {
+        const hints = codecHints(r.tracks).map((h) => h.text).join(' ');
+        if (hints) setCheck({ state: 'warn', text: `Видео получено (${r.tracks.join(', ')}). ${hints}` });
+        else setCheck({ state: 'ok', text: `Видео получено: ${r.tracks.join(', ')}. Кодеки подходят для показа с минимальной задержкой.` });
+      }
     } catch (err) {
       setCheck({ state: 'error', text: errorMessage(err) });
+    }
+  };
+
+  const newKey = async () => {
+    if (!editing || !confirm('Выдать новый ключ? Энкодер со старым ключом перестанет передавать видео, пока его не перенастроят.')) return;
+    setBusy(true);
+    try {
+      const s = await api.newPushKey(editing.id);
+      setEditing(s);
+      toast('success', 'Выдан новый ключ — перенастройте энкодер');
+      reload();
+    } catch (err) {
+      toast('error', errorMessage(err));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -150,11 +185,16 @@ export function StreamsPage() {
                     {s.description && <span className="text-[13px] text-muted truncate">{s.description}</span>}
                   </div>
                   <div className="text-[13px] text-muted truncate">
-                    {STATUS_TEXT[s.status]}
+                    {s.mode === 'push' && s.status !== 'online' ? 'Ждёт поток от энкодера' : STATUS_TEXT[s.status]}
                     {s.tracks.length > 0 && `, ${s.tracks.join(', ')}`}
-                    {', '}{s.url}
+                    {', '}{s.mode === 'push' ? 'энкодер отправляет сам (RTMP / SRT)' : s.url}
                   </div>
                 </div>
+                {codecHints(s.tracks).length > 0 && (
+                  <span className="text-warn shrink-0" title={codecHints(s.tracks).map((h) => h.text).join('\n')}>
+                    <AlertTriangle className="w-4 h-4" aria-label="Кодек мешает минимальной задержке" />
+                  </span>
+                )}
                 {s.viewers > 0 && (
                   <span className="hidden sm:flex items-center gap-1 text-[13px] text-muted tabular" title="Смотрят сейчас">
                     <Eye className="w-3.5 h-3.5" /> {s.viewers}
@@ -173,7 +213,7 @@ export function StreamsPage() {
       <Modal open={open} onClose={() => setOpen(false)} title={editing ? 'Изменить поток' : 'Новый поток'} wide
         footer={<>
           <Button variant="ghost" onClick={() => setOpen(false)}>Отмена</Button>
-          <Button variant="primary" busy={busy} onClick={save}>{editing ? 'Сохранить' : 'Добавить поток'}</Button>
+          <Button variant="primary" busy={busy} onClick={save}>{editing ? (editing.mode === 'push' && form.mode === 'push' ? 'Готово' : 'Сохранить') : 'Добавить поток'}</Button>
         </>}>
         <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); save(); }}>
           {editing?.isActive && (
@@ -191,8 +231,25 @@ export function StreamsPage() {
                 onChange={(e) => setForm({ ...form, description: e.target.value })} />
             </Field>
           </div>
+          <div className="grid sm:grid-cols-2 gap-2" role="group" aria-label="Откуда берётся видео">
+            {MODES.map((o) => (
+              <button key={o.v} type="button" onClick={() => { setForm({ ...form, mode: o.v }); setCheck({ state: 'idle', text: '' }); }}
+                aria-pressed={form.mode === o.v}
+                className={`text-left px-3.5 py-2.5 rounded-md border transition-colors ${form.mode === o.v ? 'border-steel bg-steel/10' : 'border-line hover:border-line-strong'}`}>
+                <span className="block font-bold text-sm">{o.t}</span>
+                <span className="block text-[13px] text-muted mt-0.5">{o.d}</span>
+              </button>
+            ))}
+          </div>
+          {form.mode === 'push' ? (
+            editing?.mode === 'push' && editing.push ? (
+              <EncoderInfo stream={editing} addresses={sys?.addresses} onNewKey={newKey} busy={busy} />
+            ) : (
+              <Notice>После сохранения здесь появятся адрес сервера и ключ потока — их нужно вписать в энкодер.</Notice>
+            )
+          ) : (<>
           <Field label={detected ? `Адрес потока (${detected})` : 'Адрес потока'}
-            hint="rtsp://, rtsps://, rtmp://, http(s):// (HLS), srt://, udp://. Логин и пароль из адреса перенесутся в поля ниже.">
+            hint="rtsp://, rtsps://, rtmp://, srt://host:порт (энкодер в режиме Listener), udp+mpegts://0.0.0.0:порт или адрес мультикаста, http(s):// (HLS). Логин и пароль из адреса перенесутся в поля ниже.">
             <input className={inputCls} value={form.url} placeholder="rtsp://192.168.1.64:554/Streaming/Channels/101"
               onChange={(e) => { setForm({ ...form, url: e.target.value }); setCheck({ state: 'idle', text: '' }); }} />
           </Field>
@@ -226,6 +283,8 @@ export function StreamsPage() {
               )}
             </AnimatePresence>
           </div>
+          </>)}
+          <EncoderTips />
           <button type="submit" className="hidden" />
         </form>
       </Modal>

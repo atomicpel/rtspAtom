@@ -1,7 +1,7 @@
 export type UserRole = 'admin' | 'operator' | 'viewer';
 
 /** Тип источника определяется сервером по схеме URL. */
-export type StreamProtocol = 'rtsp' | 'rtmp' | 'hls' | 'srt' | 'udp';
+export type StreamProtocol = 'rtsp' | 'rtmp' | 'hls' | 'srt' | 'udp' | 'push';
 export type StreamTransport = 'auto' | 'tcp' | 'udp';
 
 /** idle — камера подключается только при просмотре (режим «по запросу»). */
@@ -11,6 +11,10 @@ export interface Stream {
   id: string;
   name: string;
   description: string;
+  /** pull — сервер забирает по адресу; push — энкодер отправляет сам (RTMP/SRT) */
+  mode: 'pull' | 'push';
+  /** Только администратору и только для push */
+  push: { key: string; path: string; rtmpPort: number; srtPort: number } | null;
   url: string;
   protocol: StreamProtocol;
   transport: StreamTransport;
@@ -77,6 +81,8 @@ export interface SystemInfo {
   platform: string;
   os: 'linux' | 'windows';
   tlsEnabled: boolean;
+  /** IPv4-адреса сервера в сети (только администратору) */
+  addresses?: string[];
   mediamtx: { reachable: boolean; version: string | null; lastError: string; lastSyncAt: string | null };
 }
 

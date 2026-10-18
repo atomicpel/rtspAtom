@@ -2,7 +2,7 @@ import http from 'node:http';
 import { HttpError } from '../lib/http.js';
 import { canAccessStream } from '../lib/access.js';
 import { getSettings } from '../lib/settings.js';
-import { pathNameFor } from '../lib/mediamtx.js';
+import { pathNameOf } from '../lib/mediamtx.js';
 
 const VIEWER_ACTIVE_MS = 20_000;
 const PASS_HEADERS = ['content-type', 'content-length', 'cache-control', 'etag', 'last-modified', 'accept-ranges', 'content-range'];
@@ -20,7 +20,7 @@ export async function handleHls(app, req, res, url, session, ip) {
   if (!m) throw new HttpError(404, 'Не найдено');
   const [, streamId, file] = m;
 
-  const row = app.db.prepare('SELECT id, name, is_active FROM streams WHERE id = ?').get(streamId);
+  const row = app.db.prepare('SELECT id, name, is_active, push_key FROM streams WHERE id = ?').get(streamId);
   if (!row) throw new HttpError(404, 'Поток не найден');
   if (!canAccessStream(session.user, row.id)) throw new HttpError(403, 'Нет доступа к этому потоку');
   if (!row.is_active) throw new HttpError(409, 'Поток отключён');
@@ -41,7 +41,7 @@ export async function handleHls(app, req, res, url, session, ip) {
   }
   app.viewers.set(key, now);
 
-  const target = new URL(`/${pathNameFor(streamId)}/${file}${url.search}`, app.config.mediamtx.hlsUrl);
+  const target = new URL(`/${pathNameOf(row)}/${file}${url.search}`, app.config.mediamtx.hlsUrl);
   const headers = { 'user-agent': 'rtspatom-proxy' };
   // Запрос «от CDN»: MediaMTX ведёт одну общую сессию на поток без cookie и редиректов.
   if (app.config.mediamtx.cdnSecret) headers.authorization = `Bearer ${app.config.mediamtx.cdnSecret}`;

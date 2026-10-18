@@ -2,7 +2,7 @@ import http from 'node:http';
 import { HttpError } from '../lib/http.js';
 import { canAccessStream } from '../lib/access.js';
 import { getSettings } from '../lib/settings.js';
-import { pathNameFor } from '../lib/mediamtx.js';
+import { pathNameOf } from '../lib/mediamtx.js';
 
 const MAX_SDP = 64 * 1024;
 const SESSION_TTL_MS = 12 * 3600 * 1000;
@@ -22,7 +22,7 @@ export async function handleWebrtc(app, req, res, url, session, ip) {
   if (!m) throw new HttpError(404, 'Не найдено');
   const [, streamId, sessionId] = m;
 
-  const row = app.db.prepare('SELECT id, name, is_active FROM streams WHERE id = ?').get(streamId);
+  const row = app.db.prepare('SELECT id, name, is_active, push_key FROM streams WHERE id = ?').get(streamId);
   if (!row) throw new HttpError(404, 'Поток не найден');
   if (!canAccessStream(session.user, row.id)) throw new HttpError(403, 'Нет доступа к этому потоку');
 
@@ -43,7 +43,7 @@ export async function handleWebrtc(app, req, res, url, session, ip) {
   }
 
   const body = await readBody(req);
-  const target = new URL(`/${pathNameFor(streamId)}/whep${sessionId ? `/${sessionId}` : ''}`, app.config.mediamtx.webrtcUrl);
+  const target = new URL(`/${pathNameOf(row)}/whep${sessionId ? `/${sessionId}` : ''}`, app.config.mediamtx.webrtcUrl);
   const headers = { 'user-agent': 'rtspatom-proxy' };
   if (req.headers['content-type']) headers['content-type'] = req.headers['content-type'];
   if (req.headers['if-match']) headers['if-match'] = req.headers['if-match'];

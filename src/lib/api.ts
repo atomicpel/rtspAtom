@@ -49,6 +49,7 @@ const put = <T>(u: string, b: unknown = {}) => request<T>('PUT', u, b);
 const del = <T>(u: string) => request<T>('DELETE', u);
 
 export interface StreamInput {
+  mode?: 'pull' | 'push';
   name?: string;
   description?: string;
   url?: string;
@@ -100,6 +101,7 @@ export const api = {
   reorderStreams: (ids: string[]) => put<{ ok: boolean }>('/api/streams-order', { ids }),
   updateStream: (id: string, s: StreamInput) => put<Stream>(`/api/streams/${id}`, s),
   deleteStream: (id: string) => del<void>(`/api/streams/${id}`),
+  newPushKey: (id: string) => post<Stream>(`/api/streams/${id}/push-key`),
   probeStream: (s: StreamInput & { streamId?: string }) => post<ProbeResult>('/api/streams/probe', s),
 
   users: () => get<User[]>('/api/users'),

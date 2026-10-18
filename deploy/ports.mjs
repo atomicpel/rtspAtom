@@ -1,8 +1,8 @@
 // Подбор свободных портов при установке (Linux и Windows).
 //
 //   node ports.mjs <имя>=<порт>@<адрес> [...]
-//   node ports.mjs panel=8080@0.0.0.0 hls=8888@127.0.0.1 api=9997@127.0.0.1 ice=8189@0.0.0.0+udp
-// Суффикс +udp — порт должен быть свободен и для UDP.
+//   node ports.mjs panel=8080@0.0.0.0 hls=8888@127.0.0.1 api=9997@127.0.0.1 ice=8189@0.0.0.0+udp srt=8890@0.0.0.0/udp
+// Суффикс +udp — порт должен быть свободен и для TCP, и для UDP; /udp — только для UDP.
 //
 // Для каждого порта проверяет, не слушает ли его уже какая-то программа (ss / netstat)
 // и можно ли его занять. Если порт занят — берёт следующий свободный (до +200).
@@ -75,31 +75,33 @@ function canBindUdp(port, host) {
 
 async function main() {
   const wants = process.argv.slice(2).map((a) => {
-    const m = /^([a-z]+)=(\d+)@([^+]+)(\+udp)?$/i.exec(a);
+    const m = /^([a-z]+)=(\d+)@([^+/]+)(\+udp|\/udp)?$/i.exec(a);
     if (!m) throw new Error(`неверный аргумент: ${a}`);
-    return { name: m[1], port: Number(m[2]), host: m[3], udp: !!m[4] };
+    return { name: m[1], port: Number(m[2]), host: m[3], tcp: m[4] !== '/udp', udp: !!m[4] };
   });
-  const listening = listeningPorts();
-  const taken = new Set();
+  const listening = listeningPorts(); // слушающие TCP-порты
+  const taken = new Set(); // 'tcp:порт' / 'udp:порт', уже выданные в этом запуске
   const result = {};
   for (const w of wants) {
     let chosen = null;
     for (let p = w.port; p <= Math.min(65535, w.port + RANGE); p++) {
-      if (taken.has(p) || listening.has(p)) continue;
+      if (w.tcp && (taken.has(`tcp:${p}`) || listening.has(p))) continue;
+      if (w.udp && taken.has(`udp:${p}`)) continue;
       // Проверяем и 0.0.0.0, и нужный адрес: на Windows занятый 127.0.0.1:порт
       // не мешает занять 0.0.0.0:порт, но конфликт всё равно будет.
-      if (!(await canBind(p, w.host))) continue;
-      if (w.host !== '0.0.0.0' && !(await canBind(p, '0.0.0.0'))) continue;
+      if (w.tcp && !(await canBind(p, w.host))) continue;
+      if (w.tcp && w.host !== '0.0.0.0' && !(await canBind(p, '0.0.0.0'))) continue;
       if (w.udp && !(await canBindUdp(p, w.host))) continue;
       chosen = p;
       break;
     }
     if (chosen === null) throw new Error(`нет свободного порта в диапазоне ${w.port}–${w.port + RANGE}`);
-    taken.add(chosen);
+    if (w.tcp) taken.add(`tcp:${chosen}`);
+    if (w.udp) taken.add(`udp:${chosen}`);
     result[w.name] = {
       port: chosen,
       wanted: w.port,
-      busyBy: chosen !== w.port ? listening.get(w.port) || 'другая программа или резерв системы' : null,
+      busyBy: chosen !== w.port ? (w.tcp && listening.get(w.port)) || 'другая программа или резерв системы' : null,
     };
   }
   console.log(JSON.stringify(result));

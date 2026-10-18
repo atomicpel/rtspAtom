@@ -1,10 +1,23 @@
+import crypto from 'node:crypto';
 import { HttpError, badRequest, notFound } from '../lib/http.js';
 import { newId } from '../lib/security.js';
 import { nowIso } from '../lib/db.js';
 import { canAccessStream, hasRole } from '../lib/access.js';
-import { detectProtocol, redactUrl, buildSourceUrl, SOURCE_PROTOCOLS } from '../lib/mediamtx.js';
+import { detectProtocol, redactUrl, buildSourceUrl, pathNameOf, SOURCE_PROTOCOLS } from '../lib/mediamtx.js';
 
 const TRANSPORTS = ['auto', 'tcp', 'udp'];
+
+/** Секретный ключ публикации для энкодера: 20 символов [a-z0-9] (~103 бита). */
+export function newPushKey() {
+  const abc = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  let out = '';
+  while (out.length < 20) {
+    for (const b of crypto.randomBytes(32)) {
+      if (b < 252 && out.length < 20) out += abc[b % 36]; // 252 = 7·36, без перекоса
+    }
+  }
+  return out;
+}
 
 function str(v, max, field, { required = false } = {}) {
   const s = v === undefined || v === null ? '' : String(v).trim();
@@ -18,7 +31,14 @@ function parseStream(body, partial) {
   const out = {};
   if (!partial || body.name !== undefined) out.name = str(body.name, 200, 'Название потока', { required: true });
   if (!partial || body.description !== undefined) out.description = str(body.description, 500, 'Примечание');
-  if (!partial || body.url !== undefined) {
+  if (body.mode !== undefined && body.mode !== 'push' && body.mode !== 'pull') throw badRequest('mode: pull или push');
+  if (body.mode === 'push') {
+    // Энкодер отправляет поток сам — адрес источника не нужен
+    out.mode = 'push';
+    out.url = '';
+    out.protocol = 'push';
+  } else if (!partial || body.url !== undefined || body.mode === 'pull') {
+    if (body.mode === 'pull') out.mode = 'pull';
     const raw = str(body.url, 2000, 'URL', { required: true });
     let u;
     try {
@@ -66,11 +86,17 @@ export function registerStreams(router, app) {
 
   function streamToApi(s, user) {
     const privileged = hasRole(user, 'operator');
-    const st = app.sync?.status.get(`s_${s.id}`);
+    const st = app.sync?.statusOf(s.id);
+    const m = app.config.mediamtx || {};
     return {
       id: s.id,
       name: s.name,
       description: s.description,
+      mode: s.push_key ? 'push' : 'pull',
+      // Ключ публикации — только администратору: с ним можно подменить видео
+      push: s.push_key && user.isAdmin
+        ? { key: s.push_key, path: pathNameOf(s), rtmpPort: m.rtmpPort || 1935, srtPort: m.srtPort || 8890 }
+        : null,
       url: privileged ? redactUrl(s.url) : '',
       protocol: s.protocol,
       transport: s.transport,
@@ -94,10 +120,11 @@ export function registerStreams(router, app) {
     const id = newId();
     const sort = db.prepare('SELECT COALESCE(MAX(sort), 0) + 1 AS n FROM streams').get().n;
     db.prepare(
-      `INSERT INTO streams (id, name, url, protocol, source_login, source_password, transport, description, is_active, sort, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO streams (id, name, url, protocol, source_login, source_password, transport, description, is_active, sort, created_at, push_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(id, s.name, s.url, s.protocol, s.sourceLogin || '', s.sourcePassword || '',
-      s.transport || 'auto', s.description || '', s.isActive === false ? 0 : 1, sort, nowIso());
+      s.transport || 'auto', s.description || '', s.isActive === false ? 0 : 1, sort, nowIso(),
+      s.mode === 'push' ? newPushKey() : null);
     log.info('admin', `Добавлен поток «${s.name}»`, { user: ctx.user.login, ip: ctx.ip, stream: s.name });
     sync();
     return streamToApi(getStream(id), ctx.user);
@@ -116,15 +143,29 @@ export function registerStreams(router, app) {
       source_password: s.sourcePassword ?? cur.source_password,
       transport: s.transport ?? cur.transport,
       is_active: s.isActive === undefined ? cur.is_active : s.isActive ? 1 : 0,
+      // Смена режима: в push выдаём ключ (прежний сохраняется), в pull — убираем
+      push_key: s.mode === 'push' ? cur.push_key || newPushKey() : s.url !== undefined ? null : cur.push_key,
     };
+    if (s.mode === 'push') { next.source_login = ''; next.source_password = ''; }
     db.prepare(
       `UPDATE streams SET name = ?, description = ?, url = ?, protocol = ?, source_login = ?, source_password = ?,
-       transport = ?, is_active = ? WHERE id = ?`,
+       transport = ?, is_active = ?, push_key = ? WHERE id = ?`,
     ).run(next.name, next.description, next.url, next.protocol, next.source_login, next.source_password,
-      next.transport, next.is_active, cur.id);
+      next.transport, next.is_active, next.push_key, cur.id);
     const what = s.isActive !== undefined && Object.keys(s).length === 1
       ? (next.is_active ? 'Включён' : 'Отключён') : 'Изменён';
     log.info('admin', `${what} поток «${next.name}»`, { user: ctx.user.login, ip: ctx.ip, stream: next.name });
+    sync();
+    return streamToApi(getStream(cur.id), ctx.user);
+  }, { auth: 'admin' });
+
+  // Новый ключ публикации (если старый попал не в те руки): энкодер нужно перенастроить
+  router.post('/api/streams/:id/push-key', (ctx) => {
+    const cur = getStream(ctx.params.id);
+    if (!cur) throw notFound('Поток не найден');
+    if (!cur.push_key) throw badRequest('Поток забирается по адресу — ключ публикации ему не нужен');
+    db.prepare('UPDATE streams SET push_key = ? WHERE id = ?').run(newPushKey(), cur.id);
+    log.warn('admin', `Сменён ключ публикации потока «${cur.name}»`, { user: ctx.user.login, ip: ctx.ip, stream: cur.name });
     sync();
     return streamToApi(getStream(cur.id), ctx.user);
   }, { auth: 'admin' });
@@ -148,6 +189,7 @@ export function registerStreams(router, app) {
 
   router.post('/api/streams/probe', async (ctx) => {
     const body = await ctx.json();
+    if (body.mode === 'push') throw badRequest('Поток от энкодера проверять не нужно: он появится, когда энкодер начнёт передачу');
     const s = parseStream({ name: 'probe', ...body }, false);
     let login = s.sourceLogin || '';
     let password = s.sourcePassword;

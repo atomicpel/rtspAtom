@@ -135,29 +135,29 @@ SECRET="$("$NODE" -e '
 
 # Свободные порты: желаемые — из --port / прежней установки / по умолчанию.
 # Наши службы уже остановлены; если порт занят другой программой — берём следующий свободный.
-read -r WANT_PANEL WANT_HLS WANT_API WANT_WHEP WANT_ICE < <("$NODE" -e '
+read -r WANT_PANEL WANT_HLS WANT_API WANT_WHEP WANT_ICE WANT_RTMP WANT_SRT < <("$NODE" -e '
   const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
   const p = (u, d) => { try { return Number(new URL(u).port) || d; } catch { return d; } };
   console.log(c.port || 8080, p(c.mediamtx?.hlsUrl, 8888), p(c.mediamtx?.apiUrl, 9997),
-    p(c.mediamtx?.webrtcUrl, 8890), c.mediamtx?.icePort || 8189);
+    p(c.mediamtx?.webrtcUrl, 8890), c.mediamtx?.icePort || 8189, c.mediamtx?.rtmpPort || 1935, c.mediamtx?.srtPort || 8890);
 ' "$CONF")
 [ -n "$PORT" ] && WANT_PANEL="$PORT"
 say "Проверяю, свободны ли порты"
 PORTS_JSON="$("$NODE" "$SRC/deploy/ports.mjs" "panel=$WANT_PANEL@0.0.0.0" "hls=$WANT_HLS@127.0.0.1" "api=$WANT_API@127.0.0.1" \
-  "whep=$WANT_WHEP@127.0.0.1" "ice=$WANT_ICE@0.0.0.0+udp")" \
+  "whep=$WANT_WHEP@127.0.0.1" "ice=$WANT_ICE@0.0.0.0+udp" "rtmp=$WANT_RTMP@0.0.0.0" "srt=$WANT_SRT@0.0.0.0/udp")" \
   || die "не удалось подобрать свободные порты"
-read -r P_PANEL P_HLS P_API P_WHEP P_ICE < <("$NODE" -e '
+read -r P_PANEL P_HLS P_API P_WHEP P_ICE P_RTMP P_SRT < <("$NODE" -e '
   const r = JSON.parse(process.argv[1]);
   const labels = { panel: "веб-интерфейса", hls: "видео HLS (внутренний)", api: "управления MediaMTX (внутренний)",
-    whep: "подключения WebRTC (внутренний)", ice: "видео WebRTC" };
+    whep: "подключения WebRTC (внутренний)", ice: "видео WebRTC", rtmp: "приёма RTMP от энкодеров", srt: "приёма SRT от энкодеров" };
   for (const k of Object.keys(labels)) {
     if (r[k].busyBy) console.error(`!! Порт ${r[k].wanted} занят (${r[k].busyBy}) — для ${labels[k]} взят свободный порт ${r[k].port}`);
   }
-  console.log(r.panel.port, r.hls.port, r.api.port, r.whep.port, r.ice.port);
+  console.log(r.panel.port, r.hls.port, r.api.port, r.whep.port, r.ice.port, r.rtmp.port, r.srt.port);
 ' "$PORTS_JSON")
 "$NODE" -e '
   const fs = require("fs");
-  const [file, panel, hls, api, whep, ice] = process.argv.slice(1);
+  const [file, panel, hls, api, whep, ice, rtmp, srt] = process.argv.slice(1);
   const c = JSON.parse(fs.readFileSync(file, "utf8"));
   c.port = Number(panel);
   c.mediamtx = c.mediamtx || {};
@@ -165,20 +165,23 @@ read -r P_PANEL P_HLS P_API P_WHEP P_ICE < <("$NODE" -e '
   c.mediamtx.apiUrl = `http://127.0.0.1:${api}`;
   c.mediamtx.webrtcUrl = `http://127.0.0.1:${whep}`;
   c.mediamtx.icePort = Number(ice);
+  c.mediamtx.rtmpPort = Number(rtmp);
+  c.mediamtx.srtPort = Number(srt);
   fs.writeFileSync(file, JSON.stringify(c, null, 2) + "\n");
-' "$CONF" "$P_PANEL" "$P_HLS" "$P_API" "$P_WHEP" "$P_ICE"
+' "$CONF" "$P_PANEL" "$P_HLS" "$P_API" "$P_WHEP" "$P_ICE" "$P_RTMP" "$P_SRT"
 
 YML="$CONF_DIR/mediamtx.yml"
 RENDERED="$(mktemp)"
 SET_ADDRS=(-e "s/^apiAddress:.*/apiAddress: 127.0.0.1:$P_API/" -e "s/^hlsAddress:.*/hlsAddress: 127.0.0.1:$P_HLS/"
   -e "s/^webrtcAddress:.*/webrtcAddress: 127.0.0.1:$P_WHEP/"
-  -e "s/^webrtcLocalUDPAddress:.*/webrtcLocalUDPAddress: :$P_ICE/" -e "s/^webrtcLocalTCPAddress:.*/webrtcLocalTCPAddress: :$P_ICE/")
+  -e "s/^webrtcLocalUDPAddress:.*/webrtcLocalUDPAddress: :$P_ICE/" -e "s/^webrtcLocalTCPAddress:.*/webrtcLocalTCPAddress: :$P_ICE/"
+  -e "s/^rtmpAddress:.*/rtmpAddress: :$P_RTMP/" -e "s/^srtAddress:.*/srtAddress: :$P_SRT/")
 sed -e "s/@CDN_SECRET@/$SECRET/" "${SET_ADDRS[@]}" "$SRC/deploy/mediamtx.yml" > "$RENDERED"
-if [ -f "$YML" ] && ! grep -q '^webrtcAddress:' "$YML"; then
-  # Файл от версии без WebRTC — заменяем новым, прежний сохраняем
+if [ -f "$YML" ] && ! grep -q '^srtAddress:' "$YML"; then
+  # Файл от версии без WebRTC / приёма от энкодеров — заменяем новым, прежний сохраняем
   cp -p "$YML" "$YML.bak"
   install -m 640 -o root -g "$SVC_USER" "$RENDERED" "$YML"
-  say "mediamtx.yml обновлён для WebRTC (прежний сохранён как mediamtx.yml.bak)"
+  say "mediamtx.yml обновлён: WebRTC и приём от энкодеров (прежний сохранён как mediamtx.yml.bak)"
 elif [ -f "$YML" ]; then
   # Адреса API и HLS в существующем файле приводим к выбранным портам
   sed -i "${SET_ADDRS[@]}" "$YML"
@@ -241,10 +244,12 @@ fi
 
 # Межсетевой экран (если ufw включён)
 if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
-  say "Открываю порты $PORT_NOW/tcp (панель) и $P_ICE/udp+tcp (видео WebRTC) в ufw"
+  say "Открываю в ufw: $PORT_NOW/tcp (панель), $P_ICE/udp+tcp (видео WebRTC), $P_RTMP/tcp (RTMP), $P_SRT/udp (SRT)"
   ufw allow "$PORT_NOW/tcp" >/dev/null || warn "не удалось открыть порт в ufw"
   ufw allow "$P_ICE/udp" >/dev/null || warn "не удалось открыть порт $P_ICE/udp в ufw"
   ufw allow "$P_ICE/tcp" >/dev/null || warn "не удалось открыть порт $P_ICE/tcp в ufw"
+  ufw allow "$P_RTMP/tcp" >/dev/null || warn "не удалось открыть порт $P_RTMP/tcp в ufw"
+  ufw allow "$P_SRT/udp" >/dev/null || warn "не удалось открыть порт $P_SRT/udp в ufw"
 fi
 
 # Первый администратор
@@ -275,6 +280,7 @@ echo
 say "Готово: $(head -1 "$PREFIX/VERSION" 2>/dev/null || echo "RTSP Atom")"
 echo "    Панель:   $TLS_NOW://$(hostname -I 2>/dev/null | awk '{print $1}'):$PORT_NOW"
 echo "    Видео:    WebRTC через порт $P_ICE (UDP и TCP) — он должен быть открыт для рабочих мест"
+echo "    Энкодеры: RTMP rtmp://<сервер>:$P_RTMP/live, SRT srt://<сервер>:$P_SRT — ключ потока выдаёт панель"
 echo "    Журнал:   journalctl -u rtspatom -f"
 echo "    Утилита:  sudo rtspatom-admin help"
 echo "    Удаление: sudo $PREFIX/uninstall.sh"

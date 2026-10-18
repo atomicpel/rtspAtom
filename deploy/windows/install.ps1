@@ -194,7 +194,7 @@ try {
   # --- Свободные порты ----------------------------------------------------------------
   # Желаемые порты: из -Port / прежней установки / по умолчанию. Если порт занят другой
   # программой (наши службы уже остановлены), берётся следующий свободный.
-  $wantPanel = 8080; $wantHls = 8888; $wantApi = 9997; $wantWhep = 8890; $wantIce = 8189
+  $wantPanel = 8080; $wantHls = 8888; $wantApi = 9997; $wantWhep = 8890; $wantIce = 8189; $wantRtmp = 1935; $wantSrt = 8890
   if (Test-Path $ConfigFile) {
     try {
       $old = [IO.File]::ReadAllText($ConfigFile).TrimStart([char]0xFEFF) | ConvertFrom-Json
@@ -203,15 +203,17 @@ try {
       if ($old.mediamtx.apiUrl) { $wantApi = ([Uri]$old.mediamtx.apiUrl).Port }
       if ($old.mediamtx.webrtcUrl) { $wantWhep = ([Uri]$old.mediamtx.webrtcUrl).Port }
       if ($old.mediamtx.icePort) { $wantIce = [int]$old.mediamtx.icePort }
+      if ($old.mediamtx.rtmpPort) { $wantRtmp = [int]$old.mediamtx.rtmpPort }
+      if ($old.mediamtx.srtPort) { $wantSrt = [int]$old.mediamtx.srtPort }
     } catch { Warn "не удалось прочитать прежний $ConfigFile — используются порты по умолчанию" }
   }
   if ($Port) { $wantPanel = $Port }
   Say 'Проверяю, свободны ли порты'
-  $r = Invoke-Native $Node @((Join-Path $InstallDir 'deploy\ports.mjs'), "panel=$wantPanel@0.0.0.0", "hls=$wantHls@127.0.0.1", "api=$wantApi@127.0.0.1", "whep=$wantWhep@127.0.0.1", "ice=$wantIce@0.0.0.0+udp")
+  $r = Invoke-Native $Node @((Join-Path $InstallDir 'deploy\ports.mjs'), "panel=$wantPanel@0.0.0.0", "hls=$wantHls@127.0.0.1", "api=$wantApi@127.0.0.1", "whep=$wantWhep@127.0.0.1", "ice=$wantIce@0.0.0.0+udp", "rtmp=$wantRtmp@0.0.0.0", "srt=$wantSrt@0.0.0.0/udp")
   if ($r.Code -ne 0) { Die "не удалось подобрать порты: $($r.Output)" }
   $ports = ($r.Output -split "`n" | Select-Object -Last 1) | ConvertFrom-Json
-  $labels = @{ panel = 'веб-интерфейса'; hls = 'видео HLS (внутренний)'; api = 'управления MediaMTX (внутренний)'; whep = 'подключения WebRTC (внутренний)'; ice = 'видео WebRTC' }
-  foreach ($k in 'panel', 'hls', 'api', 'whep', 'ice') {
+  $labels = @{ panel = 'веб-интерфейса'; hls = 'видео HLS (внутренний)'; api = 'управления MediaMTX (внутренний)'; whep = 'подключения WebRTC (внутренний)'; ice = 'видео WebRTC'; rtmp = 'приёма RTMP от энкодеров'; srt = 'приёма SRT от энкодеров' }
+  foreach ($k in 'panel', 'hls', 'api', 'whep', 'ice', 'rtmp', 'srt') {
     $pr = $ports.$k
     if ($pr.busyBy) { Warn "Порт $($pr.wanted) занят ($($pr.busyBy)) — для $($labels[$k]) взят свободный порт $($pr.port)" }
   }
@@ -226,7 +228,7 @@ try {
     '--public', (Join-Path $InstallDir 'app\public')
   )
   $cfgArgs += @('--port', $ports.panel.port, '--mtx-hls-port', $ports.hls.port, '--mtx-api-port', $ports.api.port,
-    '--mtx-whep-port', $ports.whep.port, '--ice-port', $ports.ice.port)
+    '--mtx-whep-port', $ports.whep.port, '--ice-port', $ports.ice.port, '--rtmp-port', $ports.rtmp.port, '--srt-port', $ports.srt.port)
   $cfgArgs += $pfxArgs
   $r = Invoke-Native $Node $cfgArgs
   if ($r.Code -ne 0) { Die "не удалось записать конфигурацию: $($r.Output)" }
@@ -273,6 +275,13 @@ try {
       Get-NetFirewallRule -Name "RTSPAtom-ICE-$proto" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
       New-NetFirewallRule -Name "RTSPAtom-ICE-$proto" -DisplayName "RTSP Atom видео WebRTC ($proto $($summary.icePort))" `
         -Direction Inbound -Protocol $proto -LocalPort $summary.icePort -Action Allow -Profile Any | Out-Null
+    }
+    # Приём от энкодеров, которые отправляют поток сами
+    Say "Разрешаю приём от энкодеров: RTMP $($summary.rtmpPort)/TCP, SRT $($summary.srtPort)/UDP"
+    foreach ($fw in @(@('RTSPAtom-RTMP', 'TCP', $summary.rtmpPort, 'RTMP'), @('RTSPAtom-SRT', 'UDP', $summary.srtPort, 'SRT'))) {
+      Get-NetFirewallRule -Name $fw[0] -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+      New-NetFirewallRule -Name $fw[0] -DisplayName "RTSP Atom приём $($fw[3]) от энкодеров ($($fw[1]) $($fw[2]))" `
+        -Direction Inbound -Protocol $fw[1] -LocalPort $fw[2] -Action Allow -Profile Any | Out-Null
     }
   }
 
@@ -333,6 +342,7 @@ try {
   Write-Host "    Панель на этом компьютере:  $url  (ярлык «RTSP Atom» на рабочем столе)"
   if ($ip) { Write-Host "    С других компьютеров:       ${proto}://${ip}:$($summary.port)/" }
   Write-Host "    Видео WebRTC:               порт $($summary.icePort) UDP/TCP (открыт в брандмауэре Windows)"
+  Write-Host "    Энкодеры:                   RTMP порт $($summary.rtmpPort), SRT порт $($summary.srtPort) (адреса и ключ — в панели, «Потоки»)"
   Write-Host "    Журналы:                    $LogDir"
   Write-Host '    Утилита:                    rtspatom-admin help  (командная строка от имени администратора)'
   Write-Host "    Удаление:                   $InstallDir\uninstall.cmd"

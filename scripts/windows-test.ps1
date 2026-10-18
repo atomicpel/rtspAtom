@@ -99,7 +99,7 @@ try {
     if ($svc.StartName -notmatch 'LocalService') { Fail "служба $s работает от $($svc.StartName), ожидалась LocalService" }
   }
   if (-not (Get-NetFirewallRule -Name 'RTSPAtom-HTTP' -ErrorAction SilentlyContinue)) { Fail 'нет правила брандмауэра' }
-  foreach ($r in 'RTSPAtom-ICE-UDP', 'RTSPAtom-ICE-TCP') {
+  foreach ($r in 'RTSPAtom-ICE-UDP', 'RTSPAtom-ICE-TCP', 'RTSPAtom-RTMP', 'RTSPAtom-SRT') {
     if (-not (Get-NetFirewallRule -Name $r -ErrorAction SilentlyContinue)) { Fail "нет правила брандмауэра $r (WebRTC)" }
   }
   $yml = Get-Content "$DataRoot\mediamtx.yml" -Raw
@@ -122,12 +122,15 @@ try {
   if (-not $sys.mediamtx.reachable) { Fail "панель не видит MediaMTX: $($sys.mediamtx.lastError)" }
   Write-Host "Система: $($sys.platform), MediaMTX $($sys.mediamtx.version)"
 
-  # Снаружи у MediaMTX открыт только порт медиа WebRTC (ICE), остальное — 127.0.0.1
+  # Снаружи у MediaMTX открыты порт медиа WebRTC (ICE) и приём от энкодеров (RTMP, SRT), остальное — 127.0.0.1
   $mtx = Get-Process mediamtx | Where-Object { $_.Path -like "$InstallDir*" }
   $listen = @(Get-NetTCPConnection -State Listen -OwningProcess $mtx.Id | ForEach-Object { "$($_.LocalAddress):$($_.LocalPort)" })
   $listen += @(Get-NetUDPEndpoint -OwningProcess $mtx.Id -ErrorAction SilentlyContinue | ForEach-Object { "udp $($_.LocalAddress):$($_.LocalPort)" })
   $icePort = [regex]::Match((Get-Content "$DataRoot\mediamtx.yml" -Raw), 'webrtcLocalUDPAddress: :(\d+)').Groups[1].Value
-  $exposed = $listen | Where-Object { $_ -notmatch '^(udp )?(127\.0\.0\.1|::1):' -and $_ -notmatch ":$icePort`$" }
+  $ymlText = Get-Content "$DataRoot\mediamtx.yml" -Raw
+  $rtmpPort = [regex]::Match($ymlText, 'rtmpAddress: :(\d+)').Groups[1].Value
+  $srtPort = [regex]::Match($ymlText, 'srtAddress: :(\d+)').Groups[1].Value
+  $exposed = $listen | Where-Object { $_ -notmatch '^(udp )?(127\.0\.0\.1|::1):' -and $_ -notmatch ":($icePort|$rtmpPort|$srtPort)`$" }
   if ($exposed) { Fail "MediaMTX слушает внешние адреса: $($exposed -join ', ')" }
   Write-Host "MediaMTX слушает: $($listen -join ', ')"
 
@@ -199,6 +202,27 @@ paths:
     if ($_.Exception.Response.StatusCode.value__ -ne 401) { Fail "без входа ожидался код 401, получен $($_.Exception.Response.StatusCode.value__)" }
   }
 
+  # ---------- Энкодер отправляет поток сам (RTMP и SRT) ----------
+  Step 'Приём от энкодера: RTMP и SRT'
+  foreach ($proto in 'rtmp', 'srt') {
+    $push = Api POST "$B/api/streams" @{ name = "Энкодер $proto (Windows)"; mode = 'push' } $S
+    if (-not $push.push.key) { Fail "нет ключа публикации: $($push | ConvertTo-Json -Compress)" }
+    $target = if ($proto -eq 'rtmp') { @('-f', 'flv', "rtmp://127.0.0.1:$($push.push.rtmpPort)/live/$($push.push.key)") }
+              else { @('-f', 'mpegts', "srt://127.0.0.1:$($push.push.srtPort)?streamid=publish:live/$($push.push.key)&latency=20000") }
+    Start-Sleep -Seconds 2
+    $procs += Start-Process ffmpeg -PassThru -NoNewWindow -RedirectStandardError "$Wfmpeg-$proto.log" -ArgumentList (@(
+      '-hide_banner', '-loglevel', 'error', '-re', '-f', 'lavfi', '-i', 'testsrc=size=640x360:rate=25',
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-g', '25', '-bf', '0', '-pix_fmt', 'yuv420p') + $target)
+    $status = ''
+    for ($i = 0; $i -lt 30; $i++) {
+      $status = ((Api GET "$B/api/streams" $null $S) | Where-Object id -eq $push.id).status
+      if ($status -eq 'online') { break }
+      Start-Sleep -Seconds 1
+    }
+    if ($status -ne 'online') { Fail "поток от энкодера ($proto) не появился ($status): $(Get-Content "$W\ffmpeg-$proto.log" -Raw)" }
+    Write-Host "Энкодер по $proto принят"
+  }
+
   # ---------- Перезапуск службы ----------
   Step 'Перезапуск службы rtspatom'
   Restart-Service rtspatom
@@ -227,9 +251,11 @@ paths:
   if (Test-Path $InstallDir) { Fail "каталог $InstallDir не удалён" }
   if (-not (Test-Path "$DataRoot\data\rtspatom.db")) { Fail 'база удалена без -Purge' }
   if (Get-NetFirewallRule -Name 'RTSPAtom-HTTP' -ErrorAction SilentlyContinue) { Fail 'правило брандмауэра не удалено' }
-  if (Get-NetFirewallRule -Name 'RTSPAtom-ICE-UDP' -ErrorAction SilentlyContinue) { Fail 'правило брандмауэра ICE не удалено' }
+  foreach ($r in 'RTSPAtom-ICE-UDP', 'RTSPAtom-RTMP', 'RTSPAtom-SRT') {
+    if (Get-NetFirewallRule -Name $r -ErrorAction SilentlyContinue) { Fail "правило брандмауэра $r не удалено" }
+  }
 
-  Write-Host "::notice title=Windows::Занятые порты обойдены (панель на $Port), установка, службы (LocalService), камера RTSP -> MediaMTX -> панель -> HLS ($size байт), HTTPS, обновление и удаление проверены на $((Get-CimInstance Win32_OperatingSystem).Caption)"
+  Write-Host "::notice title=Windows::Занятые порты обойдены (панель на $Port), установка, службы (LocalService), камера RTSP -> MediaMTX -> панель -> HLS ($size байт), приём от энкодера по RTMP и SRT, HTTPS, обновление и удаление проверены на $((Get-CimInstance Win32_OperatingSystem).Caption)"
   Write-Host 'Windows: всё работает' -ForegroundColor Green
 } catch {
   Fail "$($_.Exception.Message) (строка $($_.InvocationInfo.ScriptLineNumber))"

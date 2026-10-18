@@ -55,7 +55,7 @@ foreach ($s in @('rtspatom', 'rtspatom-mediamtx')) {
   $ErrorActionPreference = $prev
 }
 
-foreach ($rule in 'RTSPAtom-HTTP', 'RTSPAtom-ICE-UDP', 'RTSPAtom-ICE-TCP') {
+foreach ($rule in 'RTSPAtom-HTTP', 'RTSPAtom-ICE-UDP', 'RTSPAtom-ICE-TCP', 'RTSPAtom-RTMP', 'RTSPAtom-SRT') {
   Get-NetFirewallRule -Name $rule -ErrorAction SilentlyContinue | Remove-NetFirewallRule
 }
 
