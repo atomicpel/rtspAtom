@@ -27,6 +27,14 @@ export function detectProtocol(url) {
   return null;
 }
 
+/**
+ * Транспорт RTSP. «Автоматически» у MediaMTX — сначала UDP, а он в обычной сети теряет пакеты
+ * (рассыпается картинка, падает HLS). Поэтому «авто» = TCP; UDP — только если выбран явно.
+ */
+export function rtspTransportFor(transport) {
+  return transport === 'udp' ? 'udp' : 'tcp';
+}
+
 /** Подставляет логин/пароль камеры в URL источника (если их там ещё нет). */
 export function buildSourceUrl(url, login, password) {
   let u;
@@ -154,7 +162,7 @@ export class MediaMtxClient {
   async probe(sourceUrl, { transport = 'auto', timeoutMs = 12000 } = {}) {
     const name = `probe_${newId().replace(/[^a-zA-Z0-9]/g, '')}`;
     const conf = { source: sourceUrl, sourceOnDemand: false };
-    if (transport !== 'auto') conf.rtspTransport = transport;
+    if (sourceUrl.startsWith('rtsp')) conf.rtspTransport = rtspTransportFor(transport);
     await this.addPath(name, conf);
     try {
       const deadline = Date.now() + timeoutMs;
@@ -260,7 +268,7 @@ export class StreamSync {
         continue;
       }
       const conf = { source: buildSourceUrl(s.url, s.source_login, s.source_password), sourceOnDemand: !alwaysOn };
-      if (s.protocol === 'rtsp' && s.transport !== 'auto') conf.rtspTransport = s.transport;
+      if (s.protocol === 'rtsp') conf.rtspTransport = rtspTransportFor(s.transport);
       if (this.archiveDir) Object.assign(conf, { record: !!s.record, ...this.archiveConf() });
       const name = pathNameOf(s);
       map.set(name, { conf, stream: s });

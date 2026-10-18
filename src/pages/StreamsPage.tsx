@@ -282,10 +282,10 @@ export function StreamsPage() {
                 placeholder={editing?.hasPassword ? 'без изменений' : ''}
                 onChange={(e) => setForm({ ...form, sourcePassword: e.target.value })} />
             </Field>
-            <Field label="Транспорт RTSP" hint="TCP надёжнее через маршрутизаторы">
+            <Field label="Транспорт RTSP" hint="UDP — только если камера не умеет TCP: в обычной сети он теряет пакеты">
               <select className={inputCls} value={form.transport} disabled={detected !== null && detected !== 'RTSP'}
                 onChange={(e) => setForm({ ...form, transport: e.target.value as StreamTransport })}>
-                <option value="auto">Автоматически</option>
+                <option value="auto">Автоматически (TCP)</option>
                 <option value="tcp">TCP</option>
                 <option value="udp">UDP</option>
               </select>
