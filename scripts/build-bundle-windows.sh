@@ -39,7 +39,7 @@ cp "$ROOT/server/index.js" "$ROOT/server/cli.js" "$ROOT/server/package.json" "$S
 cp -r "$ROOT/dist" "$STAGE/app/public"
 
 # Установщик
-cp "$ROOT/deploy/mediamtx.yml" "$STAGE/deploy/"
+cp "$ROOT/deploy/mediamtx.yml" "$ROOT/deploy/ports.mjs" "$STAGE/deploy/"
 cp "$ROOT/deploy/windows/"* "$STAGE/deploy/windows/"
 mv "$STAGE/deploy/windows/install.ps1" "$STAGE/deploy/windows/install.cmd" "$STAGE/"
 cp "$ROOT/INSTALL-WINDOWS.md" "$STAGE/INSTALL.md"

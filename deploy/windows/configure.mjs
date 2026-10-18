@@ -5,7 +5,8 @@
 //
 //   node configure.mjs --config <config.json> --template <mediamtx.yml> --yml <mediamtx.yml>
 //                     --data <каталог данных> --public <каталог фронтенда>
-//                     [--port N] [--tls-pfx <файл> --tls-pass <пароль>]
+//                     [--port N] [--mtx-api-port N] [--mtx-hls-port N]
+//                     [--tls-pfx <файл> --tls-pass <пароль>]
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -48,19 +49,28 @@ if (args['tls-pfx']) {
 cfg.mediamtx = cfg.mediamtx || {};
 cfg.mediamtx.apiUrl = cfg.mediamtx.apiUrl || 'http://127.0.0.1:9997';
 cfg.mediamtx.hlsUrl = cfg.mediamtx.hlsUrl || 'http://127.0.0.1:8888';
+if (args['mtx-api-port']) cfg.mediamtx.apiUrl = `http://127.0.0.1:${Number(args['mtx-api-port'])}`;
+if (args['mtx-hls-port']) cfg.mediamtx.hlsUrl = `http://127.0.0.1:${Number(args['mtx-hls-port'])}`;
+const apiAddr = new URL(cfg.mediamtx.apiUrl).host;
+const hlsAddr = new URL(cfg.mediamtx.hlsUrl).host;
 if (!cfg.mediamtx.cdnSecret) cfg.mediamtx.cdnSecret = crypto.randomBytes(24).toString('hex');
 write(args.config, JSON.stringify(cfg, null, 2) + '\n');
 
-const rendered = readText(args.template).replace('@CDN_SECRET@', cfg.mediamtx.cdnSecret).replace(/\r?\n/g, '\r\n');
+// Адреса API и HLS в mediamtx.yml должны совпадать с выбранными портами.
+const setAddrs = (text) => text
+  .replace(/^apiAddress:.*$/m, `apiAddress: ${apiAddr}`)
+  .replace(/^hlsAddress:.*$/m, `hlsAddress: ${hlsAddr}`);
+const rendered = setAddrs(readText(args.template).replace('@CDN_SECRET@', cfg.mediamtx.cdnSecret)).replace(/\r?\n/g, '\r\n');
 let ymlNew = false;
 if (!fs.existsSync(args.yml)) {
   write(args.yml, rendered);
 } else {
-  let current = readText(args.yml);
+  const original = readText(args.yml);
+  let current = setAddrs(original);
   if (!/^hlsCDNSecret:/m.test(current)) {
     current += `\r\n# Добавлено установщиком RTSP Atom\r\nhlsCDNSecret: "${cfg.mediamtx.cdnSecret}"\r\n`;
-    write(args.yml, current);
   }
+  if (current !== original) write(args.yml, current);
   if (current.replace(/\r\n/g, '\n') !== rendered.replace(/\r\n/g, '\n')) {
     write(args.yml + '.new', rendered);
     ymlNew = true;
@@ -68,4 +78,4 @@ if (!fs.existsSync(args.yml)) {
 }
 
 fs.mkdirSync(path.join(args.data), { recursive: true });
-console.log(JSON.stringify({ port: cfg.port, tls: !!cfg.tls.enabled, ymlNew }));
+console.log(JSON.stringify({ port: cfg.port, apiAddr, hlsAddr, tls: !!cfg.tls.enabled, ymlNew }));

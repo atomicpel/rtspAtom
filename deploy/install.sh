@@ -133,10 +133,43 @@ SECRET="$("$NODE" -e '
   console.log(cfg.mediamtx.cdnSecret);
 ' "$CONF")"
 
+# Свободные порты: желаемые — из --port / прежней установки / по умолчанию.
+# Наши службы уже остановлены; если порт занят другой программой — берём следующий свободный.
+read -r WANT_PANEL WANT_HLS WANT_API < <("$NODE" -e '
+  const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+  const p = (u, d) => { try { return Number(new URL(u).port) || d; } catch { return d; } };
+  console.log(c.port || 8080, p(c.mediamtx?.hlsUrl, 8888), p(c.mediamtx?.apiUrl, 9997));
+' "$CONF")
+[ -n "$PORT" ] && WANT_PANEL="$PORT"
+say "Проверяю, свободны ли порты"
+PORTS_JSON="$("$NODE" "$SRC/deploy/ports.mjs" "panel=$WANT_PANEL@0.0.0.0" "hls=$WANT_HLS@127.0.0.1" "api=$WANT_API@127.0.0.1")" \
+  || die "не удалось подобрать свободные порты"
+read -r P_PANEL P_HLS P_API < <("$NODE" -e '
+  const r = JSON.parse(process.argv[1]);
+  const labels = { panel: "веб-интерфейса", hls: "видео MediaMTX (внутренний)", api: "управления MediaMTX (внутренний)" };
+  for (const k of ["panel", "hls", "api"]) {
+    if (r[k].busyBy) console.error(`!! Порт ${r[k].wanted} занят (${r[k].busyBy}) — для ${labels[k]} взят свободный порт ${r[k].port}`);
+  }
+  console.log(r.panel.port, r.hls.port, r.api.port);
+' "$PORTS_JSON")
+"$NODE" -e '
+  const fs = require("fs");
+  const [file, panel, hls, api] = process.argv.slice(1);
+  const c = JSON.parse(fs.readFileSync(file, "utf8"));
+  c.port = Number(panel);
+  c.mediamtx = c.mediamtx || {};
+  c.mediamtx.hlsUrl = `http://127.0.0.1:${hls}`;
+  c.mediamtx.apiUrl = `http://127.0.0.1:${api}`;
+  fs.writeFileSync(file, JSON.stringify(c, null, 2) + "\n");
+' "$CONF" "$P_PANEL" "$P_HLS" "$P_API"
+
 YML="$CONF_DIR/mediamtx.yml"
 RENDERED="$(mktemp)"
-sed "s/@CDN_SECRET@/$SECRET/" "$SRC/deploy/mediamtx.yml" > "$RENDERED"
+SET_ADDRS=(-e "s/^apiAddress:.*/apiAddress: 127.0.0.1:$P_API/" -e "s/^hlsAddress:.*/hlsAddress: 127.0.0.1:$P_HLS/")
+sed -e "s/@CDN_SECRET@/$SECRET/" "${SET_ADDRS[@]}" "$SRC/deploy/mediamtx.yml" > "$RENDERED"
 if [ -f "$YML" ]; then
+  # Адреса API и HLS в существующем файле приводим к выбранным портам
+  sed -i "${SET_ADDRS[@]}" "$YML"
   if ! grep -q '^hlsCDNSecret:' "$YML"; then
     printf '\n# Добавлено установщиком RTSP Atom\nhlsCDNSecret: "%s"\n' "$SECRET" >> "$YML"
   fi
@@ -166,13 +199,12 @@ if [ $TLS -eq 1 ]; then
   fi
 fi
 
-# Применяем --port / --tls к существующему конфигу
-if [ -n "$PORT" ] || [ $TLS -eq 1 ]; then
+# Применяем --tls к существующему конфигу
+if [ $TLS -eq 1 ]; then
   "$NODE" -e '
     const fs = require("fs");
-    const [file, port, tls] = process.argv.slice(1);
+    const [file, tls] = process.argv.slice(1);
     const cfg = JSON.parse(fs.readFileSync(file, "utf8"));
-    if (port) cfg.port = Number(port);
     if (tls === "1") {
       cfg.tls = cfg.tls || {};
       cfg.tls.enabled = true;
@@ -180,7 +212,7 @@ if [ -n "$PORT" ] || [ $TLS -eq 1 ]; then
       cfg.tls.key = cfg.tls.key || "/etc/rtspatom/tls/key.pem";
     }
     fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + "\n");
-  ' "$CONF" "$PORT" "$TLS"
+  ' "$CONF" "$TLS"
 fi
 PORT_NOW="$("$NODE" -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).port)' "$CONF")"
 TLS_NOW="$("$NODE" -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).tls?.enabled ? "https" : "http")' "$CONF")"

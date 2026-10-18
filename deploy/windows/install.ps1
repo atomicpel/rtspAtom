@@ -191,6 +191,29 @@ try {
     }
   }
 
+  # --- Свободные порты ----------------------------------------------------------------
+  # Желаемые порты: из -Port / прежней установки / по умолчанию. Если порт занят другой
+  # программой (наши службы уже остановлены), берётся следующий свободный.
+  $wantPanel = 8080; $wantHls = 8888; $wantApi = 9997
+  if (Test-Path $ConfigFile) {
+    try {
+      $old = [IO.File]::ReadAllText($ConfigFile).TrimStart([char]0xFEFF) | ConvertFrom-Json
+      if ($old.port) { $wantPanel = [int]$old.port }
+      if ($old.mediamtx.hlsUrl) { $wantHls = ([Uri]$old.mediamtx.hlsUrl).Port }
+      if ($old.mediamtx.apiUrl) { $wantApi = ([Uri]$old.mediamtx.apiUrl).Port }
+    } catch { Warn "не удалось прочитать прежний $ConfigFile — используются порты по умолчанию" }
+  }
+  if ($Port) { $wantPanel = $Port }
+  Say 'Проверяю, свободны ли порты'
+  $r = Invoke-Native $Node @((Join-Path $InstallDir 'deploy\ports.mjs'), "panel=$wantPanel@0.0.0.0", "hls=$wantHls@127.0.0.1", "api=$wantApi@127.0.0.1")
+  if ($r.Code -ne 0) { Die "не удалось подобрать порты: $($r.Output)" }
+  $ports = ($r.Output -split "`n" | Select-Object -Last 1) | ConvertFrom-Json
+  $labels = @{ panel = 'веб-интерфейса'; hls = 'видео MediaMTX (внутренний)'; api = 'управления MediaMTX (внутренний)' }
+  foreach ($k in 'panel', 'hls', 'api') {
+    $pr = $ports.$k
+    if ($pr.busyBy) { Warn "Порт $($pr.wanted) занят ($($pr.busyBy)) — для $($labels[$k]) взят свободный порт $($pr.port)" }
+  }
+
   # --- Конфигурация -------------------------------------------------------------------
   $cfgArgs = @(
     (Join-Path $InstallDir 'deploy\windows\configure.mjs'),
@@ -200,7 +223,7 @@ try {
     '--data', $DataDir,
     '--public', (Join-Path $InstallDir 'app\public')
   )
-  if ($Port) { $cfgArgs += @('--port', $Port) }
+  $cfgArgs += @('--port', $ports.panel.port, '--mtx-hls-port', $ports.hls.port, '--mtx-api-port', $ports.api.port)
   $cfgArgs += $pfxArgs
   $r = Invoke-Native $Node $cfgArgs
   if ($r.Code -ne 0) { Die "не удалось записать конфигурацию: $($r.Output)" }

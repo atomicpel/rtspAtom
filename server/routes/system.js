@@ -6,7 +6,7 @@ import { getSettings, saveSettings, validateSettings } from '../lib/settings.js'
 import { canAccessComputer } from '../lib/access.js';
 import { PLATFORM } from '../lib/config.js';
 
-export const APP_VERSION = '1.2.0';
+export const APP_VERSION = '1.2.1';
 const LOG_LEVELS = ['info', 'warning', 'error', 'debug'];
 const LOG_CATEGORIES = ['auth', 'access', 'stream', 'error', 'admin'];
 

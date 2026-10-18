@@ -34,7 +34,12 @@ server.requestTimeout = 0; // LL-HLS использует долгие запр�
 server.headersTimeout = 30_000;
 
 server.on('error', (err) => {
-  console.error(`Не удалось запустить сервер: ${err.message}`);
+  if (err.code === 'EADDRINUSE') {
+    log.error('error', `Порт ${config.port} занят другой программой — панель не может запуститься. ` +
+      'Освободите порт или запустите установщик ещё раз: он сам подберёт свободный порт.');
+  } else {
+    log.error('error', `Не удалось запустить сервер: ${err.message}`);
+  }
   process.exit(1);
 });
 

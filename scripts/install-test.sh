@@ -11,7 +11,15 @@ W="$(mktemp -d)"
 tar -xzf "$TAR" -C "$W"
 cd "$W"/rtspatom-*
 
+# Посторонние программы на порту панели и порту HLS: установщик должен взять следующие свободные
+BUNDLE_NODE="$(pwd)/node/bin/node"
+"$BUNDLE_NODE" -e "require('net').createServer().listen(18090,'0.0.0.0')" & B1=$!
+"$BUNDLE_NODE" -e "require('net').createServer().listen(8888,'127.0.0.1')" & B2=$!
+sleep 1
 ./install.sh --no-start --port 18090 </dev/null
+grep -q '"port": 18091' /etc/rtspatom/config.json || { echo "порт панели не подобран"; cat /etc/rtspatom/config.json; exit 1; }
+grep -q 'hlsAddress: 127.0.0.1:8889' /etc/rtspatom/mediamtx.yml || { echo "порт HLS не подобран"; exit 1; }
+grep -q '"hlsUrl": "http://127.0.0.1:8889"' /etc/rtspatom/config.json || { echo "hlsUrl не совпадает"; exit 1; }
 test -x /opt/rtspatom/node/bin/node
 test -x /opt/rtspatom/mediamtx/mediamtx
 test -f /etc/rtspatom/config.json
@@ -23,24 +31,29 @@ echo 'install-test-pass' | rtspatom-admin create-admin admin --password-stdin
 rtspatom-admin list-users | grep -q admin
 
 cd /var/lib/rtspatom
-runuser -u rtspatom -- /opt/rtspatom/mediamtx/mediamtx /etc/rtspatom/mediamtx.yml > /tmp/mtx.log 2>&1 &
+runuser -u rtspatom -- /opt/rtspatom/mediamtx/mediamtx /etc/rtspatom/mediamtx.yml > /tmp/mtx.log 2>&1 & MTX_PID=$!
 runuser -u rtspatom -- env RTSPATOM_CONFIG=/etc/rtspatom/config.json \
-  /opt/rtspatom/node/bin/node --disable-warning=ExperimentalWarning /opt/rtspatom/app/server/index.js > /tmp/srv.log 2>&1 &
+  /opt/rtspatom/node/bin/node --disable-warning=ExperimentalWarning /opt/rtspatom/app/server/index.js > /tmp/srv.log 2>&1 & SRV_PID=$!
 
-for i in $(seq 1 30); do curl -sf http://127.0.0.1:18090/api/auth/status >/dev/null && break; sleep 0.5; done
-curl -sf http://127.0.0.1:18090/ | grep -q 'id="root"'
+for i in $(seq 1 30); do curl -sf http://127.0.0.1:18091/api/auth/status >/dev/null && break; sleep 0.5; done
+curl -sf http://127.0.0.1:18091/ | grep -q 'id="root"'
 curl -sf -c /tmp/c -H 'Content-Type: application/json' -H 'X-RTSPAtom: 1' \
-  -d '{"login":"admin","password":"install-test-pass"}' http://127.0.0.1:18090/api/auth/login | grep -q '"isAdmin":true'
+  -d '{"login":"admin","password":"install-test-pass"}' http://127.0.0.1:18091/api/auth/login | grep -q '"isAdmin":true'
 for i in $(seq 1 20); do
-  curl -sf -b /tmp/c http://127.0.0.1:18090/api/system | grep -q '"reachable":true' && break
+  curl -sf -b /tmp/c http://127.0.0.1:18091/api/system | grep -q '"reachable":true' && break
   sleep 0.5
 done
-curl -sf -b /tmp/c http://127.0.0.1:18090/api/system
+curl -sf -b /tmp/c http://127.0.0.1:18091/api/system
 echo
-curl -sf -b /tmp/c http://127.0.0.1:18090/api/system | grep -q '"reachable":true' || { cat /tmp/mtx.log /tmp/srv.log; exit 1; }
+curl -sf -b /tmp/c http://127.0.0.1:18091/api/system | grep -q '"reachable":true' || { cat /tmp/mtx.log /tmp/srv.log; exit 1; }
 
-# Повторная установка (обновление) не должна терять данные
+# Повторная установка (обновление) не должна терять данные и менять порты.
+# Как и службы при настоящем обновлении, останавливаем запущенные вручную процессы.
+kill $SRV_PID $MTX_PID 2>/dev/null || true
+sleep 2
 cd "$W"/rtspatom-* && ./install.sh --no-start </dev/null
+grep -q '"port": 18091' /etc/rtspatom/config.json || { echo "порт сменился при обновлении"; exit 1; }
+kill $B1 $B2 2>/dev/null || true
 rtspatom-admin list-users | grep -q admin
 /opt/rtspatom/uninstall.sh
 test ! -d /opt/rtspatom

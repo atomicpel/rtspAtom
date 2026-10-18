@@ -71,9 +71,25 @@ try {
   Expand-Archive -LiteralPath $Zip -DestinationPath $W
   $bundle = (Get-ChildItem $W -Directory | Select-Object -First 1).FullName
 
+  # ---------- Занятые порты ----------
+  # Имитируем «чужую» программу на порту панели и на порту HLS MediaMTX:
+  # установщик должен сам взять следующие свободные порты.
+  Step "Занимаю порты $Port и 8888 посторонними процессами"
+  foreach ($bp in @(@($Port, '0.0.0.0'), @(8888, '127.0.0.1'))) {
+    $procs += Start-Process "$bundle\node\node.exe" -PassThru -NoNewWindow `
+      -ArgumentList @('-e', "`"require('net').createServer().listen($($bp[0]),'$($bp[1])')`"")
+  }
+  Start-Sleep -Seconds 1
+
   # ---------- Установка ----------
   Step 'Установка (Windows PowerShell 5.1)'
   Install-Bundle @('-Port', $Port, '-AdminPassword', "`"$Password`"")
+  $cfg = Get-Content "$DataRoot\config.json" -Raw | ConvertFrom-Json
+  if ($cfg.port -eq $Port) { Fail "установщик занял уже занятый порт $Port" }
+  if (([Uri]$cfg.mediamtx.hlsUrl).Port -eq 8888) { Fail 'установщик занял уже занятый порт 8888' }
+  if ((Get-Content "$DataRoot\mediamtx.yml" -Raw) -notmatch "hlsAddress: 127\.0\.0\.1:$(([Uri]$cfg.mediamtx.hlsUrl).Port)") { Fail 'адрес HLS в mediamtx.yml не совпадает с config.json' }
+  Write-Host "Порты подобраны: панель $($cfg.port), HLS $(([Uri]$cfg.mediamtx.hlsUrl).Port), API $(([Uri]$cfg.mediamtx.apiUrl).Port)"
+  $Port = [int]$cfg.port
 
   foreach ($s in 'rtspatom', 'rtspatom-mediamtx') {
     $svc = Get-CimInstance Win32_Service -Filter "Name='$s'"
@@ -182,6 +198,8 @@ paths:
   # ---------- Обновление с включением HTTPS ----------
   Step 'Повторная установка с -Tls (обновление, данные должны сохраниться)'
   Install-Bundle @('-Tls')
+  $cfg2 = Get-Content "$DataRoot\config.json" -Raw | ConvertFrom-Json
+  if ($cfg2.port -ne $Port) { Fail "при обновлении порт сменился: $Port -> $($cfg2.port)" }
   $BS = "https://127.0.0.1:$Port"
   Wait-Http "$BS/api/auth/status"
   $S2 = New-Session $BS
@@ -201,7 +219,7 @@ paths:
   if (-not (Test-Path "$DataRoot\data\rtspatom.db")) { Fail 'база удалена без -Purge' }
   if (Get-NetFirewallRule -Name 'RTSPAtom-HTTP' -ErrorAction SilentlyContinue) { Fail 'правило брандмауэра не удалено' }
 
-  Write-Host "::notice title=Windows::Установка, службы (LocalService), камера RTSP -> MediaMTX -> панель -> HLS ($size байт), HTTPS, обновление и удаление проверены на $((Get-CimInstance Win32_OperatingSystem).Caption)"
+  Write-Host "::notice title=Windows::Занятые порты обойдены (панель на $Port), установка, службы (LocalService), камера RTSP -> MediaMTX -> панель -> HLS ($size байт), HTTPS, обновление и удаление проверены на $((Get-CimInstance Win32_OperatingSystem).Caption)"
   Write-Host 'Windows: всё работает' -ForegroundColor Green
 } catch {
   Fail "$($_.Exception.Message) (строка $($_.InvocationInfo.ScriptLineNumber))"
