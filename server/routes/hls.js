@@ -31,9 +31,7 @@ export async function handleHls(app, req, res, url, session, ip) {
     const last = app.viewers.get(key);
     const isNew = !last || now - last > VIEWER_ACTIVE_MS;
     if (isNew) {
-      let active = 0;
-      for (const t of app.viewers.values()) if (now - t < VIEWER_ACTIVE_MS) active++;
-      if (active >= getSettings(app.db).maxConnections) {
+      if (app.activeViewerCount() >= getSettings(app.db).maxConnections) {
         throw new HttpError(503, 'Достигнут лимит одновременных подключений');
       }
       if (!last) {

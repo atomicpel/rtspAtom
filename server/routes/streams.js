@@ -5,7 +5,6 @@ import { canAccessStream, hasRole } from '../lib/access.js';
 import { detectProtocol, redactUrl, buildSourceUrl, SOURCE_PROTOCOLS } from '../lib/mediamtx.js';
 
 const TRANSPORTS = ['auto', 'tcp', 'udp'];
-const VIEWER_ACTIVE_MS = 20_000;
 
 function str(v, max, field, { required = false } = {}) {
   const s = v === undefined || v === null ? '' : String(v).trim();
@@ -63,12 +62,7 @@ export function registerStreams(router, app) {
   const sync = () => app.sync?.trigger().catch(() => {});
   const getStream = (id) => db.prepare('SELECT * FROM streams WHERE id = ?').get(id);
 
-  function viewersOf(streamId) {
-    const now = Date.now();
-    let n = 0;
-    for (const [k, t] of app.viewers) if (k.endsWith(`|${streamId}`) && now - t < VIEWER_ACTIVE_MS) n++;
-    return n;
-  }
+  const viewersOf = (streamId) => app.viewersOf(streamId);
 
   function streamToApi(s, user) {
     const privileged = hasRole(user, 'operator');

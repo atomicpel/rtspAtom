@@ -43,7 +43,7 @@ before(async () => {
   const log = new EventLog(db, { quiet: true });
   const config = {
     publicDir: tmp, trustProxy: true, tls: { enabled: false },
-    mediamtx: { apiUrl: fakeUrl, hlsUrl: fakeUrl, cdnSecret: 'test-cdn-secret' },
+    mediamtx: { apiUrl: fakeUrl, hlsUrl: fakeUrl, webrtcUrl: fakeUrl, cdnSecret: 'test-cdn-secret' },
   };
   const sync = new StreamSync({ db, client: new MediaMtxClient(fakeUrl), log, settings: () => getSettings(db) });
   app = { db, config, log, sync, startedAt: Date.now() };
@@ -254,6 +254,46 @@ test('без общего секрета MediaMTX прокси сообщает 
   assert.equal(r.status, 502);
   assert.match(r.data.error, /hlsCDNSecret/);
   app.config.mediamtx.cdnSecret = 'test-cdn-secret';
+});
+
+test('WebRTC (WHEP): сигнализация через панель с проверкой прав и учётом зрителей', async () => {
+  fake.ready.add(`s_${streamId}`);
+  const sdp = { method: 'POST', headers: { 'Content-Type': 'application/sdp', 'X-RTSPAtom': '1', Cookie: admin.cookie }, body: 'v=0 offer' };
+  // без входа и без CSRF-заголовка — отказ
+  let r = await fetch(`${base}/webrtc/${streamId}/whep`, { ...sdp, headers: { 'Content-Type': 'application/sdp', 'X-RTSPAtom': '1' } });
+  assert.equal(r.status, 401);
+  r = await fetch(`${base}/webrtc/${streamId}/whep`, { ...sdp, headers: { 'Content-Type': 'application/sdp', Cookie: admin.cookie } });
+  assert.equal(r.status, 403);
+
+  r = await fetch(`${base}/webrtc/${streamId}/whep`, sdp);
+  assert.equal(r.status, 201);
+  assert.equal(r.headers.get('content-type'), 'application/sdp');
+  const loc = r.headers.get('location');
+  assert.match(loc, new RegExp(`^/webrtc/${streamId}/whep/sess`));
+  assert.match(await r.text(), /answer for offer/);
+
+  await app.sync.refreshStatus();
+  r = await admin.get('/api/streams');
+  assert.equal(r.data.find((x) => x.id === streamId).viewers >= 1, true, 'зритель WebRTC учтён');
+
+  // чужой сеанс удалить нельзя
+  const other = new Client('10.0.0.5');
+  other.cookie = remoteAdmin.cookie;
+  r = await fetch(base + loc, { method: 'DELETE', headers: { 'X-RTSPAtom': '1', Cookie: remoteAdmin.cookie } });
+  assert.equal(r.status, 404);
+  r = await fetch(base + loc, { method: 'DELETE', headers: { 'X-RTSPAtom': '1', Cookie: admin.cookie } });
+  assert.equal(r.status, 200);
+  assert.equal(fake.whep.size, 0);
+
+  // отключённый поток
+  await admin.put(`/api/streams/${otherStreamId}`, { isActive: false });
+  r = await fetch(`${base}/webrtc/${otherStreamId}/whep`, sdp);
+  assert.equal(r.status, 409);
+  await admin.put(`/api/streams/${otherStreamId}`, { isActive: true });
+
+  // настройка lowLatency видна до входа
+  r = await new Client().get('/api/auth/status');
+  assert.equal(r.data.lowLatency, true);
 });
 
 test('лимит одновременных подключений к видео', async () => {

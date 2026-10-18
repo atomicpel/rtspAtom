@@ -194,22 +194,24 @@ try {
   # --- Свободные порты ----------------------------------------------------------------
   # Желаемые порты: из -Port / прежней установки / по умолчанию. Если порт занят другой
   # программой (наши службы уже остановлены), берётся следующий свободный.
-  $wantPanel = 8080; $wantHls = 8888; $wantApi = 9997
+  $wantPanel = 8080; $wantHls = 8888; $wantApi = 9997; $wantWhep = 8890; $wantIce = 8189
   if (Test-Path $ConfigFile) {
     try {
       $old = [IO.File]::ReadAllText($ConfigFile).TrimStart([char]0xFEFF) | ConvertFrom-Json
       if ($old.port) { $wantPanel = [int]$old.port }
       if ($old.mediamtx.hlsUrl) { $wantHls = ([Uri]$old.mediamtx.hlsUrl).Port }
       if ($old.mediamtx.apiUrl) { $wantApi = ([Uri]$old.mediamtx.apiUrl).Port }
+      if ($old.mediamtx.webrtcUrl) { $wantWhep = ([Uri]$old.mediamtx.webrtcUrl).Port }
+      if ($old.mediamtx.icePort) { $wantIce = [int]$old.mediamtx.icePort }
     } catch { Warn "не удалось прочитать прежний $ConfigFile — используются порты по умолчанию" }
   }
   if ($Port) { $wantPanel = $Port }
   Say 'Проверяю, свободны ли порты'
-  $r = Invoke-Native $Node @((Join-Path $InstallDir 'deploy\ports.mjs'), "panel=$wantPanel@0.0.0.0", "hls=$wantHls@127.0.0.1", "api=$wantApi@127.0.0.1")
+  $r = Invoke-Native $Node @((Join-Path $InstallDir 'deploy\ports.mjs'), "panel=$wantPanel@0.0.0.0", "hls=$wantHls@127.0.0.1", "api=$wantApi@127.0.0.1", "whep=$wantWhep@127.0.0.1", "ice=$wantIce@0.0.0.0+udp")
   if ($r.Code -ne 0) { Die "не удалось подобрать порты: $($r.Output)" }
   $ports = ($r.Output -split "`n" | Select-Object -Last 1) | ConvertFrom-Json
-  $labels = @{ panel = 'веб-интерфейса'; hls = 'видео MediaMTX (внутренний)'; api = 'управления MediaMTX (внутренний)' }
-  foreach ($k in 'panel', 'hls', 'api') {
+  $labels = @{ panel = 'веб-интерфейса'; hls = 'видео HLS (внутренний)'; api = 'управления MediaMTX (внутренний)'; whep = 'подключения WebRTC (внутренний)'; ice = 'видео WebRTC' }
+  foreach ($k in 'panel', 'hls', 'api', 'whep', 'ice') {
     $pr = $ports.$k
     if ($pr.busyBy) { Warn "Порт $($pr.wanted) занят ($($pr.busyBy)) — для $($labels[$k]) взят свободный порт $($pr.port)" }
   }
@@ -223,7 +225,8 @@ try {
     '--data', $DataDir,
     '--public', (Join-Path $InstallDir 'app\public')
   )
-  $cfgArgs += @('--port', $ports.panel.port, '--mtx-hls-port', $ports.hls.port, '--mtx-api-port', $ports.api.port)
+  $cfgArgs += @('--port', $ports.panel.port, '--mtx-hls-port', $ports.hls.port, '--mtx-api-port', $ports.api.port,
+    '--mtx-whep-port', $ports.whep.port, '--ice-port', $ports.ice.port)
   $cfgArgs += $pfxArgs
   $r = Invoke-Native $Node $cfgArgs
   if ($r.Code -ne 0) { Die "не удалось записать конфигурацию: $($r.Output)" }
@@ -264,6 +267,13 @@ try {
     Get-NetFirewallRule -Name 'RTSPAtom-HTTP' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
     New-NetFirewallRule -Name 'RTSPAtom-HTTP' -DisplayName "RTSP Atom (TCP $($summary.port))" `
       -Direction Inbound -Protocol TCP -LocalPort $summary.port -Action Allow -Profile Any | Out-Null
+    # Видео WebRTC идёт напрямую от MediaMTX по порту ICE (UDP, запасной — TCP)
+    Say "Разрешаю видео WebRTC на порт $($summary.icePort) (UDP и TCP)"
+    foreach ($proto in 'UDP', 'TCP') {
+      Get-NetFirewallRule -Name "RTSPAtom-ICE-$proto" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+      New-NetFirewallRule -Name "RTSPAtom-ICE-$proto" -DisplayName "RTSP Atom видео WebRTC ($proto $($summary.icePort))" `
+        -Direction Inbound -Protocol $proto -LocalPort $summary.icePort -Action Allow -Profile Any | Out-Null
+    }
   }
 
   # --- Первый администратор -----------------------------------------------------------
@@ -322,6 +332,7 @@ try {
   Say "Готово: $version"
   Write-Host "    Панель на этом компьютере:  $url  (ярлык «RTSP Atom» на рабочем столе)"
   if ($ip) { Write-Host "    С других компьютеров:       ${proto}://${ip}:$($summary.port)/" }
+  Write-Host "    Видео WebRTC:               порт $($summary.icePort) UDP/TCP (открыт в брандмауэре Windows)"
   Write-Host "    Журналы:                    $LogDir"
   Write-Host '    Утилита:                    rtspatom-admin help  (командная строка от имени администратора)'
   Write-Host "    Удаление:                   $InstallDir\uninstall.cmd"

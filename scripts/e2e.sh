@@ -70,10 +70,10 @@ curl -sf "$B/" | grep -q '<div id="root">' || fail "фронтенд не отд
 H=(-H 'Content-Type: application/json' -H 'X-RTSPAtom: 1' -b "$J" -c "$J")
 curl -sf "${H[@]}" -d '{"login":"admin","password":"e2e-password"}' "$B/api/auth/login" >/dev/null || fail "вход"
 
-# MediaMTX панели не должен слушать внешние адреса
+# MediaMTX панели снаружи доступен только портом медиа WebRTC (ICE 8189), остальное — 127.0.0.1
 sleep 1
 kill -0 "$MTX_PID" 2>/dev/null || fail "MediaMTX с deploy/mediamtx.yml не запустился"
-EXPOSED=$(ss -ltnupH 2>/dev/null | grep "pid=$MTX_PID," | awk '{print $5}' | grep -vE '^(127\.0\.0\.1|\[::1\]):' || true)
+EXPOSED=$(ss -ltnupH 2>/dev/null | grep "pid=$MTX_PID," | awk '{print $5}' | grep -vE '^(127\.0\.0\.1|\[::1\]):' | grep -vE ':8189$' || true)
 [ -z "$EXPOSED" ] || fail "MediaMTX слушает внешние адреса: $EXPOSED"
 echo "MediaMTX слушает: $(ss -ltnupH | grep "pid=$MTX_PID," | awk '{print $5}' | tr '\n' ' ')"
 
@@ -143,6 +143,13 @@ CODE=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8888/s_$STREAM/$
 CODE=$(curl -s -o /dev/null -w '%{http_code}' "$B/hls/$STREAM/index.m3u8")
 [ "$CODE" = "401" ] || fail "HLS без входа вернул $CODE, ожидался 401"
 
+# WebRTC (WHEP): без входа — 401, со входом запрос доходит до MediaMTX
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -H 'X-RTSPAtom: 1' -H 'Content-Type: application/sdp' -d 'v=0' "$B/webrtc/$STREAM/whep")
+[ "$CODE" = "401" ] || fail "WHEP без входа вернул $CODE, ожидался 401"
+WHEP=$(curl -s -w ' %{http_code}' -b "$J" -H 'X-RTSPAtom: 1' -H 'Content-Type: application/sdp' --data-binary 'v=0' "$B/webrtc/$STREAM/whep")
+echo "WHEP с неверным SDP: $WHEP"
+case "$WHEP" in *WebRTC:*) ;; *) fail "WHEP-прокси не дошёл до MediaMTX: $WHEP" ;; esac
+
 # Скриншоты интерфейса (только в CI): ещё три тестовые камеры с разными картинками
 if [ -n "${SHOTS_DIR:-}" ]; then
   i=2
@@ -152,12 +159,21 @@ if [ -n "${SHOTS_DIR:-}" ]; then
       -f rtsp -rtsp_transport tcp "rtsp://127.0.0.1:18554/cam$i" > "$W/ffmpeg$i.log" 2>&1 & PIDS+=($!)
     i=$((i+1))
   done
-  sleep 2
   curl -sf "${H[@]}" -X PUT -d '{"name":"Въезд, ворота 1","description":"КПП"}' "$B/api/streams/$STREAM" >/dev/null
   for n in "2|Периметр, север|Северный участок" "3|Склад, западные ворота|" "4|Стоянка|Гостевая"; do
     IFS='|' read -r num name desc <<<"$n"
     curl -sf "${H[@]}" -d "{\"name\":\"$name\",\"description\":\"$desc\",\"url\":\"rtsp://127.0.0.1:18554/cam$num\",\"transport\":\"tcp\"}" "$B/api/streams" >/dev/null
   done
+  # Камера-часы для замера задержки: в кадре время UTC с миллисекундами в момент кодирования кадра
+  [ -f /usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf ] || echo "::warning title=Замер задержки::нет шрифта DejaVu, часы в кадре не появятся"
+  sed "s|@FONT@|/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf|" > "$W/clock.filter" <<'EOF'
+setpts=RTCTIME/(TB*1000000),drawtext=fontfile=@FONT@:fontsize=72:fontcolor=white:box=1:boxcolor=black@0.85:boxborderw=12:x=30:y=30:text='%{pts\:gmtime\:0\:%H\\\:%M\\\:%S}.%{eif\:1000*mod(t\,1)\:d\:3}',setpts=N/(30*TB)
+EOF
+  ffmpeg -hide_banner -loglevel error -re -f lavfi -i "testsrc2=size=1280x720:rate=30" -filter_script:v "$W/clock.filter" \
+    -c:v libx264 -preset ultrafast -tune zerolatency -g 30 -bf 0 -pix_fmt yuv420p \
+    -f rtsp -rtsp_transport tcp "rtsp://127.0.0.1:18554/clock" > "$W/ffmpeg-clock.log" 2>&1 & PIDS+=($!)
+  sleep 2
+  curl -sf "${H[@]}" -d '{"name":"Замер задержки","description":"часы в кадре","url":"rtsp://127.0.0.1:18554/clock","transport":"tcp"}' "$B/api/streams" >/dev/null
   curl -sf "${H[@]}" -d '{"login":"operator","password":"operator-pass","role":"operator"}' "$B/api/users" >/dev/null
   sleep 6
   node "$ROOT/scripts/screenshots.mjs" "$B" admin e2e-password "$SHOTS_DIR" || echo "::warning title=Скриншоты::не удалось снять скриншоты"
@@ -169,4 +185,4 @@ sleep 2
 curl -sf http://127.0.0.1:9997/v3/config/paths/list | grep -q "s_$STREAM" && fail "путь не удалён из MediaMTX"
 
 echo "E2E: всё работает"
-[ -n "${GITHUB_ACTIONS:-}" ] && echo "::notice title=E2E::Камера RTSP -> MediaMTX -> панель -> HLS: сегмент $SEG ($SIZE байт) получен через прокси; MediaMTX слушает только 127.0.0.1"
+[ -n "${GITHUB_ACTIONS:-}" ] && echo "::notice title=E2E::Камера RTSP -> MediaMTX -> панель -> HLS: сегмент $SEG ($SIZE байт) получен через прокси; MediaMTX снаружи открыт только портом ICE 8189"

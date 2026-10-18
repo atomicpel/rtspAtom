@@ -99,6 +99,14 @@ try {
     if ($svc.StartName -notmatch 'LocalService') { Fail "служба $s работает от $($svc.StartName), ожидалась LocalService" }
   }
   if (-not (Get-NetFirewallRule -Name 'RTSPAtom-HTTP' -ErrorAction SilentlyContinue)) { Fail 'нет правила брандмауэра' }
+  foreach ($r in 'RTSPAtom-ICE-UDP', 'RTSPAtom-ICE-TCP') {
+    if (-not (Get-NetFirewallRule -Name $r -ErrorAction SilentlyContinue)) { Fail "нет правила брандмауэра $r (WebRTC)" }
+  }
+  $yml = Get-Content "$DataRoot\mediamtx.yml" -Raw
+  if (-not $cfg.mediamtx.webrtcUrl) { Fail 'в config.json нет mediamtx.webrtcUrl' }
+  if ($yml -notmatch "webrtcAddress: 127\.0\.0\.1:$(([Uri]$cfg.mediamtx.webrtcUrl).Port)") { Fail 'адрес WHEP в mediamtx.yml не совпадает с config.json' }
+  if ($yml -notmatch 'webrtcLocalUDPAddress: :(\d+)') { Fail 'в mediamtx.yml нет порта ICE' }
+  Write-Host "WebRTC: WHEP $(([Uri]$cfg.mediamtx.webrtcUrl).Port), ICE $($Matches[1]) UDP/TCP"
   $adminOut = & cmd.exe /c "`"$InstallDir\rtspatom-admin.cmd`" list-users" 2>&1
   if (($adminOut -join "`n") -notmatch 'admin') { Fail "rtspatom-admin не работает: $adminOut" }
 
@@ -218,6 +226,7 @@ paths:
   if (Test-Path $InstallDir) { Fail "каталог $InstallDir не удалён" }
   if (-not (Test-Path "$DataRoot\data\rtspatom.db")) { Fail 'база удалена без -Purge' }
   if (Get-NetFirewallRule -Name 'RTSPAtom-HTTP' -ErrorAction SilentlyContinue) { Fail 'правило брандмауэра не удалено' }
+  if (Get-NetFirewallRule -Name 'RTSPAtom-ICE-UDP' -ErrorAction SilentlyContinue) { Fail 'правило брандмауэра ICE не удалено' }
 
   Write-Host "::notice title=Windows::Занятые порты обойдены (панель на $Port), установка, службы (LocalService), камера RTSP -> MediaMTX -> панель -> HLS ($size байт), HTTPS, обновление и удаление проверены на $((Get-CimInstance Win32_OperatingSystem).Caption)"
   Write-Host 'Windows: всё работает' -ForegroundColor Green

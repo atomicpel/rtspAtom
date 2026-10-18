@@ -8,6 +8,7 @@ import { getSettings } from './settings.js';
 import { userFromRow, hasRole } from './access.js';
 import { registerRoutes } from '../routes/index.js';
 import { handleHls } from '../routes/hls.js';
+import { handleWebrtc } from '../routes/webrtc.js';
 
 export const SESSION_COOKIE = 'rtspatom_sid';
 /**
@@ -21,6 +22,21 @@ export function createHandler(app) {
   app.viewers = new Map(); // `${sessionKey}|${streamId}` -> lastSeen
   app.apiHits = new Map(); // ip -> { start, count }
   app.startedAt = app.startedAt || Date.now();
+
+  /** Зрителей сейчас: HLS (по недавним запросам плейлистов) + WebRTC (по данным MediaMTX). */
+  app.viewersOf = (streamId) => {
+    const now = Date.now();
+    let n = 0;
+    for (const [k, t] of app.viewers) if (k.endsWith(`|${streamId}`) && now - t < 20_000) n++;
+    return n + (app.sync?.status.get(`s_${streamId}`)?.webrtcReaders || 0);
+  };
+  app.activeViewerCount = () => {
+    const now = Date.now();
+    let n = 0;
+    for (const t of app.viewers.values()) if (now - t < 20_000) n++;
+    if (app.sync) for (const st of app.sync.status.values()) n += st.webrtcReaders || 0;
+    return n;
+  };
 
   const ruleStmt = app.db.prepare('SELECT * FROM ip_rules');
   const sessionStmt = app.db.prepare(
@@ -101,6 +117,12 @@ export function createHandler(app) {
         throw new HttpError(403, `Доступ запрещён: ${ipCheck.reason}`);
       }
 
+      if (pathname.startsWith('/webrtc/')) {
+        if (rateLimited(ip)) throw new HttpError(429, 'Слишком много запросов, повторите позже');
+        const session = loadSession(req, ip);
+        return await handleWebrtc(app, req, res, url, session, ip);
+      }
+
       if (pathname.startsWith('/hls/')) {
         const session = loadSession(req, ip);
         return await handleHls(app, req, res, url, session, ip);
@@ -154,7 +176,7 @@ export function createHandler(app) {
         app.log.error('error', `Внутренняя ошибка ${req.method} ${pathname}: ${err.stack || err.message}`, { ip });
       }
       const message = status === 500 ? 'Внутренняя ошибка сервера' : err.message;
-      if (isApi || pathname.startsWith('/hls/')) {
+      if (isApi || pathname.startsWith('/hls/') || pathname.startsWith('/webrtc/')) {
         sendJson(res, status, { error: message, ...(err.extra || {}) });
       } else {
         res.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8', ...SECURITY_HEADERS });

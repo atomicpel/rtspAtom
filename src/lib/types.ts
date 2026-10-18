@@ -67,6 +67,7 @@ export interface Settings {
   rateLimitApi: number;
   logRetentionDays: number;
   camerasAlwaysOn: boolean;
+  lowLatency: boolean;
 }
 
 export interface SystemInfo {

@@ -100,7 +100,8 @@ jobs:
       - name: Сквозной тест (камера RTSP -> MediaMTX -> панель -> HLS)
         run: |
           set -Eeuo pipefail; trap 'echo "::error title=Ошибка в строке $LINENO::$BASH_COMMAND"' ERR
-          command -v ffmpeg >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null; }
+          # ffmpeg — тестовые камеры, tesseract — чтение часов в кадре при замере задержки
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg tesseract-ocr fonts-dejavu-core >/dev/null
           mkdir -p e2e && tar -xzf "$BUNDLE" -C e2e
           D=e2e/$BUNDLE_NAME
           npm install --no-save --no-audit --no-fund playwright@1.48.2 >/dev/null

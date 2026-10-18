@@ -294,6 +294,8 @@ export class StreamSync {
       next.set(it.name, {
         ready: !!it.ready,
         readers: Array.isArray(it.readers) ? it.readers.length : 0,
+        // Зрители WebRTC видны в MediaMTX как читатели типа webRTCSession
+        webrtcReaders: Array.isArray(it.readers) ? it.readers.filter((r) => /webrtc/i.test(r?.type || '')).length : 0,
         bytesReceived: Number(it.bytesReceived) || 0,
         bytesSent: Number(it.bytesSent) || 0,
         tracks: trackNames(it),

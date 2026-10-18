@@ -5,7 +5,7 @@
 //
 //   node configure.mjs --config <config.json> --template <mediamtx.yml> --yml <mediamtx.yml>
 //                     --data <каталог данных> --public <каталог фронтенда>
-//                     [--port N] [--mtx-api-port N] [--mtx-hls-port N]
+//                     [--port N] [--mtx-api-port N] [--mtx-hls-port N] [--mtx-whep-port N] [--ice-port N]
 //                     [--tls-pfx <файл> --tls-pass <пароль>]
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -51,6 +51,11 @@ cfg.mediamtx.apiUrl = cfg.mediamtx.apiUrl || 'http://127.0.0.1:9997';
 cfg.mediamtx.hlsUrl = cfg.mediamtx.hlsUrl || 'http://127.0.0.1:8888';
 if (args['mtx-api-port']) cfg.mediamtx.apiUrl = `http://127.0.0.1:${Number(args['mtx-api-port'])}`;
 if (args['mtx-hls-port']) cfg.mediamtx.hlsUrl = `http://127.0.0.1:${Number(args['mtx-hls-port'])}`;
+if (args['mtx-whep-port']) cfg.mediamtx.webrtcUrl = `http://127.0.0.1:${Number(args['mtx-whep-port'])}`;
+cfg.mediamtx.webrtcUrl = cfg.mediamtx.webrtcUrl || 'http://127.0.0.1:8890';
+if (args['ice-port']) cfg.mediamtx.icePort = Number(args['ice-port']);
+cfg.mediamtx.icePort = cfg.mediamtx.icePort || 8189;
+const whepAddr = new URL(cfg.mediamtx.webrtcUrl).host;
 const apiAddr = new URL(cfg.mediamtx.apiUrl).host;
 const hlsAddr = new URL(cfg.mediamtx.hlsUrl).host;
 if (!cfg.mediamtx.cdnSecret) cfg.mediamtx.cdnSecret = crypto.randomBytes(24).toString('hex');
@@ -59,10 +64,17 @@ write(args.config, JSON.stringify(cfg, null, 2) + '\n');
 // Адреса API и HLS в mediamtx.yml должны совпадать с выбранными портами.
 const setAddrs = (text) => text
   .replace(/^apiAddress:.*$/m, `apiAddress: ${apiAddr}`)
-  .replace(/^hlsAddress:.*$/m, `hlsAddress: ${hlsAddr}`);
+  .replace(/^hlsAddress:.*$/m, `hlsAddress: ${hlsAddr}`)
+  .replace(/^webrtcAddress:.*$/m, `webrtcAddress: ${whepAddr}`)
+  .replace(/^webrtcLocalUDPAddress:.*$/m, `webrtcLocalUDPAddress: :${cfg.mediamtx.icePort}`)
+  .replace(/^webrtcLocalTCPAddress:.*$/m, `webrtcLocalTCPAddress: :${cfg.mediamtx.icePort}`);
 const rendered = setAddrs(readText(args.template).replace('@CDN_SECRET@', cfg.mediamtx.cdnSecret)).replace(/\r?\n/g, '\r\n');
 let ymlNew = false;
 if (!fs.existsSync(args.yml)) {
+  write(args.yml, rendered);
+} else if (!/^webrtcAddress:/m.test(readText(args.yml))) {
+  // Файл от версии без WebRTC — заменяем новым, прежний сохраняем
+  fs.copyFileSync(args.yml, args.yml + '.bak');
   write(args.yml, rendered);
 } else {
   const original = readText(args.yml);
@@ -78,4 +90,4 @@ if (!fs.existsSync(args.yml)) {
 }
 
 fs.mkdirSync(path.join(args.data), { recursive: true });
-console.log(JSON.stringify({ port: cfg.port, apiAddr, hlsAddr, tls: !!cfg.tls.enabled, ymlNew }));
+console.log(JSON.stringify({ port: cfg.port, icePort: cfg.mediamtx.icePort, apiAddr, hlsAddr, whepAddr, tls: !!cfg.tls.enabled, ymlNew }));

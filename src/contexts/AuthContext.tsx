@@ -13,6 +13,8 @@ interface AuthContextType {
   setupAllowedHere: boolean;
   /** ОС сервера — для подсказок с командами обслуживания. */
   platform: Platform;
+  /** Показывать видео по WebRTC (минимальная задержка) с откатом на HLS. */
+  lowLatency: boolean;
   login: (login: string, password: string) => Promise<{ success: boolean; error?: string }>;
   setup: (login: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
@@ -27,6 +29,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [setupRequired, setSetupRequired] = useState(false);
   const [setupAllowedHere, setSetupAllowedHere] = useState(false);
   const [platform, setPlatform] = useState<Platform>('linux');
+  const [lowLatency, setLowLatency] = useState(true);
 
   const checkStatus = useCallback(async () => {
     try {
@@ -34,6 +37,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setSetupRequired(st.setupRequired);
       setSetupAllowedHere(st.setupAllowedHere);
       if (st.platform) setPlatform(st.platform);
+      if (typeof st.lowLatency === 'boolean') setLowLatency(st.lowLatency);
       if (st.authenticated) {
         const { user: u } = await api.me();
         setUser(u);
@@ -94,7 +98,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, checking, setupRequired, setupAllowedHere, platform, login, setup, logout, refreshUser }}>
+    <AuthContext.Provider value={{ user, checking, setupRequired, setupAllowedHere, platform, lowLatency, login, setup, logout, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );

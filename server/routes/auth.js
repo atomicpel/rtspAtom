@@ -50,6 +50,7 @@ export function registerAuth(router, app) {
     setupAllowedHere: isLoopback(ctx.ip),
     authenticated: !!ctx.user,
     platform: PLATFORM,
+    lowLatency: getSettings(db).lowLatency,
   }), { auth: 'public' });
 
   // Первичное создание администратора — только когда пользователей нет

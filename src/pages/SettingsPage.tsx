@@ -90,6 +90,19 @@ export function SettingsPage() {
             </button>
           ))}
         </div>
+        <span className="block text-[13px] text-muted mt-5 mb-1.5">Показ видео в браузере</span>
+        <div className="grid sm:grid-cols-2 gap-2">
+          {[
+            { v: true, t: 'Минимальная задержка', d: 'WebRTC, около 0,3 секунды. Нужен открытый порт видео (8189 UDP/TCP). Если он закрыт или кодек не подходит — автоматически HLS.' },
+            { v: false, t: 'Совместимость', d: 'Только LL-HLS через порт панели. Задержка 1–3 секунды.' },
+          ].map((o) => (
+            <button key={String(o.v)} type="button" onClick={() => set({ lowLatency: o.v })} aria-pressed={settings.lowLatency === o.v}
+              className={`text-left px-3.5 py-3 rounded-md border transition-colors ${settings.lowLatency === o.v ? 'border-steel bg-steel/10' : 'border-line hover:border-line-strong'}`}>
+              <span className="block font-bold text-sm">{o.t}</span>
+              <span className="block text-[13px] text-muted mt-0.5">{o.d}</span>
+            </button>
+          ))}
+        </div>
         <div className="mt-4 max-w-xs">
           <Field label="Одновременных просмотров, не больше" hint="Сумма по всем пользователям и камерам">
             <input type="number" min={1} max={1000} className={inputCls} value={settings.maxConnections}

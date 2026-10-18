@@ -1,9 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import { AlertCircle, Loader2, Play, VideoOff } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import { startWhep, webrtcLatencyMs, WhepError, type WhepSession } from '../lib/whep';
 
 interface VideoPlayerProps {
-  /** Идентификатор потока; видео берётся с сервера панели: /hls/<id>/index.m3u8 */
+  /** Идентификатор потока; видео берётся с сервера панели (WebRTC или /hls/<id>/index.m3u8) */
   streamId: string;
   name: string;
   className?: string;
@@ -13,33 +15,54 @@ interface VideoPlayerProps {
   disabled?: boolean;
   /** Заполнять ячейку (обрезая края) или вписывать целиком. */
   fit?: 'contain' | 'cover';
-  /** Сообщает наружу, идёт ли видео. */
-  onStatus?: (playing: boolean) => void;
+  /** Сообщает наружу, идёт ли видео и каким способом. */
+  onStatus?: (playing: boolean, transport: Transport) => void;
 }
 
 type Status = 'loading' | 'playing' | 'paused' | 'error';
+export type Transport = 'webrtc' | 'hls';
 
-const RETRY_MS = 5000;
+const RETRY_MS = 4000;
+
+// Если WebRTC не проходит (закрыт порт видео), не тратим время на попытки в каждой ячейке:
+// следующие минуты сразу используем HLS.
+let webrtcBrokenUntil = 0;
+
+function preferredTransport(lowLatency: boolean): Transport {
+  try {
+    const forced = localStorage.getItem('rtspatom_transport');
+    if (forced === 'hls' || forced === 'webrtc') return forced;
+  } catch { /* хранилище недоступно */ }
+  if (!lowLatency || typeof RTCPeerConnection === 'undefined') return 'hls';
+  return Date.now() < webrtcBrokenUntil ? 'hls' : 'webrtc';
+}
 
 export function VideoPlayer({ streamId, name, className = '', reloadKey = 0, disabled = false, fit = 'contain', onStatus }: VideoPlayerProps) {
+  const { lowLatency } = useAuth();
   const videoRef = useRef<HTMLVideoElement>(null);
   const [status, setStatus] = useState<Status>('loading');
   const [errorMsg, setErrorMsg] = useState('');
   const [attempt, setAttempt] = useState(0);
+  const [transport, setTransport] = useState<Transport>(() => preferredTransport(lowLatency));
 
-  useEffect(() => { onStatus?.(status === 'playing' && !disabled); }, [status, disabled]);
+  useEffect(() => { onStatus?.(status === 'playing' && !disabled, transport); }, [status, disabled, transport]);
+
+  // Новая попытка подключения — снова с предпочтительным способом
+  useEffect(() => { setTransport(preferredTransport(lowLatency)); }, [streamId, reloadKey, attempt, lowLatency]);
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video || disabled) return;
 
     let hls: Hls | null = null;
+    let whep: WhepSession | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let statsTimer: ReturnType<typeof setInterval> | undefined;
     let cancelled = false;
-    const src = `/hls/${encodeURIComponent(streamId)}/index.m3u8`;
 
     setStatus('loading');
     setErrorMsg('');
+    video.dataset.transport = transport;
 
     const fail = (msg: string) => {
       if (cancelled) return;
@@ -47,6 +70,8 @@ export function VideoPlayer({ streamId, name, className = '', reloadKey = 0, dis
       setErrorMsg(msg);
       hls?.destroy();
       hls = null;
+      whep?.close();
+      whep = null;
       retryTimer = setTimeout(() => setAttempt((a) => a + 1), RETRY_MS);
     };
 
@@ -59,11 +84,39 @@ export function VideoPlayer({ streamId, name, className = '', reloadKey = 0, dis
       }
     };
 
-    if (Hls.isSupported()) {
+    const httpError = (code: number | undefined) =>
+      code === 401 ? 'Сессия истекла — войдите снова'
+        : code === 403 ? 'Нет доступа к потоку'
+          : code === 503 ? 'Достигнут лимит подключений'
+            : code === 409 ? 'Поток отключён'
+              : 'Нет сигнала от камеры';
+
+    if (transport === 'webrtc') {
+      startWhep(video, streamId, () => fail('Связь с камерой прервалась'))
+        .then((s) => {
+          if (cancelled) { s.close(); return; }
+          whep = s;
+          play();
+          // Оценка задержки для проверки (атрибут data-latency у элемента video)
+          statsTimer = setInterval(async () => {
+            const ms = await webrtcLatencyMs(s.pc);
+            if (ms !== null) video.dataset.latency = String(ms);
+          }, 1000);
+        })
+        .catch((err: unknown) => {
+          if (cancelled) return;
+          const code = err instanceof WhepError ? err.status : 0;
+          if ([401, 403, 409, 503].includes(code)) { fail(httpError(code)); return; }
+          // Камера без поддерживаемого кодека, закрытый порт и т. п. — показываем через HLS
+          if (code === 0) webrtcBrokenUntil = Date.now() + 5 * 60_000;
+          setTransport('hls');
+        });
+    } else if (Hls.isSupported()) {
       hls = new Hls({
         lowLatencyMode: true,
         liveDurationInfinity: true,
-        backBufferLength: 10,
+        backBufferLength: 4,
+        maxLiveSyncPlaybackRate: 1.5, // догоняем «живой край», если отстали
         manifestLoadingMaxRetry: 2,
         levelLoadingMaxRetry: 4,
         fragLoadingMaxRetry: 4,
@@ -71,37 +124,40 @@ export function VideoPlayer({ streamId, name, className = '', reloadKey = 0, dis
       hls.on(Hls.Events.MANIFEST_PARSED, play);
       hls.on(Hls.Events.ERROR, (_e, data) => {
         if (!data.fatal) return;
-        const code = data.response?.code;
         if (data.type === Hls.ErrorTypes.MEDIA_ERROR && hls) {
           hls.recoverMediaError();
           return;
         }
-        if (code === 401) fail('Сессия истекла — войдите снова');
-        else if (code === 403) fail('Нет доступа к потоку');
-        else if (code === 503) fail('Достигнут лимит подключений');
-        else if (code === 409) fail('Поток отключён');
-        else fail('Нет сигнала от камеры');
+        fail(httpError(data.response?.code));
       });
-      hls.loadSource(src);
+      hls.loadSource(`/hls/${encodeURIComponent(streamId)}/index.m3u8`);
       hls.attachMedia(video);
+      statsTimer = setInterval(() => {
+        const at = hls?.playingDate?.getTime();
+        if (at) video.dataset.latency = String(Date.now() - at);
+      }, 1000);
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = src;
+      video.src = `/hls/${encodeURIComponent(streamId)}/index.m3u8`;
       video.onloadedmetadata = play;
       video.onerror = () => fail('Нет сигнала от камеры');
     } else {
       setStatus('error');
-      setErrorMsg('Браузер не поддерживает HLS');
+      setErrorMsg('Браузер не поддерживает потоковое видео');
     }
 
     return () => {
       cancelled = true;
       clearTimeout(retryTimer);
+      clearInterval(statsTimer);
       hls?.destroy();
+      whep?.close();
+      video.srcObject = null;
       video.removeAttribute('src');
       video.onloadedmetadata = null;
       video.onerror = null;
+      delete video.dataset.latency;
     };
-  }, [streamId, reloadKey, attempt, disabled]);
+  }, [streamId, reloadKey, attempt, disabled, transport]);
 
   const handlePlayClick = (e: React.MouseEvent) => {
     const video = videoRef.current;
@@ -114,11 +170,19 @@ export function VideoPlayer({ streamId, name, className = '', reloadKey = 0, dis
     <div className={`relative bg-black overflow-hidden ${className}`}>
       <video
         ref={videoRef}
+        data-stream-name={name}
         className={`w-full h-full ${fit === 'cover' ? 'object-cover' : 'object-contain'} transition-opacity duration-500 ${status === 'playing' ? 'opacity-100' : 'opacity-0'}`}
         muted
         playsInline
         autoPlay
       />
+
+      {!disabled && status === 'playing' && (
+        <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-black/60 text-[11px] text-white/80 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+          title={transport === 'webrtc' ? 'WebRTC: минимальная задержка' : 'HLS: задержка 1–3 секунды'}>
+          {transport === 'webrtc' ? 'WebRTC' : 'HLS'}
+        </span>
+      )}
 
       {disabled && (
         <div className="absolute inset-0 flex flex-col items-center justify-center text-muted">

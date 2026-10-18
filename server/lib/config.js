@@ -27,6 +27,7 @@ function defaults() {
     mediamtx: {
       apiUrl: 'http://127.0.0.1:9997',
       hlsUrl: 'http://127.0.0.1:8888',
+      webrtcUrl: 'http://127.0.0.1:8890',
       // Должен совпадать с hlsCDNSecret в mediamtx.yml (MediaMTX 1.21+).
       cdnSecret: '',
     },
@@ -65,6 +66,7 @@ export function loadConfig(overrides = {}) {
   if (env.RTSPATOM_PUBLIC_DIR) cfg.publicDir = env.RTSPATOM_PUBLIC_DIR;
   if (env.RTSPATOM_MEDIAMTX_API) cfg.mediamtx.apiUrl = env.RTSPATOM_MEDIAMTX_API;
   if (env.RTSPATOM_MEDIAMTX_HLS) cfg.mediamtx.hlsUrl = env.RTSPATOM_MEDIAMTX_HLS;
+  if (env.RTSPATOM_MEDIAMTX_WEBRTC) cfg.mediamtx.webrtcUrl = env.RTSPATOM_MEDIAMTX_WEBRTC;
   if (env.RTSPATOM_MEDIAMTX_SECRET) cfg.mediamtx.cdnSecret = env.RTSPATOM_MEDIAMTX_SECRET;
   cfg = merge(cfg, overrides);
   cfg.dataDir = path.resolve(cfg.dataDir);

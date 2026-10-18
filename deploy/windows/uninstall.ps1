@@ -55,7 +55,9 @@ foreach ($s in @('rtspatom', 'rtspatom-mediamtx')) {
   $ErrorActionPreference = $prev
 }
 
-Get-NetFirewallRule -Name 'RTSPAtom-HTTP' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+foreach ($rule in 'RTSPAtom-HTTP', 'RTSPAtom-ICE-UDP', 'RTSPAtom-ICE-TCP') {
+  Get-NetFirewallRule -Name $rule -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+}
 
 $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
 $parts = $machinePath -split ';' | Where-Object { $_ -and ($_.TrimEnd('\') -ne $InstallDir.TrimEnd('\')) }

@@ -8,6 +8,8 @@ export const SETTINGS_SCHEMA = {
   logRetentionDays: { def: 90, min: 1, max: 3650, int: true },
   logFormat: { def: 'json', values: ['json', 'syslog'] },
   camerasAlwaysOn: { def: true, bool: true },
+  // Показ видео: WebRTC (минимальная задержка, с откатом на HLS) или только LL-HLS
+  lowLatency: { def: true, bool: true },
 };
 
 export function getSettings(db) {

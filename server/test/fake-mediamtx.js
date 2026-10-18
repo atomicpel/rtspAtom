@@ -5,11 +5,13 @@ export function startFakeMediaMtx() {
   const paths = new Map(); // name -> conf
   const ready = new Set();
   const calls = [];
+  const whep = new Map(); // сеанс -> путь
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
     const chunks = [];
     for await (const c of req) chunks.push(c);
-    const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : null;
+    const raw = Buffer.concat(chunks).toString();
+    const body = chunks.length ? (/json/.test(req.headers['content-type'] || '') ? JSON.parse(raw) : raw) : null;
     calls.push({ method: req.method, path: url.pathname, body });
     const json = (status, data) => {
       res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -32,10 +34,24 @@ export function startFakeMediaMtx() {
       ready.delete(m[1]);
       return json(200);
     }
+    if ((m = /^\/(s_[^/]+)\/whep(?:\/([^/]+))?$/.exec(url.pathname))) {
+      if (!m[2] && req.method === 'POST') {
+        if (!ready.has(m[1])) return json(404, { error: 'no stream is available on path' });
+        const id = `sess${whep.size + 1}${Date.now()}`;
+        whep.set(id, m[1]);
+        res.writeHead(201, { 'Content-Type': 'application/sdp', Location: `/${m[1]}/whep/${id}`, ETag: '"x"' });
+        return res.end(`v=0 answer for ${body ? 'offer' : 'nothing'}\r\n`);
+      }
+      if (m[2] && req.method === 'DELETE') { whep.delete(m[2]); res.writeHead(200); return res.end(); }
+      if (m[2] && req.method === 'PATCH') { res.writeHead(204); return res.end(); }
+      return json(405, { error: 'method' });
+    }
     if (url.pathname === '/v3/paths/list') {
       return json(200, {
         items: [...paths.keys()].map((name) => ({
-          name, ready: ready.has(name), tracks: ready.has(name) ? ['H264'] : [], readers: [], bytesReceived: 0, bytesSent: 0,
+          name, ready: ready.has(name), tracks: ready.has(name) ? ['H264'] : [],
+          readers: [...whep.values()].filter((p) => p === name).map(() => ({ type: 'webRTCSession', id: 'x' })),
+          bytesReceived: 0, bytesSent: 0,
         })),
       });
     }
@@ -59,7 +75,7 @@ export function startFakeMediaMtx() {
     json(404, { error: 'unknown' });
   });
   const fake = {
-    paths, ready, calls, server, legacyTransport: false, probeReady: true, cdnSecret: 'test-cdn-secret',
+    paths, ready, calls, server, whep, legacyTransport: false, probeReady: true, cdnSecret: 'test-cdn-secret',
     listen: () => new Promise((r) => server.listen(0, '127.0.0.1', () => r(`http://127.0.0.1:${server.address().port}`))),
     close: () => new Promise((r) => server.close(r)),
   };
