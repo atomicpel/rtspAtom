@@ -216,7 +216,7 @@ try {
     [IO.File]::WriteAllText((Join-Path $svcDir "$s.xml"), $xml, $utf8)
     $r = Invoke-Native (Join-Path $svcDir "$s.exe") @('install')
     if ($r.Code -ne 0) { Die "не удалось зарегистрировать службу ${s}: $($r.Output)" }
-    $res = Invoke-CimMethod -ClassName Win32_Service -Filter "Name='$s'" -MethodName Change `
+    $res = Get-CimInstance -ClassName Win32_Service -Filter "Name='$s'" | Invoke-CimMethod -MethodName Change `
       -Arguments @{ StartName = 'NT AUTHORITY\LocalService'; StartPassword = '' }
     if ($res.ReturnValue -ne 0) { Die "не удалось назначить службе $s учётную запись LocalService (код $($res.ReturnValue))" }
   }
