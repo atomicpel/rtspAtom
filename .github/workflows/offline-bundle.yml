@@ -80,7 +80,7 @@ jobs:
           echo "Файлы релиза WinSW $WINSW_VERSION:"; gh release view "$WINSW_VERSION" --repo winsw/winsw --json assets --jq '.assets[].name'
           gh release download "$WINSW_VERSION" --repo winsw/winsw --pattern 'WinSW-x64.exe' --clobber \
             || gh release download "$WINSW_VERSION" --repo winsw/winsw --pattern 'WinSW.NET461.exe' --clobber
-          F=$(ls WinSW-x64.exe WinSW.NET461.exe 2>/dev/null | head -1)
+          if [ -f WinSW-x64.exe ]; then F=WinSW-x64.exe; else F=WinSW.NET461.exe; fi
           sha256sum "$F"
           echo "WINSW_EXE=$PWD/$F" >> "$GITHUB_ENV"
 
