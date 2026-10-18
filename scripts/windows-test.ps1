@@ -122,11 +122,12 @@ try {
   if (-not $sys.mediamtx.reachable) { Fail "панель не видит MediaMTX: $($sys.mediamtx.lastError)" }
   Write-Host "Система: $($sys.platform), MediaMTX $($sys.mediamtx.version)"
 
-  # MediaMTX не должен слушать внешние адреса
+  # Снаружи у MediaMTX открыт только порт медиа WebRTC (ICE), остальное — 127.0.0.1
   $mtx = Get-Process mediamtx | Where-Object { $_.Path -like "$InstallDir*" }
   $listen = @(Get-NetTCPConnection -State Listen -OwningProcess $mtx.Id | ForEach-Object { "$($_.LocalAddress):$($_.LocalPort)" })
   $listen += @(Get-NetUDPEndpoint -OwningProcess $mtx.Id -ErrorAction SilentlyContinue | ForEach-Object { "udp $($_.LocalAddress):$($_.LocalPort)" })
-  $exposed = $listen | Where-Object { $_ -notmatch '^(udp )?(127\.0\.0\.1|::1):' }
+  $icePort = [regex]::Match((Get-Content "$DataRoot\mediamtx.yml" -Raw), 'webrtcLocalUDPAddress: :(\d+)').Groups[1].Value
+  $exposed = $listen | Where-Object { $_ -notmatch '^(udp )?(127\.0\.0\.1|::1):' -and $_ -notmatch ":$icePort`$" }
   if ($exposed) { Fail "MediaMTX слушает внешние адреса: $($exposed -join ', ')" }
   Write-Host "MediaMTX слушает: $($listen -join ', ')"
 

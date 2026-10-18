@@ -16,8 +16,8 @@ const shot = async (page, name) => {
   console.log(`снимок ${name}.png`);
 };
 
-async function session(viewport, prefix) {
-  const ctx = await browser.newContext({ viewport, deviceScaleFactor: 1, locale: 'ru-RU', timezoneId: 'Europe/Moscow' });
+async function session(viewport, prefix, extra = {}) {
+  const ctx = await browser.newContext({ viewport, deviceScaleFactor: 1, locale: 'ru-RU', timezoneId: 'Europe/Moscow', ...extra });
   const page = await ctx.newPage();
   page.on('pageerror', (e) => console.log(`ошибка на странице: ${e.message}`));
   await page.goto(base);
@@ -132,7 +132,8 @@ async function measure(page, label, file) {
 }
 
 {
-  const { ctx, page } = await session({ width: 1440, height: 900 }, 'lat-');
+  // waitForFunction вычисляет строку, а CSP панели запрещает eval — для замера CSP отключаем
+  const { ctx, page } = await session({ width: 1440, height: 900 }, 'lat-', { bypassCSP: true });
   fs.rmSync(path.join(out, 'lat-01-login.png'), { force: true });
   // камеру-часы — первой, стена на одну камеру
   await page.evaluate(async (name) => {

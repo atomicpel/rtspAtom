@@ -178,7 +178,7 @@ export function VideoPlayer({ streamId, name, className = '', reloadKey = 0, dis
       />
 
       {!disabled && status === 'playing' && (
-        <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-black/60 text-[11px] text-white/80 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+        <span className="absolute bottom-1.5 right-2 z-10 px-1.5 py-0.5 rounded bg-black/60 text-[11px] text-white/80 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
           title={transport === 'webrtc' ? 'WebRTC: минимальная задержка' : 'HLS: задержка 1–3 секунды'}>
           {transport === 'webrtc' ? 'WebRTC' : 'HLS'}
         </span>
