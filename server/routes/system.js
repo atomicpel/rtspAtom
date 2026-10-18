@@ -3,10 +3,9 @@ import { badRequest, notFound } from '../lib/http.js';
 import { checkIpRules, isValidCidr, newId } from '../lib/security.js';
 import { nowIso } from '../lib/db.js';
 import { getSettings, saveSettings, validateSettings } from '../lib/settings.js';
-import { canAccessComputer } from '../lib/access.js';
 import { PLATFORM } from '../lib/config.js';
 
-export const APP_VERSION = '1.2.1';
+export const APP_VERSION = '1.3.0';
 const LOG_LEVELS = ['info', 'warning', 'error', 'debug'];
 const LOG_CATEGORIES = ['auth', 'access', 'stream', 'error', 'admin'];
 
@@ -128,37 +127,7 @@ export function registerSystem(router, app) {
     log.info('access', `Экспорт журнала: ${rows.length} записей`, { user: ctx.user.login, ip: ctx.ip });
   }, { auth: 'operator' });
 
-  // ---------- Метрики и сведения о системе ----------
-  router.get('/api/metrics', (ctx) => {
-    const m = app.metrics?.current || { cpu: 0, ram: 0, networkIn: 0, networkOut: 0 };
-    const computers = db.prepare('SELECT * FROM computers').all().filter((c) => canAccessComputer(ctx.user, c.id));
-    const ids = new Set(computers.map((c) => c.id));
-    const streams = db.prepare('SELECT * FROM streams').all().filter((s) => ids.has(s.computer_id));
-    const activeComp = new Map(computers.map((c) => [c.id, !!c.is_active]));
-    let online = 0;
-    const onlineComputers = new Set();
-    for (const s of streams) {
-      if (app.sync?.streamState(s, activeComp.get(s.computer_id)) === 'online') {
-        online++;
-        onlineComputers.add(s.computer_id);
-      }
-    }
-    const now = Date.now();
-    const viewers = new Set();
-    for (const [k, t] of app.viewers) if (now - t < 20_000) viewers.add(k.split('|')[0]);
-    return {
-      ...m,
-      activeComputers: onlineComputers.size,
-      totalComputers: computers.length,
-      totalStreams: streams.length,
-      onlineStreams: online,
-      connectedClients: viewers.size,
-      uptime: Math.floor(os.uptime()),
-      appUptime: Math.floor((now - app.startedAt) / 1000),
-      mediamtx: { reachable: !!app.sync?.reachable },
-    };
-  });
-
+  // ---------- Сведения о системе ----------
   router.get('/api/system', () => ({
     version: APP_VERSION,
     node: process.version,

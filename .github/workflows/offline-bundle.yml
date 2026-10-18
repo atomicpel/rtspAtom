@@ -103,7 +103,21 @@ jobs:
           command -v ffmpeg >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null; }
           mkdir -p e2e && tar -xzf "$BUNDLE" -C e2e
           D=e2e/$BUNDLE_NAME
-          E2E_DIR=$PWD/e2e-logs scripts/e2e.sh "$D/node/bin/node" "$D/mediamtx/mediamtx" "$D/app"
+          npm install --no-save --no-audit --no-fund playwright@1.48.2 >/dev/null
+          E2E_DIR=$PWD/e2e-logs SHOTS_DIR=$PWD/screenshots scripts/e2e.sh "$D/node/bin/node" "$D/mediamtx/mediamtx" "$D/app"
+
+      - name: Скриншоты интерфейса в ветку ci-screenshots
+        if: github.event_name == 'push'
+        run: |
+          set -Eeuo pipefail
+          [ -d screenshots ] && ls screenshots/*.png >/dev/null 2>&1 || { echo "Скриншотов нет"; exit 0; }
+          cd screenshots
+          git init -q -b ci-screenshots
+          git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+          printf '# Скриншоты интерфейса\n\nСборка %s (%s). Обновляются автоматически.\n' "$GITHUB_REF_NAME" "${GITHUB_SHA::7}" > README.md
+          git add -A && git commit -qm "Скриншоты ${GITHUB_SHA::7}"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-screenshots
+          echo "::notice title=Скриншоты::$(ls *.png | wc -l) снимков в ветке ci-screenshots"
 
       - name: Проверка установщика в Debian 12 (база Astra 1.8)
         run: |

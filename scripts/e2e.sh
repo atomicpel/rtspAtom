@@ -69,7 +69,6 @@ curl -sf "$B/" | grep -q '<div id="root">' || fail "фронтенд не отд
 
 H=(-H 'Content-Type: application/json' -H 'X-RTSPAtom: 1' -b "$J" -c "$J")
 curl -sf "${H[@]}" -d '{"login":"admin","password":"e2e-password"}' "$B/api/auth/login" >/dev/null || fail "вход"
-COMP=$(curl -sf "${H[@]}" -d '{"name":"Тестовый объект"}' "$B/api/computers" | "$NODE" -pe 'JSON.parse(require("fs").readFileSync(0)).id')
 
 # MediaMTX панели не должен слушать внешние адреса
 sleep 1
@@ -92,12 +91,12 @@ echo "$PROBE" | grep -q '"ok":true' || fail "probe не получил виде�
 echo "$PROBE" | grep -q 'H264' || fail "probe не определил H264"
 
 STREAM=$(curl -sf "${H[@]}" -d '{"name":"Камера","url":"rtsp://127.0.0.1:18554/cam","transport":"tcp"}' \
-  "$B/api/computers/$COMP/streams" | "$NODE" -pe 'JSON.parse(require("fs").readFileSync(0)).id')
+  "$B/api/streams" | "$NODE" -pe 'JSON.parse(require("fs").readFileSync(0)).id')
 echo "Поток: $STREAM"
 
 STATUS=""
 for i in $(seq 1 40); do
-  STATUS=$(curl -sf -b "$J" "$B/api/computers" | "$NODE" -pe 'JSON.parse(require("fs").readFileSync(0))[0].streams[0].status')
+  STATUS=$(curl -sf -b "$J" "$B/api/streams" | "$NODE" -pe 'JSON.parse(require("fs").readFileSync(0))[0].status')
   [ "$STATUS" = "online" ] && break
   sleep 1
 done
@@ -143,6 +142,26 @@ CODE=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8888/s_$STREAM/$
 # Без сессии видео недоступно
 CODE=$(curl -s -o /dev/null -w '%{http_code}' "$B/hls/$STREAM/index.m3u8")
 [ "$CODE" = "401" ] || fail "HLS без входа вернул $CODE, ожидался 401"
+
+# Скриншоты интерфейса (только в CI): ещё три тестовые камеры с разными картинками
+if [ -n "${SHOTS_DIR:-}" ]; then
+  i=2
+  for src in "smptehdbars=size=640x360:rate=25" "testsrc2=size=640x360:rate=25" "rgbtestsrc=size=640x360:rate=25"; do
+    ffmpeg -hide_banner -loglevel error -re -f lavfi -i "$src" \
+      -c:v libx264 -preset ultrafast -tune zerolatency -g 25 -pix_fmt yuv420p \
+      -f rtsp -rtsp_transport tcp "rtsp://127.0.0.1:18554/cam$i" > "$W/ffmpeg$i.log" 2>&1 & PIDS+=($!)
+    i=$((i+1))
+  done
+  sleep 2
+  curl -sf "${H[@]}" -X PUT -d '{"name":"Въезд, ворота 1","description":"КПП"}' "$B/api/streams/$STREAM" >/dev/null
+  for n in "2|Периметр, север|Северный участок" "3|Склад, западные ворота|" "4|Стоянка|Гостевая"; do
+    IFS='|' read -r num name desc <<<"$n"
+    curl -sf "${H[@]}" -d "{\"name\":\"$name\",\"description\":\"$desc\",\"url\":\"rtsp://127.0.0.1:18554/cam$num\",\"transport\":\"tcp\"}" "$B/api/streams" >/dev/null
+  done
+  curl -sf "${H[@]}" -d '{"login":"operator","password":"operator-pass","role":"operator"}' "$B/api/users" >/dev/null
+  sleep 6
+  node "$ROOT/scripts/screenshots.mjs" "$B" admin e2e-password "$SHOTS_DIR" || echo "::warning title=Скриншоты::не удалось снять скриншоты"
+fi
 
 # Отключение потока убирает его из MediaMTX
 curl -sf "${H[@]}" -X PUT -d '{"isActive":false}' "$B/api/streams/$STREAM" >/dev/null

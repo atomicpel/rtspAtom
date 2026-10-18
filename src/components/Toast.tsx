@@ -1,14 +1,12 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { CheckCircle, AlertCircle, Info, X, AlertTriangle } from 'lucide-react';
+import React, { createContext, useCallback, useContext, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 
 type ToastType = 'success' | 'error' | 'info' | 'warning';
 
 interface Toast {
-  id: string;
+  id: number;
   type: ToastType;
   message: string;
-  duration?: number;
 }
 
 interface ToastContextType {
@@ -21,61 +19,42 @@ export function useToast() {
   return useContext(ToastContext);
 }
 
+const BAR: Record<ToastType, string> = {
+  success: 'bg-ok',
+  error: 'bg-alarm',
+  warning: 'bg-warn',
+  info: 'bg-steel',
+};
+
+let seq = 0;
+
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
-  const toast = useCallback((type: ToastType, message: string, duration = 3000) => {
-    const id = Date.now().toString(36) + Math.random().toString(36).substr(2);
-    setToasts(prev => [...prev, { id, type, message, duration }]);
-    setTimeout(() => {
-      setToasts(prev => prev.filter(t => t.id !== id));
-    }, duration);
+  const toast = useCallback((type: ToastType, message: string, duration = 3200) => {
+    const id = ++seq;
+    setToasts((prev) => [...prev.slice(-3), { id, type, message }]);
+    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), duration);
   }, []);
-
-  const removeToast = (id: string) => {
-    setToasts(prev => prev.filter(t => t.id !== id));
-  };
-
-  const getIcon = (type: ToastType) => {
-    switch (type) {
-      case 'success': return <CheckCircle className="w-5 h-5 text-green-400" />;
-      case 'error': return <AlertCircle className="w-5 h-5 text-red-400" />;
-      case 'warning': return <AlertTriangle className="w-5 h-5 text-yellow-400" />;
-      case 'info': return <Info className="w-5 h-5 text-blue-400" />;
-    }
-  };
-
-  const getBg = (type: ToastType) => {
-    switch (type) {
-      case 'success': return 'from-green-950/90 to-green-900/70 border-green-700/50';
-      case 'error': return 'from-red-950/90 to-red-900/70 border-red-700/50';
-      case 'warning': return 'from-yellow-950/90 to-yellow-900/70 border-yellow-700/50';
-      case 'info': return 'from-blue-950/90 to-blue-900/70 border-blue-700/50';
-    }
-  };
 
   return (
     <ToastContext.Provider value={{ toast }}>
       {children}
-      <div className="fixed top-4 right-4 z-[100] space-y-2 pointer-events-none">
-        <AnimatePresence>
-          {toasts.map(t => (
+      <div className="fixed bottom-4 right-4 z-[100] flex flex-col gap-2 pointer-events-none" aria-live="polite">
+        <AnimatePresence initial={false}>
+          {toasts.map((t) => (
             <motion.div
               key={t.id}
-              initial={{ opacity: 0, x: 100, scale: 0.8 }}
-              animate={{ opacity: 1, x: 0, scale: 1 }}
-              exit={{ opacity: 0, x: 100, scale: 0.8 }}
-              transition={{ type: 'spring', stiffness: 300, damping: 25 }}
-              className={`pointer-events-auto flex items-center gap-3 px-4 py-3 rounded-xl border backdrop-blur-xl bg-gradient-to-r ${getBg(t.type)} shadow-2xl min-w-[280px] max-w-[400px]`}
+              layout
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, x: 24 }}
+              transition={{ duration: 0.2, ease: [0.2, 0.8, 0.2, 1] }}
+              onClick={() => setToasts((prev) => prev.filter((x) => x.id !== t.id))}
+              className="pointer-events-auto flex items-stretch min-w-[260px] max-w-[380px] bg-panel border border-line rounded-md overflow-hidden shadow-[0_10px_30px_rgba(0,0,0,0.4)] cursor-pointer"
             >
-              {getIcon(t.type)}
-              <span className="text-sm text-white flex-1">{t.message}</span>
-              <button
-                onClick={() => removeToast(t.id)}
-                className="p-0.5 rounded hover:bg-white/10 text-gray-400 hover:text-white transition-colors"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
+              <span className={`w-1 shrink-0 ${BAR[t.type]}`} />
+              <span className="px-3.5 py-2.5 text-sm">{t.message}</span>
             </motion.div>
           ))}
         </AnimatePresence>

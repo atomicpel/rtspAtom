@@ -92,6 +92,38 @@ const MIGRATIONS = [
     created_at TEXT NOT NULL
   );
   `,
+  // 2 — компьютеры упразднены: плоский список потоков, доступ пользователей — по потокам
+  `
+  ALTER TABLE users ADD COLUMN allowed_stream_ids TEXT NOT NULL DEFAULT '[]';
+  UPDATE users SET allowed_stream_ids = COALESCE(
+    (SELECT CASE WHEN COUNT(*) = 0 THEN '["-"]' ELSE json_group_array(s.id) END
+       FROM streams s
+      WHERE s.computer_id IN (SELECT value FROM json_each(users.allowed_computer_ids))),
+    '["-"]')
+  WHERE json_array_length(allowed_computer_ids) > 0;
+  CREATE TABLE streams_new (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    protocol TEXT NOT NULL,
+    source_login TEXT NOT NULL DEFAULT '',
+    source_password TEXT NOT NULL DEFAULT '',
+    transport TEXT NOT NULL DEFAULT 'auto',
+    description TEXT NOT NULL DEFAULT '',
+    is_active INTEGER NOT NULL DEFAULT 1,
+    sort INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  );
+  INSERT INTO streams_new (id, name, url, protocol, source_login, source_password, transport,
+                           description, is_active, sort, created_at)
+  SELECT s.id, s.name, s.url, s.protocol, s.source_login, s.source_password, s.transport,
+         c.name, CASE WHEN s.is_active = 1 AND c.is_active = 1 THEN 1 ELSE 0 END,
+         ROW_NUMBER() OVER (ORDER BY c.name, s.sort, s.created_at), s.created_at
+    FROM streams s JOIN computers c ON c.id = s.computer_id;
+  DROP TABLE streams;
+  DROP TABLE computers;
+  ALTER TABLE streams_new RENAME TO streams;
+  `,
 ];
 
 export function openDb(file) {

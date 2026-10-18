@@ -1,7 +1,7 @@
 import { HttpError, badRequest, notFound } from '../lib/http.js';
 import { newId } from '../lib/security.js';
 import { nowIso } from '../lib/db.js';
-import { canAccessComputer, hasRole } from '../lib/access.js';
+import { canAccessStream, hasRole } from '../lib/access.js';
 import { detectProtocol, redactUrl, buildSourceUrl, SOURCE_PROTOCOLS } from '../lib/mediamtx.js';
 
 const TRANSPORTS = ['auto', 'tcp', 'udp'];
@@ -14,20 +14,11 @@ function str(v, max, field, { required = false } = {}) {
   return s;
 }
 
-function parseComputer(body, partial) {
-  const out = {};
-  if (!partial || body.name !== undefined) out.name = str(body.name, 200, 'Название', { required: true });
-  if (!partial || body.hostname !== undefined) out.hostname = str(body.hostname, 200, 'Hostname');
-  if (!partial || body.ip !== undefined) out.ip = str(body.ip, 100, 'IP-адрес');
-  if (!partial || body.description !== undefined) out.description = str(body.description, 2000, 'Описание');
-  if (body.isActive !== undefined) out.isActive = !!body.isActive;
-  return out;
-}
-
 /** Разбирает URL потока; логин/пароль, вписанные в URL, переносит в отдельные поля. */
 function parseStream(body, partial) {
   const out = {};
   if (!partial || body.name !== undefined) out.name = str(body.name, 200, 'Название потока', { required: true });
+  if (!partial || body.description !== undefined) out.description = str(body.description, 500, 'Примечание');
   if (!partial || body.url !== undefined) {
     const raw = str(body.url, 2000, 'URL', { required: true });
     let u;
@@ -67,10 +58,9 @@ function parseStream(body, partial) {
   return out;
 }
 
-export function registerComputers(router, app) {
+export function registerStreams(router, app) {
   const { db, log } = app;
   const sync = () => app.sync?.trigger().catch(() => {});
-  const getComputer = (id) => db.prepare('SELECT * FROM computers WHERE id = ?').get(id);
   const getStream = (id) => db.prepare('SELECT * FROM streams WHERE id = ?').get(id);
 
   function viewersOf(streamId) {
@@ -80,112 +70,43 @@ export function registerComputers(router, app) {
     return n;
   }
 
-  function streamToApi(s, computerActive, user) {
+  function streamToApi(s, user) {
     const privileged = hasRole(user, 'operator');
     const st = app.sync?.status.get(`s_${s.id}`);
     return {
       id: s.id,
-      computerId: s.computer_id,
       name: s.name,
+      description: s.description,
       url: privileged ? redactUrl(s.url) : '',
       protocol: s.protocol,
       transport: s.transport,
       sourceLogin: user.isAdmin ? s.source_login : '',
       hasPassword: !!s.source_password,
       isActive: !!s.is_active,
-      status: app.sync ? app.sync.streamState(s, computerActive) : 'offline',
+      status: app.sync ? app.sync.streamState(s) : 'offline',
       tracks: st?.tracks || [],
       viewers: viewersOf(s.id),
+      sort: s.sort,
     };
   }
 
-  function computerToApi(c, user) {
-    const streams = db
-      .prepare('SELECT * FROM streams WHERE computer_id = ? ORDER BY sort, created_at')
-      .all(c.id)
-      .map((s) => streamToApi(s, !!c.is_active, user));
-    // Компьютер «в сети», если все его включённые потоки работают (или ждут зрителя),
-    // «частично» (reconnecting) — если работает только часть.
-    const active = streams.filter((s) => s.isActive);
-    const up = active.filter((s) => s.status === 'online' || s.status === 'idle').length;
-    let status = 'offline';
-    if (c.is_active && active.length > 0) {
-      if (up === active.length) status = 'online';
-      else if (up > 0 || active.some((s) => s.status === 'reconnecting')) status = 'reconnecting';
-    }
-    return {
-      id: c.id,
-      name: c.name,
-      hostname: c.hostname,
-      ip: hasRole(user, 'operator') ? c.ip : '',
-      description: c.description,
-      isActive: !!c.is_active,
-      status,
-      createdAt: c.created_at,
-      streams,
-    };
-  }
-  app.computerToApi = computerToApi;
+  router.get('/api/streams', (ctx) =>
+    db.prepare('SELECT * FROM streams ORDER BY sort, created_at').all()
+      .filter((s) => canAccessStream(ctx.user, s.id))
+      .map((s) => streamToApi(s, ctx.user)));
 
-  router.get('/api/computers', (ctx) =>
-    db.prepare('SELECT * FROM computers ORDER BY name').all()
-      .filter((c) => canAccessComputer(ctx.user, c.id))
-      .map((c) => computerToApi(c, ctx.user)));
-
-  router.post('/api/computers', async (ctx) => {
-    const c = parseComputer(await ctx.json(), false);
-    const id = newId();
-    db.prepare(
-      'INSERT INTO computers (id, name, hostname, ip, description, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    ).run(id, c.name, c.hostname, c.ip, c.description, c.isActive === false ? 0 : 1, nowIso());
-    log.info('admin', `Добавлен компьютер «${c.name}»`, { user: ctx.user.login, ip: ctx.ip });
-    return computerToApi(getComputer(id), ctx.user);
-  }, { auth: 'admin' });
-
-  router.put('/api/computers/:id', async (ctx) => {
-    const cur = getComputer(ctx.params.id);
-    if (!cur) throw notFound('Компьютер не найден');
-    const c = parseComputer(await ctx.json(), true);
-    const next = {
-      name: c.name ?? cur.name,
-      hostname: c.hostname ?? cur.hostname,
-      ip: c.ip ?? cur.ip,
-      description: c.description ?? cur.description,
-      is_active: c.isActive === undefined ? cur.is_active : c.isActive ? 1 : 0,
-    };
-    db.prepare('UPDATE computers SET name = ?, hostname = ?, ip = ?, description = ?, is_active = ? WHERE id = ?')
-      .run(next.name, next.hostname, next.ip, next.description, next.is_active, cur.id);
-    if (next.is_active !== cur.is_active) {
-      log.info('admin', `Компьютер «${next.name}» ${next.is_active ? 'включён' : 'отключён'}`, { user: ctx.user.login, ip: ctx.ip });
-      sync();
-    } else {
-      log.info('admin', `Изменён компьютер «${next.name}»`, { user: ctx.user.login, ip: ctx.ip });
-    }
-    return computerToApi(getComputer(cur.id), ctx.user);
-  }, { auth: 'admin' });
-
-  router.delete('/api/computers/:id', (ctx) => {
-    const cur = getComputer(ctx.params.id);
-    if (!cur) throw notFound('Компьютер не найден');
-    db.prepare('DELETE FROM computers WHERE id = ?').run(cur.id);
-    log.info('admin', `Удалён компьютер «${cur.name}» со всеми потоками`, { user: ctx.user.login, ip: ctx.ip });
-    sync();
-  }, { auth: 'admin' });
-
-  router.post('/api/computers/:id/streams', async (ctx) => {
-    const comp = getComputer(ctx.params.id);
-    if (!comp) throw notFound('Компьютер не найден');
+  router.post('/api/streams', async (ctx) => {
     const s = parseStream(await ctx.json(), false);
     const id = newId();
-    const sort = db.prepare('SELECT COALESCE(MAX(sort), 0) + 1 AS n FROM streams WHERE computer_id = ?').get(comp.id).n;
+    const sort = db.prepare('SELECT COALESCE(MAX(sort), 0) + 1 AS n FROM streams').get().n;
     db.prepare(
-      `INSERT INTO streams (id, computer_id, name, url, protocol, source_login, source_password, transport, is_active, sort, created_at)
+      `INSERT INTO streams (id, name, url, protocol, source_login, source_password, transport, description, is_active, sort, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(id, comp.id, s.name, s.url, s.protocol, s.sourceLogin || '', s.sourcePassword || '',
-      s.transport || 'auto', s.isActive === false ? 0 : 1, sort, nowIso());
-    log.info('admin', `Добавлен поток «${s.name}» (${comp.name})`, { user: ctx.user.login, ip: ctx.ip, stream: s.name });
+    ).run(id, s.name, s.url, s.protocol, s.sourceLogin || '', s.sourcePassword || '',
+      s.transport || 'auto', s.description || '', s.isActive === false ? 0 : 1, sort, nowIso());
+    log.info('admin', `Добавлен поток «${s.name}»`, { user: ctx.user.login, ip: ctx.ip, stream: s.name });
     sync();
-    return streamToApi(getStream(id), !!comp.is_active, ctx.user);
+    return streamToApi(getStream(id), ctx.user);
   }, { auth: 'admin' });
 
   router.put('/api/streams/:id', async (ctx) => {
@@ -194,6 +115,7 @@ export function registerComputers(router, app) {
     const s = parseStream(await ctx.json(), true);
     const next = {
       name: s.name ?? cur.name,
+      description: s.description ?? cur.description,
       url: s.url ?? cur.url,
       protocol: s.protocol ?? cur.protocol,
       source_login: s.sourceLogin ?? cur.source_login,
@@ -202,13 +124,24 @@ export function registerComputers(router, app) {
       is_active: s.isActive === undefined ? cur.is_active : s.isActive ? 1 : 0,
     };
     db.prepare(
-      `UPDATE streams SET name = ?, url = ?, protocol = ?, source_login = ?, source_password = ?, transport = ?, is_active = ?
-       WHERE id = ?`,
-    ).run(next.name, next.url, next.protocol, next.source_login, next.source_password, next.transport, next.is_active, cur.id);
-    log.info('admin', `Изменён поток «${next.name}»`, { user: ctx.user.login, ip: ctx.ip, stream: next.name });
+      `UPDATE streams SET name = ?, description = ?, url = ?, protocol = ?, source_login = ?, source_password = ?,
+       transport = ?, is_active = ? WHERE id = ?`,
+    ).run(next.name, next.description, next.url, next.protocol, next.source_login, next.source_password,
+      next.transport, next.is_active, cur.id);
+    const what = s.isActive !== undefined && Object.keys(s).length === 1
+      ? (next.is_active ? 'Включён' : 'Отключён') : 'Изменён';
+    log.info('admin', `${what} поток «${next.name}»`, { user: ctx.user.login, ip: ctx.ip, stream: next.name });
     sync();
-    const comp = getComputer(cur.computer_id);
-    return streamToApi(getStream(cur.id), !!comp.is_active, ctx.user);
+    return streamToApi(getStream(cur.id), ctx.user);
+  }, { auth: 'admin' });
+
+  // Порядок потоков (перетаскивание в списке): { ids: [...] }
+  router.put('/api/streams-order', async (ctx) => {
+    const { ids } = await ctx.json();
+    if (!Array.isArray(ids)) throw badRequest('ids должен быть списком');
+    const stmt = db.prepare('UPDATE streams SET sort = ? WHERE id = ?');
+    ids.forEach((id, i) => stmt.run(i + 1, String(id)));
+    return { ok: true };
   }, { auth: 'admin' });
 
   router.delete('/api/streams/:id', (ctx) => {
@@ -219,7 +152,6 @@ export function registerComputers(router, app) {
     sync();
   }, { auth: 'admin' });
 
-  // Проверка источника через MediaMTX: временно подключаемся и ждём видео.
   router.post('/api/streams/probe', async (ctx) => {
     const body = await ctx.json();
     const s = parseStream({ name: 'probe', ...body }, false);

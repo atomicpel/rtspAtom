@@ -92,7 +92,7 @@ async function main() {
       const password = await readPassword(rest);
       if (password.length < MIN_PASSWORD) throw new Error(`Пароль должен быть не короче ${MIN_PASSWORD} символов`);
       db.prepare(
-        `INSERT INTO users (id, login, password_hash, role, is_admin, allowed_cidrs, allowed_computer_ids, is_active, created_at)
+        `INSERT INTO users (id, login, password_hash, role, is_admin, allowed_cidrs, allowed_stream_ids, is_active, created_at)
          VALUES (?, ?, ?, 'admin', 1, '[]', '[]', 1, ?)`,
       ).run(newId(), login, await hashPassword(password), nowIso());
       logAdmin(`Создан администратор ${login} (из командной строки)`);

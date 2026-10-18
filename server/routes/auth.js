@@ -64,13 +64,13 @@ export function registerAuth(router, app) {
     validatePassword(password);
     const row = {
       id: newId(), login, password_hash: await hashPassword(password), role: 'admin', is_admin: 1,
-      allowed_cidrs: '[]', allowed_computer_ids: '[]', is_active: 1, created_at: nowIso(),
+      allowed_cidrs: '[]', allowed_stream_ids: '[]', is_active: 1, created_at: nowIso(),
     };
     db.prepare(
-      `INSERT INTO users (id, login, password_hash, role, is_admin, allowed_cidrs, allowed_computer_ids, is_active, created_at)
+      `INSERT INTO users (id, login, password_hash, role, is_admin, allowed_cidrs, allowed_stream_ids, is_active, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(row.id, row.login, row.password_hash, row.role, row.is_admin, row.allowed_cidrs,
-      row.allowed_computer_ids, row.is_active, row.created_at);
+      row.allowed_stream_ids, row.is_active, row.created_at);
     log.info('admin', `Создан первый администратор: ${login}`, { user: login, ip: ctx.ip });
     createSession(app, ctx, row);
     return { user: userFromRow(row) };

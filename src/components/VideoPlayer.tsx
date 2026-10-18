@@ -11,17 +11,23 @@ interface VideoPlayerProps {
   reloadKey?: number;
   /** Поток отключён в настройках — не подключаемся. */
   disabled?: boolean;
+  /** Заполнять ячейку (обрезая края) или вписывать целиком. */
+  fit?: 'contain' | 'cover';
+  /** Сообщает наружу, идёт ли видео. */
+  onStatus?: (playing: boolean) => void;
 }
 
 type Status = 'loading' | 'playing' | 'paused' | 'error';
 
 const RETRY_MS = 5000;
 
-export function VideoPlayer({ streamId, name, className = '', reloadKey = 0, disabled = false }: VideoPlayerProps) {
+export function VideoPlayer({ streamId, name, className = '', reloadKey = 0, disabled = false, fit = 'contain', onStatus }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [status, setStatus] = useState<Status>('loading');
   const [errorMsg, setErrorMsg] = useState('');
   const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => { onStatus?.(status === 'playing' && !disabled); }, [status, disabled]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -105,55 +111,41 @@ export function VideoPlayer({ streamId, name, className = '', reloadKey = 0, dis
   };
 
   return (
-    <div className={`relative bg-black rounded-lg overflow-hidden ${className}`}>
+    <div className={`relative bg-black overflow-hidden ${className}`}>
       <video
         ref={videoRef}
-        className="w-full h-full object-contain"
+        className={`w-full h-full ${fit === 'cover' ? 'object-cover' : 'object-contain'} transition-opacity duration-500 ${status === 'playing' ? 'opacity-100' : 'opacity-0'}`}
         muted
         playsInline
         autoPlay
       />
 
       {disabled && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-950/90 text-gray-500">
-          <VideoOff className="w-8 h-8 mb-2" />
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-muted">
+          <VideoOff className="w-6 h-6 mb-2" strokeWidth={1.5} />
           <p className="text-xs">Поток отключён</p>
         </div>
       )}
 
       {!disabled && status === 'loading' && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/70">
-          <Loader2 className="w-8 h-8 text-blue-400 animate-spin" />
+        <div className="absolute inset-0 flex items-center justify-center">
+          <Loader2 className="w-5 h-5 text-muted animate-spin" />
         </div>
       )}
 
       {!disabled && status === 'paused' && (
-        <button
-          onClick={handlePlayClick}
-          className="absolute inset-0 flex items-center justify-center bg-black/40"
-          title="Воспроизвести"
-        >
-          <div className="w-12 h-12 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
-            <Play className="w-6 h-6 text-white ml-0.5" />
-          </div>
+        <button onClick={handlePlayClick} className="absolute inset-0 flex items-center justify-center" title="Воспроизвести">
+          <span className="w-11 h-11 rounded-full bg-black/60 border border-line-strong flex items-center justify-center">
+            <Play className="w-5 h-5 text-fg ml-0.5" />
+          </span>
         </button>
       )}
 
       {!disabled && status === 'error' && (
-        <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-gray-900 to-gray-800">
-          <div className="text-center p-4">
-            <AlertCircle className="w-9 h-9 mx-auto text-yellow-500 mb-2" />
-            <p className="text-xs text-white font-medium mb-1">{name}</p>
-            <p className="text-[11px] text-yellow-400">{errorMsg}</p>
-            <p className="text-[10px] text-gray-500 mt-1">Повторное подключение…</p>
-          </div>
-        </div>
-      )}
-
-      {!disabled && status === 'playing' && (
-        <div className="absolute top-2 left-2 flex items-center gap-1 bg-black/60 px-2 py-0.5 rounded pointer-events-none">
-          <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-          <span className="text-[10px] text-white font-medium">LIVE</span>
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-4">
+          <AlertCircle className="w-6 h-6 text-warn mb-2" strokeWidth={1.5} />
+          <p className="text-xs text-fg">{errorMsg}</p>
+          <p className="text-[11px] text-muted mt-0.5">повторное подключение</p>
         </div>
       )}
     </div>

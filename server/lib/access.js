@@ -10,7 +10,7 @@ export function userFromRow(row) {
     role: isAdmin ? 'admin' : row.role,
     isAdmin,
     allowedCidrs: parseJson(row.allowed_cidrs, []),
-    allowedComputerIds: parseJson(row.allowed_computer_ids, []),
+    allowedStreamIds: parseJson(row.allowed_stream_ids, []),
     isActive: !!row.is_active,
     createdAt: row.created_at,
     lastLoginAt: row.last_login_at || null,
@@ -23,8 +23,9 @@ export function hasRole(user, needed) {
   return (ROLE_RANK[user.role] || 0) >= (ROLE_RANK[needed] || 99);
 }
 
-export function canAccessComputer(user, computerId) {
+/** Пустой список разрешённых потоков означает доступ ко всем. */
+export function canAccessStream(user, streamId) {
   if (!user) return false;
-  if (user.isAdmin || user.allowedComputerIds.length === 0) return true;
-  return user.allowedComputerIds.includes(computerId);
+  if (user.isAdmin || user.allowedStreamIds.length === 0) return true;
+  return user.allowedStreamIds.includes(streamId);
 }

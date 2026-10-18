@@ -46,7 +46,7 @@ before(async () => {
     mediamtx: { apiUrl: fakeUrl, hlsUrl: fakeUrl, cdnSecret: 'test-cdn-secret' },
   };
   const sync = new StreamSync({ db, client: new MediaMtxClient(fakeUrl), log, settings: () => getSettings(db) });
-  app = { db, config, log, sync, metrics: null, startedAt: Date.now() };
+  app = { db, config, log, sync, startedAt: Date.now() };
   server = http.createServer(createHandler(app));
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${server.address().port}`;
@@ -61,7 +61,7 @@ after(async () => {
 
 const admin = new Client('127.0.0.1');
 const remoteAdmin = new Client('10.0.0.5');
-let computerId; let streamId; let otherComputerId;
+let streamId; let otherStreamId;
 
 test('первичная настройка разрешена только с localhost', async () => {
   const anon = new Client('10.0.0.9');
@@ -88,7 +88,7 @@ test('статика и защита API без сессии', async () => {
   assert.ok(r.headers.get('content-security-policy'));
   r = await anon.get('/some/spa/route');
   assert.equal(r.status, 200);
-  r = await anon.get('/api/computers');
+  r = await anon.get('/api/streams');
   assert.equal(r.status, 401);
 });
 
@@ -111,17 +111,16 @@ test('вход: неверный пароль, CSRF-заголовок, блок
   saveSettings(app.db, { rateLimitLogin: 5 });
 });
 
-test('компьютеры и потоки: учётные данные из URL выносятся, пароль не отдаётся', async () => {
-  let r = await admin.post('/api/computers', { name: 'КПП-1', hostname: 'kpp1', ip: '192.168.1.10' });
-  assert.equal(r.status, 200);
-  computerId = r.data.id;
-  r = await admin.post('/api/computers', { name: 'Склад' });
-  otherComputerId = r.data.id;
-
-  r = await admin.post(`/api/computers/${computerId}/streams`, { name: 'Въезд', url: 'ftp://x' });
+test('потоки: учётные данные из URL выносятся, пароль не отдаётся', async () => {
+  let r = await admin.post('/api/streams', { name: 'Въезд', url: 'ftp://x' });
   assert.equal(r.status, 400);
 
-  r = await admin.post(`/api/computers/${computerId}/streams`, {
+  r = await admin.post('/api/streams', { name: 'Склад', url: 'rtsp://192.168.1.65/stream', description: 'Западный' });
+  assert.equal(r.status, 200);
+  otherStreamId = r.data.id;
+  assert.equal(r.data.description, 'Западный');
+
+  r = await admin.post('/api/streams', {
     name: 'Въезд', url: 'rtsp://cam:p%40ss@192.168.1.64:554/Streaming/Channels/101', transport: 'tcp',
   });
   assert.equal(r.status, 200);
@@ -141,17 +140,20 @@ test('компьютеры и потоки: учётные данные из URL
 });
 
 test('статус потока берётся из MediaMTX', async () => {
-  let r = await admin.get('/api/computers');
-  let s = r.data.find((c) => c.id === computerId).streams[0];
+  let r = await admin.get('/api/streams');
+  let s = r.data.find((x) => x.id === streamId);
   assert.equal(s.status, 'reconnecting');
   fake.ready.add(`s_${streamId}`);
   await app.sync.refreshStatus();
-  r = await admin.get('/api/computers');
-  const comp = r.data.find((c) => c.id === computerId);
-  s = comp.streams[0];
+  r = await admin.get('/api/streams');
+  s = r.data.find((x) => x.id === streamId);
   assert.equal(s.status, 'online');
-  assert.equal(comp.status, 'online');
   assert.deepEqual(s.tracks, ['H264']);
+  // Порядок: новые потоки в конце, порядок меняется
+  assert.deepEqual(r.data.map((x) => x.id), [otherStreamId, streamId]);
+  await admin.put('/api/streams-order', { ids: [streamId, otherStreamId] });
+  r = await admin.get('/api/streams');
+  assert.deepEqual(r.data.map((x) => x.id), [streamId, otherStreamId]);
 });
 
 test('редактирование: пустой пароль сохраняет старый, отключение удаляет путь', async () => {
@@ -187,9 +189,9 @@ test('проверка источника через MediaMTX', async () => {
   assert.equal([...fake.paths.keys()].some((k) => k.startsWith('probe_')), false, 'временный путь удалён');
 });
 
-test('пользователи, права и доступ к компьютерам', async () => {
+test('пользователи, права и доступ к потокам', async () => {
   let r = await admin.post('/api/users', {
-    login: 'viewer1', password: 'viewer-pass', role: 'viewer', allowedComputerIds: [otherComputerId],
+    login: 'viewer1', password: 'viewer-pass', role: 'viewer', allowedStreamIds: [otherStreamId],
   });
   assert.equal(r.status, 200);
   const viewerId = r.data.id;
@@ -199,29 +201,30 @@ test('пользователи, права и доступ к компьютер
   const v = new Client('10.0.0.20');
   r = await v.post('/api/auth/login', { login: 'viewer1', password: 'viewer-pass' });
   assert.equal(r.status, 200);
-  r = await v.get('/api/computers');
-  assert.deepEqual(r.data.map((c) => c.id), [otherComputerId]);
+  r = await v.get('/api/streams');
+  assert.deepEqual(r.data.map((c) => c.id), [otherStreamId]);
+  assert.equal(r.data[0].url, '', 'наблюдатель не видит адрес камеры');
   r = await v.get('/api/users');
   assert.equal(r.status, 403);
-  r = await v.post('/api/computers', { name: 'x' });
+  r = await v.post('/api/streams', { name: 'x', url: 'rtsp://1.2.3.4/' });
   assert.equal(r.status, 403);
   r = await v.get('/api/logs');
   assert.equal(r.status, 403);
   r = await v.get(`/hls/${streamId}/index.m3u8`);
-  assert.equal(r.status, 403, 'нет доступа к чужому компьютеру');
+  assert.equal(r.status, 403, 'нет доступа к чужому потоку');
 
-  // Доступ к нужному компьютеру — видео идёт через прокси
+  // Доступ ко всем потокам — видео идёт через прокси
   fake.ready.add(`s_${streamId}`);
-  await admin.put(`/api/users/${viewerId}`, { allowedComputerIds: [] });
+  await admin.put(`/api/users/${viewerId}`, { allowedStreamIds: [] });
   r = await v.get(`/hls/${streamId}/index.m3u8?_HLS_msn=3`);
   assert.equal(r.status, 200);
   assert.match(r.data, new RegExp(`#FAKE s_${streamId} index.m3u8\\?_HLS_msn=3`));
-  r = await v.get('/api/metrics');
-  assert.equal(r.data.connectedClients, 1);
+  r = await admin.get('/api/streams');
+  assert.equal(r.data.find((x) => x.id === streamId).viewers, 1);
 
   // Ограничение по IP пользователя
   await admin.put(`/api/users/${viewerId}`, { allowedCidrs: ['10.1.0.0/16'] });
-  r = await v.get('/api/computers');
+  r = await v.get('/api/streams');
   assert.equal(r.status, 401, 'сессия с неразрешённого адреса не действует');
   r = await v.post('/api/auth/login', { login: 'viewer1', password: 'viewer-pass' });
   assert.equal(r.status, 401);
@@ -231,7 +234,7 @@ test('пользователи, права и доступ к компьютер
   r = await v2.post('/api/auth/login', { login: 'viewer1', password: 'viewer-pass' });
   assert.equal(r.status, 200);
   await admin.put(`/api/users/${viewerId}`, { isActive: false });
-  r = await v2.get('/api/computers');
+  r = await v2.get('/api/streams');
   assert.equal(r.status, 401);
 });
 
@@ -305,8 +308,8 @@ test('настройки: проверка значений', async () => {
   assert.equal(fake.paths.get(`s_${streamId}`).sourceOnDemand, true);
 });
 
-test('удаление компьютера удаляет потоки и пути MediaMTX', async () => {
-  let r = await admin.del(`/api/computers/${computerId}`);
+test('удаление потока удаляет путь MediaMTX', async () => {
+  let r = await admin.del(`/api/streams/${streamId}`);
   assert.equal(r.status, 204);
   await app.sync.trigger();
   assert.equal(fake.paths.has(`s_${streamId}`), false);

@@ -1,6 +1,5 @@
 import type {
-  Computer, IpRule, LogEntry, Metrics, ProbeResult, Settings, Stream, SystemInfo, User,
-  WallConfig, WallState,
+  IpRule, LogEntry, ProbeResult, Settings, Stream, SystemInfo, User, WallConfig, WallState,
 } from './types';
 
 export class ApiError extends Error {
@@ -49,16 +48,9 @@ const post = <T>(u: string, b: unknown = {}) => request<T>('POST', u, b);
 const put = <T>(u: string, b: unknown = {}) => request<T>('PUT', u, b);
 const del = <T>(u: string) => request<T>('DELETE', u);
 
-export interface ComputerInput {
-  name: string;
-  hostname: string;
-  ip: string;
-  description: string;
-  isActive?: boolean;
-}
-
 export interface StreamInput {
   name?: string;
+  description?: string;
   url?: string;
   transport?: 'auto' | 'tcp' | 'udp';
   sourceLogin?: string;
@@ -73,7 +65,7 @@ export interface UserInput {
   role?: string;
   isAdmin?: boolean;
   allowedCidrs?: string[];
-  allowedComputerIds?: string[];
+  allowedStreamIds?: string[];
   isActive?: boolean;
 }
 
@@ -103,11 +95,9 @@ export const api = {
   changeOwnPassword: (currentPassword: string, newPassword: string) =>
     post<{ ok: boolean }>('/api/auth/password', { currentPassword, newPassword }),
 
-  computers: () => get<Computer[]>('/api/computers'),
-  createComputer: (c: ComputerInput) => post<Computer>('/api/computers', c),
-  updateComputer: (id: string, c: Partial<ComputerInput>) => put<Computer>(`/api/computers/${id}`, c),
-  deleteComputer: (id: string) => del<void>(`/api/computers/${id}`),
-  createStream: (computerId: string, s: StreamInput) => post<Stream>(`/api/computers/${computerId}/streams`, s),
+  streams: () => get<Stream[]>('/api/streams'),
+  createStream: (s: StreamInput) => post<Stream>('/api/streams', s),
+  reorderStreams: (ids: string[]) => put<{ ok: boolean }>('/api/streams-order', { ids }),
   updateStream: (id: string, s: StreamInput) => put<Stream>(`/api/streams/${id}`, s),
   deleteStream: (id: string) => del<void>(`/api/streams/${id}`),
   probeStream: (s: StreamInput & { streamId?: string }) => post<ProbeResult>('/api/streams/probe', s),
@@ -129,7 +119,6 @@ export const api = {
   settings: () => get<Settings>('/api/settings'),
   saveSettings: (s: Partial<Settings>) => put<Settings>('/api/settings', s),
 
-  metrics: () => get<Metrics>('/api/metrics'),
   system: () => get<SystemInfo>('/api/system'),
 
   wallState: () => get<WallState>('/api/wall/state'),

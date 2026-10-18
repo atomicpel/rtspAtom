@@ -9,8 +9,8 @@ export type StreamStatus = 'online' | 'offline' | 'reconnecting' | 'idle';
 
 export interface Stream {
   id: string;
-  computerId: string;
   name: string;
+  description: string;
   url: string;
   protocol: StreamProtocol;
   transport: StreamTransport;
@@ -20,18 +20,7 @@ export interface Stream {
   status: StreamStatus;
   tracks: string[];
   viewers: number;
-}
-
-export interface Computer {
-  id: string;
-  name: string;
-  hostname: string;
-  ip: string;
-  description: string;
-  streams: Stream[];
-  isActive: boolean;
-  status: 'online' | 'offline' | 'reconnecting';
-  createdAt: string;
+  sort: number;
 }
 
 export interface User {
@@ -40,7 +29,7 @@ export interface User {
   role: UserRole;
   isAdmin: boolean;
   allowedCidrs: string[];
-  allowedComputerIds: string[]; // пусто = все компьютеры
+  allowedStreamIds: string[]; // пусто = все потоки
   isActive: boolean;
   createdAt: string;
   lastLoginAt: string | null;
@@ -70,7 +59,7 @@ export interface LogEntry {
 }
 
 export interface Settings {
-  tlsEnabled: boolean; // только чтение — задаётся в /etc/rtspatom/config.json
+  tlsEnabled: boolean; // только чтение — задаётся в config.json
   sessionTtl: number;
   maxConnections: number;
   logFormat: 'syslog' | 'json';
@@ -78,21 +67,6 @@ export interface Settings {
   rateLimitApi: number;
   logRetentionDays: number;
   camerasAlwaysOn: boolean;
-}
-
-export interface Metrics {
-  cpu: number;
-  ram: number;
-  networkIn: number;
-  networkOut: number;
-  activeComputers: number;
-  totalComputers: number;
-  totalStreams: number;
-  onlineStreams: number;
-  connectedClients: number;
-  uptime: number;
-  appUptime: number;
-  mediamtx: { reachable: boolean };
 }
 
 export interface SystemInfo {
@@ -106,7 +80,6 @@ export interface SystemInfo {
 }
 
 export interface WallCell {
-  computerId: string | null;
   streamId: string | null;
 }
 

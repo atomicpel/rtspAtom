@@ -189,9 +189,7 @@ export class StreamSync {
   desired() {
     const rows = this.db
       .prepare(
-        `SELECT s.*, c.name AS computer_name FROM streams s
-         JOIN computers c ON c.id = s.computer_id
-         WHERE s.is_active = 1 AND c.is_active = 1`,
+        'SELECT * FROM streams WHERE is_active = 1',
       )
       .all();
     const alwaysOn = this.settings().camerasAlwaysOn;
@@ -317,7 +315,7 @@ export class StreamSync {
       }
       if (prev !== ready) {
         this.prevReady.set(name, ready);
-        const label = `${stream.computer_name} / ${stream.name}`;
+        const label = stream.name;
         if (ready) this.log.info('stream', `Поток в сети: ${label}`, { stream: stream.name });
         else if (!onDemand) this.log.warn('stream', `Поток недоступен: ${label}`, { stream: stream.name });
       }
@@ -326,8 +324,8 @@ export class StreamSync {
   }
 
   /** online | reconnecting | idle | offline */
-  streamState(streamRow, computerActive) {
-    if (!streamRow.is_active || !computerActive) return 'offline';
+  streamState(streamRow) {
+    if (!streamRow.is_active) return 'offline';
     if (!this.reachable) return 'offline';
     const st = this.status.get(pathNameFor(streamRow.id));
     if (st?.ready) return 'online';

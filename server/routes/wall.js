@@ -7,10 +7,7 @@ const MAX_CELLS = 16;
 
 function cleanCells(cells) {
   if (!Array.isArray(cells)) throw badRequest('cells должен быть списком');
-  return cells.slice(0, MAX_CELLS).map((c) => ({
-    computerId: c?.computerId ? String(c.computerId) : null,
-    streamId: c?.streamId ? String(c.streamId) : null,
-  }));
+  return cells.slice(0, MAX_CELLS).map((c) => ({ streamId: c?.streamId ? String(c.streamId) : null }));
 }
 
 export function registerWall(router, app) {

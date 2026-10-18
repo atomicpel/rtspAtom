@@ -1,6 +1,6 @@
 import http from 'node:http';
 import { HttpError } from '../lib/http.js';
-import { canAccessComputer } from '../lib/access.js';
+import { canAccessStream } from '../lib/access.js';
 import { getSettings } from '../lib/settings.js';
 import { pathNameFor } from '../lib/mediamtx.js';
 
@@ -20,13 +20,10 @@ export async function handleHls(app, req, res, url, session, ip) {
   if (!m) throw new HttpError(404, 'Не найдено');
   const [, streamId, file] = m;
 
-  const row = app.db.prepare(
-    `SELECT s.id, s.name, s.is_active, c.id AS computer_id, c.is_active AS computer_active
-     FROM streams s JOIN computers c ON c.id = s.computer_id WHERE s.id = ?`,
-  ).get(streamId);
+  const row = app.db.prepare('SELECT id, name, is_active FROM streams WHERE id = ?').get(streamId);
   if (!row) throw new HttpError(404, 'Поток не найден');
-  if (!canAccessComputer(session.user, row.computer_id)) throw new HttpError(403, 'Нет доступа к этому потоку');
-  if (!row.is_active || !row.computer_active) throw new HttpError(409, 'Поток отключён');
+  if (!canAccessStream(session.user, row.id)) throw new HttpError(403, 'Нет доступа к этому потоку');
+  if (!row.is_active) throw new HttpError(409, 'Поток отключён');
 
   const key = `${session.tokenHash.slice(0, 16)}|${streamId}`;
   const now = Date.now();

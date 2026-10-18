@@ -1,130 +1,62 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { MotionConfig } from 'framer-motion';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { ThemeProvider } from './contexts/ThemeContext';
 import { ToastProvider } from './components/Toast';
-import { AnimatedBackground } from './components/AnimatedBackground';
-import { Layout } from './components/Layout';
+import { Layout, NavItem } from './components/Layout';
 import { LoginPage } from './pages/LoginPage';
-import { DashboardPage } from './pages/DashboardPage';
 import { VideoWallPage } from './pages/VideoWallPage';
-import { ComputersPage } from './pages/ComputersPage';
+import { StreamsPage } from './pages/StreamsPage';
 import { UsersPage } from './pages/UsersPage';
-import { IpFilterPage } from './pages/IpFilterPage';
 import { LogsPage } from './pages/LogsPage';
 import { SettingsPage } from './pages/SettingsPage';
-import { AboutPage } from './pages/AboutPage';
+import type { User } from './lib/types';
 
-const PAGE_ROLES: Record<string, string[]> = {
-  'dashboard': ['admin', 'operator', 'viewer'],
-  'video-wall': ['admin', 'operator', 'viewer'],
-  'computers': ['admin'],
-  'users': ['admin'],
-  'ip-filter': ['admin'],
-  'logs': ['admin', 'operator'],
-  'settings': ['admin'],
-  'about': ['admin', 'operator', 'viewer'],
-};
+const PAGES: (NavItem & { allowed: (u: User) => boolean })[] = [
+  { id: 'wall', label: 'Видеостена', allowed: () => true },
+  { id: 'streams', label: 'Потоки', allowed: (u) => u.isAdmin },
+  { id: 'users', label: 'Пользователи', allowed: (u) => u.isAdmin },
+  { id: 'logs', label: 'Журнал', allowed: (u) => u.isAdmin || u.role === 'operator' },
+  { id: 'settings', label: 'Настройки', allowed: (u) => u.isAdmin },
+];
+
+const pageFromHash = () => window.location.hash.replace(/^#\/?/, '') || 'wall';
 
 function AppContent() {
   const { user, checking } = useAuth();
-  const [currentPage, setCurrentPage] = useState('dashboard');
-  const [isWallFullscreen, setIsWallFullscreen] = useState(false);
-
-  const canAccessPage = (page: string): boolean => {
-    if (!user) return false;
-    const allowedRoles = PAGE_ROLES[page] || [];
-    if (user.isAdmin) return true;
-    return allowedRoles.includes(user.role);
-  };
-
-  const handleNavigate = (page: string) => {
-    if (canAccessPage(page)) {
-      setCurrentPage(page);
-    } else {
-      setCurrentPage('dashboard');
-    }
-  };
+  const [page, setPage] = useState(pageFromHash);
 
   useEffect(() => {
-    if (user && !canAccessPage(currentPage)) {
-      setCurrentPage('dashboard');
-    }
-  }, [user, currentPage]);
-
-  useEffect(() => {
-    const handleFullscreenStart = () => setIsWallFullscreen(true);
-    const handleFullscreenEnd = () => setIsWallFullscreen(false);
-
-    window.addEventListener('videowall:fullscreen:start', handleFullscreenStart);
-    window.addEventListener('videowall:fullscreen:end', handleFullscreenEnd);
-
-    return () => {
-      window.removeEventListener('videowall:fullscreen:start', handleFullscreenStart);
-      window.removeEventListener('videowall:fullscreen:end', handleFullscreenEnd);
-    };
+    const onHash = () => setPage(pageFromHash());
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
-  if (checking) {
-    return (
-      <>
-        <AnimatedBackground />
-        <div className="min-h-screen flex items-center justify-center text-gray-400 text-sm">Загрузка…</div>
-      </>
-    );
-  }
+  const items = useMemo(() => (user ? PAGES.filter((p) => p.allowed(user)) : []), [user]);
+  const current = items.some((i) => i.id === page) ? page : 'wall';
+  const navigate = (id: string) => { window.location.hash = `/${id}`; };
 
-  if (!user) {
-    return (
-      <>
-        <AnimatedBackground />
-        <LoginPage />
-      </>
-    );
-  }
-
-  const renderPage = () => {
-    switch (currentPage) {
-      case 'dashboard': return <DashboardPage />;
-      case 'video-wall': return <VideoWallPage />;
-      case 'computers': return canAccessPage('computers') ? <ComputersPage /> : <DashboardPage />;
-      case 'users': return canAccessPage('users') ? <UsersPage /> : <DashboardPage />;
-      case 'ip-filter': return canAccessPage('ip-filter') ? <IpFilterPage /> : <DashboardPage />;
-      case 'logs': return canAccessPage('logs') ? <LogsPage /> : <DashboardPage />;
-      case 'settings': return canAccessPage('settings') ? <SettingsPage /> : <DashboardPage />;
-      case 'about': return <AboutPage />;
-      default: return <DashboardPage />;
-    }
-  };
-
-  if (isWallFullscreen && currentPage === 'video-wall') {
-    return (
-      <>
-        <AnimatedBackground />
-        {renderPage()}
-      </>
-    );
-  }
+  if (checking) return null;
+  if (!user) return <LoginPage />;
 
   return (
-    <>
-      <AnimatedBackground />
-      <Layout currentPage={currentPage} onNavigate={handleNavigate}>
-        {renderPage()}
-      </Layout>
-    </>
+    <Layout items={items} current={current} onNavigate={navigate}>
+      {current === 'wall' && <VideoWallPage onNavigate={navigate} />}
+      {current === 'streams' && <StreamsPage />}
+      {current === 'users' && <UsersPage />}
+      {current === 'logs' && <LogsPage />}
+      {current === 'settings' && <SettingsPage />}
+    </Layout>
   );
 }
 
-function App() {
+export default function App() {
   return (
-    <ThemeProvider>
+    <MotionConfig reducedMotion="user">
       <ToastProvider>
         <AuthProvider>
           <AppContent />
         </AuthProvider>
       </ToastProvider>
-    </ThemeProvider>
+    </MotionConfig>
   );
 }
-
-export default App;

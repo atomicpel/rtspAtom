@@ -150,14 +150,14 @@ paths:
 
   # ---------- Камера через панель ----------
   Step 'Добавление камеры и видео через панель'
-  $comp = Api POST "$B/api/computers" @{ name = 'Тестовый объект (Windows)' } $S
-  if ($comp.name -ne 'Тестовый объект (Windows)') { Fail "кириллица искажена: $($comp.name)" }
+
   $probe = Api POST "$B/api/streams/probe" @{ url = 'rtsp://127.0.0.1:18554/cam'; transport = 'tcp' } $S
   if (-not $probe.ok -or ($probe.tracks -notcontains 'H264')) { Fail "проверка камеры: $($probe | ConvertTo-Json -Compress)" }
-  $stream = Api POST "$B/api/computers/$($comp.id)/streams" @{ name = 'Камера'; url = 'rtsp://127.0.0.1:18554/cam'; transport = 'tcp' } $S
+  $stream = Api POST "$B/api/streams" @{ name = 'Камера въезда (Windows)'; url = 'rtsp://127.0.0.1:18554/cam'; transport = 'tcp' } $S
+  if ($stream.name -ne 'Камера въезда (Windows)') { Fail "кириллица искажена: $($stream.name)" }
   $status = ''
   for ($i = 0; $i -lt 40; $i++) {
-    $status = ((Api GET "$B/api/computers" $null $S) | Where-Object id -eq $comp.id).streams[0].status
+    $status = ((Api GET "$B/api/streams" $null $S) | Where-Object id -eq $stream.id).status
     if ($status -eq 'online') { break }
     Start-Sleep -Seconds 1
   }
@@ -203,8 +203,8 @@ paths:
   $BS = "https://127.0.0.1:$Port"
   Wait-Http "$BS/api/auth/status"
   $S2 = New-Session $BS
-  $comps = Api GET "$BS/api/computers" $null $S2
-  if (-not ($comps | Where-Object id -eq $comp.id)) { Fail 'после обновления пропали данные' }
+  $streamsAfter = Api GET "$BS/api/streams" $null $S2
+  if (-not ($streamsAfter | Where-Object id -eq $stream.id)) { Fail 'после обновления пропали данные' }
   if (-not (Api GET "$BS/api/system" $null $S2).tlsEnabled) { Fail 'HTTPS не включился' }
   Write-Host 'HTTPS работает, данные сохранены'
 

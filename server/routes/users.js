@@ -30,9 +30,9 @@ function parseUserInput(body, { requirePassword }) {
     // 0.0.0.0/0 означает «без ограничений» — храним как пустой список.
     out.allowedCidrs = cidrs.includes('0.0.0.0/0') ? [] : cidrs;
   }
-  if (body.allowedComputerIds !== undefined) {
-    if (!Array.isArray(body.allowedComputerIds)) throw badRequest('allowedComputerIds должен быть списком');
-    out.allowedComputerIds = [...new Set(body.allowedComputerIds.map(String))];
+  if (body.allowedStreamIds !== undefined) {
+    if (!Array.isArray(body.allowedStreamIds)) throw badRequest('allowedStreamIds должен быть списком');
+    out.allowedStreamIds = [...new Set(body.allowedStreamIds.map(String))];
   }
   return out;
 }
@@ -58,12 +58,12 @@ export function registerUsers(router, app) {
     const role = isAdmin ? 'admin' : input.role === 'admin' || !input.role ? 'viewer' : input.role;
     const id = newId();
     db.prepare(
-      `INSERT INTO users (id, login, password_hash, role, is_admin, allowed_cidrs, allowed_computer_ids, is_active, created_at)
+      `INSERT INTO users (id, login, password_hash, role, is_admin, allowed_cidrs, allowed_stream_ids, is_active, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id, input.login, await hashPassword(input.password), role,
       isAdmin ? 1 : 0, JSON.stringify(input.allowedCidrs || []),
-      JSON.stringify(input.allowedComputerIds || []), input.isActive === false ? 0 : 1, nowIso(),
+      JSON.stringify(input.allowedStreamIds || []), input.isActive === false ? 0 : 1, nowIso(),
     );
     log.info('admin', `Создан пользователь ${input.login}`, { user: ctx.user.login, ip: ctx.ip });
     return userFromRow(getRow(id));
@@ -80,7 +80,7 @@ export function registerUsers(router, app) {
       role: input.role ?? cur.role,
       isActive: input.isActive ?? cur.isActive,
       allowedCidrs: input.allowedCidrs ?? cur.allowedCidrs,
-      allowedComputerIds: input.allowedComputerIds ?? cur.allowedComputerIds,
+      allowedStreamIds: input.allowedStreamIds ?? cur.allowedStreamIds,
     };
     // Явный флаг isAdmin важнее роли: снятие флага понижает до оператора.
     if (input.isAdmin === undefined && input.role === 'admin') next.isAdmin = true;
@@ -98,10 +98,10 @@ export function registerUsers(router, app) {
 
     tx(db, () => {
       db.prepare(
-        `UPDATE users SET login = ?, role = ?, is_admin = ?, is_active = ?, allowed_cidrs = ?, allowed_computer_ids = ?
+        `UPDATE users SET login = ?, role = ?, is_admin = ?, is_active = ?, allowed_cidrs = ?, allowed_stream_ids = ?
          WHERE id = ?`,
       ).run(next.login, next.role, next.isAdmin ? 1 : 0, next.isActive ? 1 : 0,
-        JSON.stringify(next.allowedCidrs), JSON.stringify(next.allowedComputerIds), row.id);
+        JSON.stringify(next.allowedCidrs), JSON.stringify(next.allowedStreamIds), row.id);
       if (!next.isActive) db.prepare('DELETE FROM sessions WHERE user_id = ?').run(row.id);
     });
     log.info('admin', `Изменён пользователь ${next.login}`, { user: ctx.user.login, ip: ctx.ip });

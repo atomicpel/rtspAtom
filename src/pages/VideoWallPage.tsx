@@ -1,648 +1,391 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import {
-  LayoutGrid, Maximize2, Minimize2, Plus, X, Save,
-  Video, Settings, Server, ChevronDown, ChevronRight, RefreshCw
+  Bookmark, Crop, Expand, Maximize, Minimize, Plus, RefreshCw, Replace, Search, Trash2, Video, Wand2, X,
 } from 'lucide-react';
-import { Computer, Stream, WallConfig } from '../lib/types';
+import type { Stream, WallCell, WallConfig, WallLayout } from '../lib/types';
 import { api, errorMessage } from '../lib/api';
 import { usePolling } from '../lib/usePolling';
+import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../components/Toast';
-import { AnimatedCard, StaggerContainer, StaggerItem } from '../components/AnimatedCard';
 import { VideoPlayer } from '../components/VideoPlayer';
-type LayoutType = '1x1' | '2x2' | '3x3' | '4x4';
+import { Clock } from '../components/Layout';
+import { Button, Empty, IconButton, Modal, StatusDot, inputCls } from '../components/ui';
 
-const REFRESH_INTERVALS = [
-  { value: 0, label: 'Выкл' },
-  { value: 15, label: '15 сек' },
-  { value: 30, label: '30 сек' },
-  { value: 60, label: '1 мин' },
-  { value: 180, label: '3 мин' },
-  { value: 300, label: '5 мин' },
-  { value: 600, label: '10 мин' },
-  { value: 900, label: '15 мин' },
-  { value: 1800, label: '30 мин' },
-  { value: 3600, label: '1 час' },
-  { value: 7200, label: '2 часа' },
-  { value: 10800, label: '3 часа' },
-  { value: 18000, label: '5 часов' },
+const LAYOUTS: { id: WallLayout; n: number; cols: number }[] = [
+  { id: '1x1', n: 1, cols: 1 },
+  { id: '2x2', n: 4, cols: 2 },
+  { id: '3x3', n: 9, cols: 3 },
+  { id: '4x4', n: 16, cols: 4 },
 ];
 
-interface CellData {
-  computerId: string | null;
-  streamId: string | null;
+const REFRESH = [
+  { v: 0, l: 'Без автообновления' },
+  { v: 60, l: 'Обновлять раз в минуту' },
+  { v: 300, l: 'Раз в 5 минут' },
+  { v: 900, l: 'Раз в 15 минут' },
+  { v: 3600, l: 'Раз в час' },
+];
+
+const emptyCells = (): WallCell[] => Array.from({ length: 16 }, () => ({ streamId: null }));
+const layoutFor = (count: number): WallLayout => (count <= 1 ? '1x1' : count <= 4 ? '2x2' : count <= 9 ? '3x3' : '4x4');
+const camWord = (n: number) => (n === 1 ? 'камера' : n === 4 ? 'камеры' : 'камер');
+
+/** Мини-схема сетки для переключателя раскладок. */
+function GridGlyph({ cols }: { cols: number }) {
+  return (
+    <span className="grid gap-[2px] w-3.5 h-3.5" style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}>
+      {Array.from({ length: cols * cols }).map((_, i) => <span key={i} className="bg-current rounded-[1px]" />)}
+    </span>
+  );
 }
 
+function LayoutButton({ cols, label, active, onClick }: { cols: number; label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button onClick={onClick} title={label} aria-label={label} aria-pressed={active}
+      className={`inline-flex items-center justify-center w-8 h-8 rounded-md transition-colors ${active ? 'bg-raised text-fg' : 'text-muted hover:text-fg hover:bg-raised'}`}>
+      <GridGlyph cols={cols} />
+    </button>
+  );
+}
 
-const createEmptyCells = (): CellData[] => {
-  const arr: CellData[] = [];
-  for (let i = 0; i < 16; i++) arr.push({ computerId: null, streamId: null });
-  return arr;
-};
-
-export function VideoWallPage() {
+export function VideoWallPage({ onNavigate }: { onNavigate: (page: string) => void }) {
   const { toast } = useToast();
-  const { data: computersData } = usePolling(api.computers, 10000);
-  const availableComputers: Computer[] = computersData || [];
+  const { user } = useAuth();
+  const { data: streamsData } = usePolling(api.streams, 10000);
+  const streams = useMemo(() => streamsData || [], [streamsData]);
+  const byId = useMemo(() => new Map(streams.map((s) => [s.id, s])), [streams]);
 
   const [loaded, setLoaded] = useState(false);
-  const [layout, setLayout] = useState<LayoutType>('2x2');
-  const [cells, setCells] = useState<CellData[]>(createEmptyCells());
-  const [showPicker, setShowPicker] = useState<number | null>(null);
-  const [expandedComputers, setExpandedComputers] = useState<Set<string>>(new Set());
-  const [fullscreenCell, setFullscreenCell] = useState<number | null>(null);
-  const [isWallFullscreen, setIsWallFullscreen] = useState(false);
-  const [refreshInterval, setRefreshInterval] = useState<number>(0);
-  const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
+  const [layout, setLayout] = useState<WallLayout>('2x2');
+  const [cells, setCells] = useState<WallCell[]>(emptyCells);
+  const [refreshInterval, setRefreshInterval] = useState(0);
+  const [reloadKey, setReloadKey] = useState(0);
   const [configs, setConfigs] = useState<WallConfig[]>([]);
+  const [fit, setFit] = useState<'contain' | 'cover'>(() => {
+    try { return localStorage.getItem('rtspatom_fit') === 'cover' ? 'cover' : 'contain'; } catch { return 'contain'; }
+  });
+  const [picker, setPicker] = useState<number | null>(null);
+  const [search, setSearch] = useState('');
+  const [presetsOpen, setPresetsOpen] = useState(false);
+  const [presetName, setPresetName] = useState('');
+  const [isFs, setIsFs] = useState(false);
+  const [chromeVisible, setChromeVisible] = useState(true);
+  const [dragFrom, setDragFrom] = useState<number | null>(null);
+  const wallRef = useRef<HTMLDivElement>(null);
+  const cellRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const hideTimer = useRef<ReturnType<typeof setTimeout>>();
+  const firstFill = useRef(false);
 
-  // Загрузка сохранённого состояния видеостены пользователя с сервера
+  const L = LAYOUTS.find((l) => l.id === layout) || LAYOUTS[1];
+
+  // ---------- загрузка и сохранение состояния ----------
   useEffect(() => {
     let alive = true;
     Promise.all([api.wallState(), api.wallConfigs()])
       .then(([state, cfgs]) => {
         if (!alive) return;
-        const full = createEmptyCells();
-        (state.cells || []).forEach((c, i) => { if (i < 16) full[i] = c; });
+        const full = emptyCells();
+        (state.cells || []).forEach((c, i) => { if (i < 16) full[i] = { streamId: c.streamId || null }; });
         setLayout(state.layout || '2x2');
         setCells(full);
         setRefreshInterval(state.refreshInterval || 0);
         setConfigs(cfgs);
+        firstFill.current = full.every((c) => !c.streamId);
       })
       .catch((err) => toast('error', `Не удалось загрузить видеостену: ${errorMessage(err)}`))
-      .finally(() => alive && setLoaded(true));
+      .finally(() => { if (alive) setLoaded(true); });
     return () => { alive = false; };
-  }, []);
+  }, [toast]);
 
-  // Раскрываем список компьютеров в окне выбора при первой загрузке
-  useEffect(() => {
-    if (computersData && expandedComputers.size === 0) {
-      setExpandedComputers(new Set(computersData.map(c => c.id)));
-    }
-  }, [computersData]);
-
-  // Сохранение состояния на сервере (с задержкой, чтобы не слать запрос на каждое действие)
   useEffect(() => {
     if (!loaded) return;
-    const t = setTimeout(() => {
-      api.saveWallState({ layout, cells, refreshInterval }).catch(() => {});
-    }, 600);
+    const t = setTimeout(() => { api.saveWallState({ layout, cells, refreshInterval }).catch(() => {}); }, 600);
     return () => clearTimeout(t);
   }, [layout, cells, refreshInterval, loaded]);
 
-  // Auto-refresh
+  useEffect(() => { try { localStorage.setItem('rtspatom_fit', fit); } catch { /* хранилище недоступно */ } }, [fit]);
+
+  const autoFill = useCallback((pickLayout: boolean) => {
+    const list = streams.filter((s) => s.isActive);
+    const lay = pickLayout ? layoutFor(list.length) : layout;
+    const n = LAYOUTS.find((l) => l.id === lay)!.n;
+    const next = emptyCells();
+    list.slice(0, n).forEach((s, i) => { next[i] = { streamId: s.id }; });
+    setLayout(lay);
+    setCells(next);
+    return Math.min(n, list.length);
+  }, [streams, layout]);
+
+  // Первый вход: стена пустая — расставляем все камеры сами
   useEffect(() => {
-    if (refreshInterval === 0) return;
-    const interval = setInterval(() => {
-      setLastRefresh(new Date());
-    }, refreshInterval * 1000);
-    return () => clearInterval(interval);
+    if (loaded && streamsData && firstFill.current) {
+      firstFill.current = false;
+      if (streamsData.length) autoFill(true);
+    }
+  }, [loaded, streamsData, autoFill]);
+
+  useEffect(() => {
+    if (!refreshInterval) return;
+    const id = setInterval(() => setReloadKey((k) => k + 1), refreshInterval * 1000);
+    return () => clearInterval(id);
   }, [refreshInterval]);
 
-  // Fullscreen handling - NO page reload
-  const enterFullscreen = useCallback(() => {
-    setIsWallFullscreen(true);
-    // Use CSS fullscreen instead of Fullscreen API to avoid page reload
-    document.body.style.overflow = 'hidden';
-  }, []);
-
-  const exitFullscreen = useCallback(() => {
-    setIsWallFullscreen(false);
-    document.body.style.overflow = '';
-  }, []);
-
-  // Handle Escape key
+  // ---------- полноэкранный режим (Fullscreen API браузера) ----------
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isWallFullscreen) {
-        exitFullscreen();
-      }
+    const onFs = () => setIsFs(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', onFs);
+    return () => document.removeEventListener('fullscreenchange', onFs);
+  }, []);
+
+  const toggleFullscreen = useCallback(() => {
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    else wallRef.current?.requestFullscreen().catch(() => toast('error', 'Браузер не разрешил полноэкранный режим'));
+  }, [toast]);
+
+  const cellFullscreen = (i: number) => {
+    const el = cellRefs.current[i];
+    if (!el) return;
+    if (document.fullscreenElement === el) document.exitFullscreen().catch(() => {});
+    else el.requestFullscreen().catch(() => {});
+  };
+
+  // В полноэкранном режиме панель и курсор прячутся, пока мышь неподвижна
+  const poke = useCallback(() => {
+    setChromeVisible(true);
+    clearTimeout(hideTimer.current);
+    if (document.fullscreenElement) hideTimer.current = setTimeout(() => setChromeVisible(false), 2500);
+  }, []);
+  useEffect(() => { poke(); return () => clearTimeout(hideTimer.current); }, [isFs, poke]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || picker !== null || presetsOpen) return;
+      if (e.key === 'f' || e.key === 'а') { e.preventDefault(); toggleFullscreen(); }
+      const idx = ['1', '2', '3', '4'].indexOf(e.key);
+      if (idx >= 0) setLayout(LAYOUTS[idx].id);
     };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isWallFullscreen, exitFullscreen]);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [toggleFullscreen, picker, presetsOpen]);
 
-  const getGridClass = () => {
-    switch (layout) {
-      case '1x1': return 'grid-cols-1 grid-rows-1';
-      case '2x2': return 'grid-cols-2 grid-rows-2';
-      case '3x3': return 'grid-cols-3 grid-rows-3';
-      case '4x4': return 'grid-cols-4 grid-rows-4';
-      default: return 'grid-cols-2 grid-rows-2';
-    }
-  };
+  // ---------- действия с ячейками ----------
+  const setCell = (i: number, streamId: string | null) =>
+    setCells((prev) => prev.map((c, j) => (j === i ? { streamId } : c)));
 
-  const getCellCount = () => {
-    switch (layout) {
-      case '1x1': return 1;
-      case '2x2': return 4;
-      case '3x3': return 9;
-      case '4x4': return 16;
-      default: return 4;
-    }
-  };
+  const swap = (a: number, b: number) =>
+    setCells((prev) => {
+      const next = [...prev];
+      [next[a], next[b]] = [next[b], next[a]];
+      return next;
+    });
 
-  const getCellData = (index: number): { computer: Computer | null; stream: Stream | null } => {
-    const cell = cells[index];
-    if (!cell || !cell.computerId || !cell.streamId) {
-      return { computer: null, stream: null };
-    }
-    const computer = availableComputers.find(c => c.id === cell.computerId) || null;
-    const stream = computer?.streams.find(s => s.id === cell.streamId) || null;
-    return { computer, stream };
-  };
+  const openPicker = (i: number) => { setSearch(''); setPicker(i); };
 
-  const handleCellClick = (index: number) => {
-    if (isWallFullscreen) return; // Don't allow editing in fullscreen
-    setShowPicker(index);
-  };
-
-  const handleStreamSelect = (computerId: string, streamId: string) => {
-    if (showPicker !== null) {
-      const updated: CellData[] = [...cells];
-      updated[showPicker] = { computerId, streamId };
-      setCells(updated);
-      setShowPicker(null);
-      
-      const computer = availableComputers.find(c => c.id === computerId);
-      const stream = computer?.streams.find(s => s.id === streamId);
-      toast('success', `${computer?.name} → ${stream?.name}`);
-    }
-  };
-
-  const handleClearCell = (index: number, e: React.MouseEvent) => {
-    e.stopPropagation();
-    const updated = [...cells];
-    updated[index] = { computerId: null, streamId: null };
-    setCells(updated);
-    toast('info', 'Ячейка очищена');
-  };
-
-  const handleSaveConfig = async () => {
-    const name = prompt('Название конфигурации:');
+  const savePreset = async () => {
+    const name = presetName.trim();
     if (!name) return;
     try {
-      setConfigs(await api.addWallConfig({ name, layout, cells: cells.slice(0, getCellCount()) }));
-      toast('success', `Конфигурация «${name}» сохранена`);
+      setConfigs(await api.addWallConfig({ name, layout, cells: cells.slice(0, L.n) }));
+      setPresetName('');
+      toast('success', `Раскладка «${name}» сохранена`);
     } catch (err) {
       toast('error', errorMessage(err));
     }
   };
 
-  const handleLoadConfig = (config: WallConfig) => {
-    setLayout(config.layout);
-    const newCells = createEmptyCells();
-    config.cells.forEach((c, i) => {
-      if (i < 16) newCells[i] = c;
-    });
-    setCells(newCells);
-    toast('success', `Конфигурация «${config.name}» загружена`);
+  const loadPreset = (c: WallConfig) => {
+    const next = emptyCells();
+    c.cells.forEach((x, i) => { if (i < 16) next[i] = { streamId: x.streamId || null }; });
+    setLayout(c.layout);
+    setCells(next);
+    setPresetsOpen(false);
   };
 
-  const handleDeleteConfig = async (configId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!confirm('Удалить конфигурацию?')) return;
+  const deletePreset = async (c: WallConfig) => {
     try {
-      setConfigs(await api.deleteWallConfig(configId));
-      toast('info', 'Конфигурация удалена');
+      setConfigs(await api.deleteWallConfig(c.id));
     } catch (err) {
       toast('error', errorMessage(err));
     }
   };
 
-  const handleAutoFill = () => {
-    const allStreams: { computerId: string; stream: Stream }[] = [];
-    availableComputers.forEach(computer => {
-      (computer.streams || []).filter(s => s.isActive && (s.status === 'online' || s.status === 'idle')).forEach(stream => {
-        allStreams.push({ computerId: computer.id, stream });
-      });
-    });
+  const filtered = streams.filter((s) =>
+    !search || `${s.name} ${s.description}`.toLowerCase().includes(search.toLowerCase()));
 
-    const newCells = createEmptyCells();
-    allStreams.slice(0, getCellCount()).forEach((item, i) => {
-      newCells[i] = { computerId: item.computerId, streamId: item.stream.id };
-    });
-    setCells(newCells);
-    toast('success', `Автоматически заполнено ${Math.min(allStreams.length, getCellCount())} ячеек`);
-  };
-
-  const handleClearAll = () => {
-    setCells(createEmptyCells());
-    toast('info', 'Все ячейки очищены');
-  };
-
-  const toggleExpand = (computerId: string) => {
-    const newExpanded = new Set(expandedComputers);
-    if (newExpanded.has(computerId)) newExpanded.delete(computerId);
-    else newExpanded.add(computerId);
-    setExpandedComputers(newExpanded);
-  };
-
-  // Render a single cell
-  const renderCell = (index: number, isFullscreenMode: boolean) => {
-    const { computer, stream } = getCellData(index);
+  // ---------- отрисовка ----------
+  if (streamsData && streams.length === 0) {
     return (
-      <motion.div
-        key={index}
-        initial={{ opacity: 0, scale: 0.8 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ delay: 0.02 * index, duration: 0.3 }}
-        whileHover={!isFullscreenMode ? { scale: 1.02 } : undefined}
-        onClick={() => handleCellClick(index)}
-        className={`relative border border-gray-700/30 rounded-xl overflow-hidden cursor-pointer group ${
-          isFullscreenMode ? 'bg-black/80 rounded-lg' : 'bg-black/50'
-        }`}
-      >
-        {stream && computer ? (
-          <>
-            <VideoPlayer
-              streamId={stream.id}
-              name={stream.name}
-              reloadKey={lastRefresh.getTime()}
-              disabled={!stream.isActive || !computer.isActive}
-              className="absolute inset-0"
-            />
-
-            {/* Название потока */}
-            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-2 pointer-events-none">
-              <p className={`${isFullscreenMode ? 'text-sm' : 'text-xs'} text-white font-medium truncate`}>
-                {stream.name}
-              </p>
-              <p className={`${isFullscreenMode ? 'text-xs' : 'text-[10px]'} text-gray-300 truncate`}>
-                {computer.name}
-              </p>
-            </div>
-
-            <div className={`absolute top-2 right-2 w-2 h-2 rounded-full ${
-              stream.status === 'online' ? 'bg-green-500 shadow-lg shadow-green-500/50' :
-              stream.status === 'reconnecting' ? 'bg-yellow-500' : stream.status === 'idle' ? 'bg-blue-400' : 'bg-red-500'
-            }`} />
-            {!isFullscreenMode && (
-              <>
-                <motion.button
-                  whileHover={{ scale: 1.2 }} whileTap={{ scale: 0.9 }}
-                  onClick={(e) => handleClearCell(index, e)}
-                  className="absolute bottom-2 right-2 p-1.5 bg-red-600/80 hover:bg-red-600 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm"
-                >
-                  <X className="w-3 h-3" />
-                </motion.button>
-                <motion.button
-                  whileHover={{ scale: 1.2 }} whileTap={{ scale: 0.9 }}
-                  onClick={(e) => { e.stopPropagation(); setFullscreenCell(index); }}
-                  className="absolute bottom-2 left-2 p-1.5 bg-blue-600/80 hover:bg-blue-600 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm"
-                >
-                  <Maximize2 className="w-3 h-3" />
-                </motion.button>
-              </>
-            )}
-          </>
-        ) : (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <motion.div
-              animate={{ opacity: [0.3, 0.6, 0.3] }}
-              transition={{ duration: 2, repeat: Infinity }}
-              className="text-center"
-            >
-              <Plus className={`${isFullscreenMode ? 'w-10 h-10' : 'w-8 h-8'} mx-auto text-gray-600 mb-2`} />
-              <p className={`${isFullscreenMode ? 'text-xs' : 'text-[10px]'} text-gray-600`}>
-                {isFullscreenMode ? '' : `Ячейка ${index + 1}`}
-              </p>
-            </motion.div>
-          </div>
-        )}
-        <div className="absolute inset-0 bg-blue-500/0 group-hover:bg-blue-500/5 transition-colors" />
-      </motion.div>
-    );
-  };
-
-  // Fullscreen wall view (CSS-based, no page reload)
-  if (isWallFullscreen) {
-    return (
-      <div className="fixed inset-0 z-[200] bg-black flex flex-col">
-        {/* Compact toolbar */}
-        <div className="flex items-center justify-between px-3 py-1.5 bg-gray-900/95 backdrop-blur-sm border-b border-gray-800 shrink-0">
-          <div className="flex items-center gap-3">
-            <LayoutGrid className="w-4 h-4 text-blue-400" />
-            <span className="text-xs font-medium text-white">Видеостена</span>
-            {refreshInterval > 0 && (
-              <div className="flex items-center gap-1 text-[10px] text-gray-400">
-                <RefreshCw className="w-2.5 h-2.5 animate-spin" style={{ animationDuration: '3s' }} />
-                <span>{REFRESH_INTERVALS.find(i => i.value === refreshInterval)?.label}</span>
-              </div>
-            )}
-          </div>
-          <div className="flex items-center gap-1.5">
-            <div className="flex items-center gap-0.5 bg-gray-800/50 rounded-lg p-0.5">
-              {(['1x1', '2x2', '3x3', '4x4'] as LayoutType[]).map(id => (
-                <button key={id} onClick={() => setLayout(id)}
-                  className={`px-2 py-1 rounded text-[10px] font-medium transition-all ${
-                    layout === id ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'
-                  }`}
-                >
-                  {id.replace('x', '×')}
-                </button>
-              ))}
-            </div>
-            <select value={refreshInterval} onChange={e => setRefreshInterval(parseInt(e.target.value))}
-              className="bg-gray-800/50 text-[10px] text-gray-300 rounded-lg px-1.5 py-1 border-none focus:outline-none"
-            >
-              {REFRESH_INTERVALS.map(i => (
-                <option key={i.value} value={i.value}>{i.label}</option>
-              ))}
-            </select>
-            <button onClick={handleAutoFill} className="px-2 py-1 bg-green-600/20 text-green-400 text-[10px] rounded-lg">
-              Авто
-            </button>
-            <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}
-              onClick={exitFullscreen}
-              className="p-1.5 bg-gray-800/80 hover:bg-gray-700 text-white rounded-lg"
-              title="Выйти (Esc)"
-            >
-              <Minimize2 className="w-3.5 h-3.5" />
-            </motion.button>
-          </div>
-        </div>
-
-        {/* Grid */}
-        <div className="flex-1 p-1.5 min-h-0">
-          <div className={`grid ${getGridClass()} gap-1.5 h-full`}>
-            {Array.from({ length: getCellCount() }).map((_, index) => renderCell(index, true))}
-          </div>
-        </div>
-
-        <div className="absolute bottom-2 left-1/2 -translate-x-1/2 text-[10px] text-gray-600 bg-gray-900/80 px-2 py-1 rounded backdrop-blur-sm">
-          Esc — выйти
-        </div>
-      </div>
+      <Empty icon={Video} title="Камеры ещё не добавлены">
+        {user?.isAdmin ? (
+          <div className="mt-4"><Button variant="primary" icon={Plus} onClick={() => onNavigate('streams')}>Добавить поток</Button></div>
+        ) : 'Попросите администратора добавить потоки или выдать вам к ним доступ.'}
+      </Empty>
     );
   }
 
+  const toolbar = (
+    <div className="flex items-center gap-1 h-11 px-2 border-b border-line bg-ink">
+      <div className="flex items-center gap-0.5 pr-2 mr-1 border-r border-line" role="group" aria-label="Раскладка">
+        {LAYOUTS.map((l, i) => (
+          <LayoutButton key={l.id} cols={l.cols} active={layout === l.id} onClick={() => setLayout(l.id)}
+            label={`${l.n} ${camWord(l.n)} (клавиша ${i + 1})`} />
+        ))}
+      </div>
+      <IconButton icon={Wand2} label="Заполнить всеми камерами" onClick={() => {
+        const n = autoFill(false);
+        toast('info', n ? `Расставлено камер: ${n}` : 'Нет включённых потоков');
+      }} />
+      <IconButton icon={Crop} label={fit === 'cover' ? 'Вписывать видео целиком' : 'Заполнять ячейки (края обрезаются)'}
+        active={fit === 'cover'} onClick={() => setFit(fit === 'cover' ? 'contain' : 'cover')} />
+      <IconButton icon={Bookmark} label="Раскладки" onClick={() => setPresetsOpen(true)} />
+      <IconButton icon={Trash2} label="Очистить стену" onClick={() => setCells(emptyCells())} />
+      <label className="hidden sm:flex items-center gap-1.5 ml-1 text-muted" title="Переподключать все камеры через заданный интервал">
+        <RefreshCw className="w-4 h-4" />
+        <select value={refreshInterval} onChange={(e) => setRefreshInterval(Number(e.target.value))}
+          className="h-8 bg-transparent text-[13px] text-muted hover:text-fg focus:outline-none cursor-pointer">
+          {REFRESH.map((r) => <option key={r.v} value={r.v} className="bg-panel">{r.l}</option>)}
+        </select>
+      </label>
+      <div className="ml-auto flex items-center gap-3">
+        {isFs && <Clock className="text-[13px] text-muted whitespace-pre" />}
+        <Button variant={isFs ? 'subtle' : 'primary'} icon={isFs ? Minimize : Maximize} onClick={toggleFullscreen} className="h-8"
+          title="Клавиша F">
+          {isFs ? 'Выйти из полноэкранного режима' : 'На весь экран'}
+        </Button>
+      </div>
+    </div>
+  );
+
   return (
-    <div className="space-y-6">
-      <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }}
-        className="flex items-center justify-between flex-wrap gap-4"
-      >
-        <div>
-          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-            <LayoutGrid className="w-5 h-5 text-blue-400" />
-            Видеостена
-          </h2>
-          <p className="text-sm text-gray-500 flex items-center gap-2">
-            <span>{availableComputers.length} компьютеров • {availableComputers.reduce((s, c) => s + (c.streams?.length || 0), 0)} потоков</span>
-            {refreshInterval > 0 && (
-              <span className="flex items-center gap-1 text-xs text-blue-400">
-                <motion.div key={lastRefresh.getTime()} initial={{ scale: 0, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }} className="w-1.5 h-1.5 rounded-full bg-blue-400"
-                />
-                Обновлено: {lastRefresh.toLocaleTimeString('ru-RU')}
-              </span>
-            )}
-          </p>
-        </div>
+    <div ref={wallRef} onMouseMove={poke}
+      className={`relative h-full flex flex-col bg-black ${isFs && !chromeVisible ? 'cursor-none' : ''}`}>
+      {isFs ? (
+        <AnimatePresence>
+          {chromeVisible && (
+            <motion.div className="absolute top-0 inset-x-0 z-20"
+              initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.2 }}>
+              {toolbar}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      ) : toolbar}
 
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1 bg-gray-900/50 border border-gray-800/50 rounded-xl p-1">
-            {(['1x1', '2x2', '3x3', '4x4'] as LayoutType[]).map(item => (
-              <motion.button key={item} whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
-                onClick={() => setLayout(item)}
-                className={`px-3 py-2 rounded-lg text-xs font-medium transition-all ${
-                  layout === item ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800/50'
-                }`}
+      <div className="flex-1 min-h-0 grid gap-[2px] bg-ink"
+        style={{ gridTemplateColumns: `repeat(${L.cols}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${L.cols}, minmax(0, 1fr))` }}>
+        {Array.from({ length: L.n }).map((_, i) => {
+          const id = cells[i]?.streamId;
+          const s = id ? byId.get(id) : undefined;
+          return (
+            <motion.div
+              key={`${layout}-${i}`}
+              ref={(el) => { cellRefs.current[i] = el; }}
+              // «Включение монитора»: ячейки по очереди разворачиваются из горизонтальной линии
+              initial={{ scaleY: 0.015, opacity: 0.4, filter: 'brightness(2.5)' }}
+              animate={{ scaleY: 1, opacity: 1, filter: 'brightness(1)' }}
+              transition={{ delay: i * 0.035, duration: 0.42, ease: [0.25, 0.9, 0.3, 1] }}
+              className={`group relative bg-black min-w-0 min-h-0 overflow-hidden ${dragFrom !== null && dragFrom !== i ? 'outline outline-1 outline-line-strong -outline-offset-1' : ''}`}
+              onDoubleClick={() => { if (s) cellFullscreen(i); }}
+            >
+              <div
+                className="absolute inset-0"
+                draggable={!!s}
+                onDragStart={(e) => { setDragFrom(i); e.dataTransfer.setData('text/plain', String(i)); }}
+                onDragEnd={() => setDragFrom(null)}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => { e.preventDefault(); if (dragFrom !== null && dragFrom !== i) swap(dragFrom, i); setDragFrom(null); }}
               >
-                {item.replace('x', '×')}
-              </motion.button>
-            ))}
-          </div>
-
-          <div className="flex items-center gap-1 bg-gray-900/50 border border-gray-800/50 rounded-xl px-2 py-1">
-            <RefreshCw className={`w-3.5 h-3.5 text-gray-400 ${refreshInterval > 0 ? 'animate-spin' : ''}`} style={{ animationDuration: '3s' }} />
-            <select value={refreshInterval} onChange={e => setRefreshInterval(parseInt(e.target.value))}
-              className="bg-transparent text-xs text-gray-300 focus:outline-none cursor-pointer"
-            >
-              {REFRESH_INTERVALS.map(i => (
-                <option key={i.value} value={i.value} className="bg-gray-900">{i.label}</option>
-              ))}
-            </select>
-          </div>
-
-          <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
-            onClick={handleAutoFill}
-            className="px-3 py-2 bg-green-600/20 hover:bg-green-600/30 text-green-400 text-xs font-medium rounded-xl transition-all border border-green-700/30"
-          >
-            Авто
-          </motion.button>
-
-          <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
-            onClick={handleClearAll}
-            className="px-3 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 text-xs font-medium rounded-xl transition-all border border-red-700/30"
-          >
-            Очистить
-          </motion.button>
-
-          <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
-            onClick={handleSaveConfig}
-            className="px-3 py-2 bg-gradient-to-r from-blue-600 to-purple-600 text-white text-xs font-medium rounded-xl transition-all shadow-lg shadow-blue-500/20 flex items-center gap-1.5"
-          >
-            <Save className="w-3.5 h-3.5" />
-            Сохранить
-          </motion.button>
-
-          <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
-            onClick={enterFullscreen}
-            className="px-3 py-2 bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-400 text-xs font-medium rounded-xl transition-all border border-cyan-700/30 flex items-center gap-1.5"
-          >
-            <Maximize2 className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">На весь экран</span>
-          </motion.button>
-        </div>
-      </motion.div>
-
-      {configs.length > 0 && (
-        <AnimatedCard className="p-4" delay={0.1}>
-          <h3 className="text-sm font-medium text-gray-300 mb-3 flex items-center gap-2">
-            <Settings className="w-4 h-4" />
-            Сохранённые конфигурации
-          </h3>
-          <div className="flex gap-2 flex-wrap">
-            {configs.map(config => (
-              <motion.div key={config.id} whileHover={{ scale: 1.05 }} className="relative group">
-                <button onClick={() => handleLoadConfig(config)}
-                  className="px-3 py-2 bg-gray-800/50 hover:bg-gray-700/50 text-gray-300 text-xs rounded-xl transition-all border border-gray-700/50 flex items-center gap-2"
-                >
-                  <LayoutGrid className="w-3.5 h-3.5" />
-                  {config.name}
-                </button>
-                <motion.button whileHover={{ scale: 1.2 }} whileTap={{ scale: 0.9 }}
-                  onClick={(e) => handleDeleteConfig(config.id, e)}
-                  className="absolute -top-1 -right-1 p-1 bg-red-600 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
-                >
-                  <X className="w-2.5 h-2.5" />
-                </motion.button>
-              </motion.div>
-            ))}
-          </div>
-        </AnimatedCard>
-      )}
-
-      <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.2 }}
-        className={`grid ${getGridClass()} gap-3 aspect-video bg-gray-900/30 border border-gray-800/50 rounded-2xl p-3 backdrop-blur-sm`}
-      >
-        {Array.from({ length: getCellCount() }).map((_, index) => renderCell(index, false))}
-      </motion.div>
-
-      {/* Stream Picker Modal */}
-      <AnimatePresence>
-        {showPicker !== null && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-            onClick={() => setShowPicker(null)}
-          >
-            <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
-              onClick={(e) => e.stopPropagation()}
-              className="glass-strong rounded-2xl w-full max-w-lg p-6 relative overflow-hidden max-h-[80vh] flex flex-col"
-            >
-              <div className="flex items-center justify-between mb-4 shrink-0">
-                <h3 className="text-lg font-semibold text-white">
-                  Выберите поток — ячейка {showPicker + 1}
-                </h3>
-                <motion.button whileHover={{ scale: 1.1, rotate: 90 }} whileTap={{ scale: 0.9 }}
-                  onClick={() => setShowPicker(null)}
-                  className="p-1.5 rounded-xl hover:bg-gray-800 text-gray-400"
-                >
-                  <X className="w-5 h-5" />
-                </motion.button>
-              </div>
-
-              <div className="space-y-3 overflow-y-auto flex-1 pr-1">
-                {availableComputers.length === 0 ? (
-                  <div className="text-center py-12 text-gray-500">
-                    <Server className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                    <p>Нет доступных компьютеров</p>
-                  </div>
+                {s ? (
+                  <>
+                    <VideoPlayer streamId={s.id} name={s.name} reloadKey={reloadKey} disabled={!s.isActive}
+                      fit={fit} className="absolute inset-0" />
+                    <div className="absolute bottom-0 inset-x-0 px-2.5 py-1.5 flex items-center gap-2 bg-gradient-to-t from-black/75 to-transparent pointer-events-none">
+                      <StatusDot status={s.status} />
+                      <span className="text-[13px] text-white truncate [text-shadow:0_1px_2px_rgba(0,0,0,0.8)]">{s.name}</span>
+                    </div>
+                    <div className="absolute top-1.5 right-1.5 flex gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                      {[
+                        { icon: Expand, label: 'Во весь экран (двойной щелчок)', fn: () => cellFullscreen(i) },
+                        { icon: Replace, label: 'Заменить камеру', fn: () => openPicker(i) },
+                        { icon: X, label: 'Убрать из ячейки', fn: () => setCell(i, null) },
+                      ].map((b) => (
+                        <button key={b.label} title={b.label} aria-label={b.label}
+                          onClick={(e) => { e.stopPropagation(); b.fn(); }}
+                          onDoubleClick={(e) => e.stopPropagation()}
+                          className="w-7 h-7 flex items-center justify-center rounded bg-black/60 text-white/80 hover:text-white hover:bg-black/80">
+                          <b.icon className="w-3.5 h-3.5" />
+                        </button>
+                      ))}
+                    </div>
+                  </>
                 ) : (
-                  availableComputers.map(computer => {
-                    const isExpanded = expandedComputers.has(computer.id);
-                    return (
-                      <div key={computer.id} className="bg-gray-800/30 rounded-xl border border-gray-700/30 overflow-hidden">
-                        <motion.button
-                          whileHover={{ backgroundColor: 'rgba(59, 130, 246, 0.05)' }}
-                          onClick={() => toggleExpand(computer.id)}
-                          className="w-full flex items-center gap-3 p-3 text-left"
-                        >
-                          {isExpanded ? <ChevronDown className="w-4 h-4 text-gray-400 shrink-0" /> : <ChevronRight className="w-4 h-4 text-gray-400 shrink-0" />}
-                          <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${
-                            computer.status === 'online' ? 'bg-green-500 shadow-lg shadow-green-500/50' :
-                            computer.status === 'reconnecting' ? 'bg-yellow-500' : 'bg-red-500'
-                          }`} />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-white truncate">{computer.name}</p>
-                            <p className="text-[10px] text-gray-500 font-mono">{computer.ip} • {(computer.streams || []).length} потоков</p>
-                          </div>
-                          <Server className="w-4 h-4 text-gray-600 shrink-0" />
-                        </motion.button>
-
-                        <AnimatePresence>
-                          {isExpanded && (
-                            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }}
-                              exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }}
-                              className="border-t border-gray-700/30 overflow-hidden"
-                            >
-                              <div className="p-2 space-y-1">
-                                {(computer.streams || []).length === 0 ? (
-                                  <p className="text-xs text-gray-500 text-center py-2">Нет потоков</p>
-                                ) : (
-                                  (computer.streams || []).map(stream => (
-                                    <motion.button key={stream.id}
-                                      whileHover={{ scale: 1.01, x: 2 }} whileTap={{ scale: 0.99 }}
-                                      onClick={() => handleStreamSelect(computer.id, stream.id)}
-                                      className="w-full flex items-center gap-2 p-2 rounded-lg hover:bg-gray-700/30 transition-all text-left group"
-                                    >
-                                      <div className={`w-2 h-2 rounded-full shrink-0 ${
-                                        stream.status === 'online' ? 'bg-green-500' :
-                                        stream.status === 'reconnecting' ? 'bg-yellow-500' : stream.status === 'idle' ? 'bg-blue-400' : 'bg-red-500'
-                                      }`} />
-                                      <Video className="w-3.5 h-3.5 text-gray-500 shrink-0" />
-                                      <div className="flex-1 min-w-0">
-                                        <p className="text-xs font-medium text-white group-hover:text-blue-400 transition-colors truncate">
-                                          {stream.name}
-                                        </p>
-                                        <div className="flex items-center gap-1">
-                                          <span className="text-[9px] text-purple-400 uppercase">{stream.protocol}</span>
-                                          {stream.tracks.length > 0 && <span className="text-[9px] text-gray-500">{stream.tracks.join(', ')}</span>}
-                                        </div>
-                                      </div>
-                                      {stream.status === 'online' && (
-                                        <span className="text-[9px] text-green-400 bg-green-950/30 px-1.5 py-0.5 rounded">ONLINE</span>
-                                      )}
-                                    </motion.button>
-                                  ))
-                                )}
-                              </div>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-                      </div>
-                    );
-                  })
+                  <button onClick={() => openPicker(i)}
+                    className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 text-line-strong hover:text-muted transition-colors">
+                    <Plus className="w-6 h-6" strokeWidth={1.25} />
+                    <span className="text-xs">{id ? 'Поток недоступен — выбрать другой' : 'Выбрать камеру'}</span>
+                  </button>
                 )}
               </div>
-
-              {cells[showPicker]?.computerId && (
-                <motion.button initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-                  whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
-                  onClick={() => {
-                    const updated = [...cells];
-                    updated[showPicker] = { computerId: null, streamId: null };
-                    setCells(updated);
-                    setShowPicker(null);
-                  }}
-                  className="w-full mt-3 py-2.5 px-4 bg-red-600/20 hover:bg-red-600/30 text-red-400 text-sm font-medium rounded-xl transition-all border border-red-700/30 shrink-0"
-                >
-                  Убрать поток из ячейки
-                </motion.button>
-              )}
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Single cell fullscreen */}
-      <AnimatePresence>
-        {fullscreenCell !== null && (() => {
-          const { computer, stream } = getCellData(fullscreenCell);
-          if (!computer || !stream) return null;
-          return (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-8"
-              onClick={() => setFullscreenCell(null)}
-            >
-              <motion.div initial={{ scale: 0.8 }} animate={{ scale: 1 }} exit={{ scale: 0.8 }}
-                className="relative w-full h-full max-w-6xl max-h-[80vh] bg-black rounded-2xl overflow-hidden border border-gray-700/50"
-              >
-                <VideoPlayer
-                  streamId={stream.id}
-                  name={stream.name}
-                  disabled={!stream.isActive || !computer.isActive}
-                  className="absolute inset-0"
-                />
-                
-                {/* Информация о потоке */}
-                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 pointer-events-none">
-                  <p className="text-xl text-white font-medium">{stream.name}</p>
-                  <p className="text-sm text-gray-300 mt-1">{computer.name}{computer.ip ? ` • ${computer.ip}` : ''}</p>
-                  <p className="text-xs text-purple-400 mt-1 uppercase">{stream.protocol}{stream.tracks.length ? ` • ${stream.tracks.join(', ')}` : ''}</p>
-                </div>
-                <motion.button whileHover={{ scale: 1.1, rotate: 90 }} whileTap={{ scale: 0.9 }}
-                  onClick={() => setFullscreenCell(null)}
-                  className="absolute top-4 right-4 p-2 bg-gray-800/80 hover:bg-gray-700 text-white rounded-xl backdrop-blur-sm"
-                >
-                  <Minimize2 className="w-5 h-5" />
-                </motion.button>
-              </motion.div>
             </motion.div>
           );
-        })()}
-      </AnimatePresence>
+        })}
+      </div>
+
+      <Modal open={picker !== null} onClose={() => setPicker(null)} title="Камера для ячейки" wide>
+        <div className="relative mb-3">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
+          <input autoFocus className={`${inputCls} pl-9`} placeholder="Поиск по названию"
+            value={search} onChange={(e) => setSearch(e.target.value)} />
+        </div>
+        <ul className="divide-y divide-line -mx-1">
+          {filtered.map((s: Stream) => {
+            const used = cells.slice(0, L.n).some((c) => c.streamId === s.id);
+            return (
+              <li key={s.id}>
+                <button onClick={() => { if (picker !== null) setCell(picker, s.id); setPicker(null); }}
+                  className="w-full flex items-center gap-3 px-2 py-2.5 rounded text-left hover:bg-raised">
+                  <StatusDot status={s.status} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate">{s.name}</span>
+                    {s.description && <span className="block text-[13px] text-muted truncate">{s.description}</span>}
+                  </span>
+                  {used && <span className="text-xs text-muted">уже на стене</span>}
+                </button>
+              </li>
+            );
+          })}
+          {filtered.length === 0 && <li className="py-6 text-center text-muted">Ничего не найдено</li>}
+        </ul>
+        {picker !== null && cells[picker]?.streamId && (
+          <div className="mt-4 pt-4 border-t border-line">
+            <Button variant="danger" icon={X} onClick={() => { setCell(picker, null); setPicker(null); }}>Освободить ячейку</Button>
+          </div>
+        )}
+      </Modal>
+
+      <Modal open={presetsOpen} onClose={() => setPresetsOpen(false)} title="Раскладки">
+        <form className="flex gap-2 mb-4" onSubmit={(e) => { e.preventDefault(); savePreset(); }}>
+          <input className={inputCls} placeholder="Название текущей раскладки" value={presetName}
+            onChange={(e) => setPresetName(e.target.value)} />
+          <Button type="submit" variant="primary" disabled={!presetName.trim()}>Сохранить</Button>
+        </form>
+        {configs.length === 0 ? (
+          <p className="text-muted text-sm">Сохраните текущую расстановку камер, чтобы потом вернуть её одним щелчком.</p>
+        ) : (
+          <ul className="divide-y divide-line">
+            {configs.map((c) => (
+              <li key={c.id} className="flex items-center gap-2 py-1.5">
+                <button onClick={() => loadPreset(c)} className="flex-1 flex items-center gap-3 px-2 py-1.5 rounded text-left hover:bg-raised">
+                  <span className="text-muted"><GridGlyph cols={LAYOUTS.find((l) => l.id === c.layout)?.cols || 2} /></span>
+                  {c.name}
+                </button>
+                <IconButton icon={Trash2} label="Удалить раскладку" onClick={() => deletePreset(c)} />
+              </li>
+            ))}
+          </ul>
+        )}
+      </Modal>
     </div>
   );
 }

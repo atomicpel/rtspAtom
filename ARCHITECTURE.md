@@ -23,8 +23,7 @@
 - `lib/mediamtx.js`: клиент Control API v3 и класс `StreamSync`. Он приводит пути MediaMTX
   в соответствие с базой (при изменениях и раз в 30 с), опрашивает состояние потоков (раз в 5 с)
   и пишет в журнал переходы «в сети / нет сигнала».
-- `lib/metrics.js`: CPU, RAM и сеть из `/proc`.
-- `routes/`: API (`auth`, `users`, `computers`, `system`, `wall`) и HLS-прокси (`hls.js`).
+- `routes/`: API (`auth`, `users`, `streams`, `system`, `wall`) и HLS-прокси (`hls.js`).
 - `cli.js`: утилита `rtspatom-admin`.
 
 ### Безопасность
@@ -32,7 +31,7 @@
 - Сессия хранится в cookie `HttpOnly; SameSite=Strict` (с `Secure` при HTTPS), срок продлевается при активности.
 - Перебор паролей: после N неудачных попыток за 15 минут вход с этого IP блокируется на 15 минут.
 - Пароли камер не передаются в браузер. Логин и пароль, вписанные в URL, сервер выносит в отдельные поля.
-- Видео доступно только через `/hls/…` после входа и только для камер, к которым у пользователя есть доступ.
+- Видео доступно только через `/hls/…` после входа и только для потоков, к которым у пользователя есть доступ.
   К MediaMTX панель обращается как доверенный прокси: заголовок `Authorization: Bearer <hlsCDNSecret>`,
   секрет генерирует установщик и прописывает в `mediamtx.yml` и `config.json`.
 - Нельзя удалить или отключить последнего администратора, а также добавить IP-правило, которое заблокирует текущий адрес.
@@ -45,9 +44,9 @@
 |---|---|---|
 | GET | `/api/auth/status`, POST `/api/auth/login`, `/api/auth/logout`, `/api/auth/setup` | все |
 | GET | `/api/auth/me`, POST `/api/auth/password` | вошедший |
-| GET | `/api/computers`, `/api/metrics`, `/api/system`, `/api/wall/*` | наблюдатель+ |
+| GET | `/api/streams`, `/api/system`, `/api/wall/*` | наблюдатель+ |
 | GET | `/api/logs`, `/api/logs/export` | оператор+ |
-| * | `/api/computers*`, `/api/streams*`, `/api/users*`, `/api/ip-rules*`, `/api/settings` | администратор |
+| * | `/api/streams*`, `/api/streams-order`, `/api/users*`, `/api/ip-rules*`, `/api/settings` | администратор |
 
 ## Веб-интерфейс (`src/`)
 

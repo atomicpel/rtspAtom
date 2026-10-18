@@ -7,7 +7,6 @@ import { openDb } from './lib/db.js';
 import { EventLog } from './lib/eventlog.js';
 import { getSettings } from './lib/settings.js';
 import { MediaMtxClient, StreamSync } from './lib/mediamtx.js';
-import { SystemMetrics } from './lib/metrics.js';
 import { createHandler } from './lib/app.js';
 import { APP_VERSION } from './routes/system.js';
 
@@ -16,9 +15,8 @@ const db = openDb(path.join(config.dataDir, 'rtspatom.db'));
 const log = new EventLog(db);
 const client = new MediaMtxClient(config.mediamtx.apiUrl);
 const sync = new StreamSync({ db, client, log, settings: () => getSettings(db) });
-const metrics = new SystemMetrics();
 
-const app = { db, config, log, sync, metrics, startedAt: Date.now() };
+const app = { db, config, log, sync, startedAt: Date.now() };
 const handler = createHandler(app);
 
 let server;
@@ -54,7 +52,6 @@ server.listen(config.port, config.host, () => {
   }
 });
 
-metrics.start(2000);
 sync.start();
 
 function housekeeping() {
@@ -75,7 +72,6 @@ setInterval(housekeeping, 6 * 3600 * 1000).unref();
 function shutdown(signal) {
   log.info('admin', `Остановка сервера (${signal})`);
   sync.stop();
-  metrics.stop();
   server.close(() => {
     db.close();
     process.exit(0);
