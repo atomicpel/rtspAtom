@@ -9,6 +9,9 @@ User=rtspatom
 Group=rtspatom
 Environment=RTSPATOM_CONFIG=/etc/rtspatom/config.json
 Environment=NODE_ENV=production
+# Панель знает, что ей не видны /home, /root и общий /tmp (ProtectHome, PrivateTmp ниже), —
+# такие папки не предлагаются для архива
+Environment=RTSPATOM_SANDBOX=1
 WorkingDirectory=/var/lib/rtspatom
 ExecStart=/opt/rtspatom/node/bin/node --disable-warning=ExperimentalWarning /opt/rtspatom/app/server/index.js
 Restart=always

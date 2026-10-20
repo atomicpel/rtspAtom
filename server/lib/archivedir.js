@@ -16,8 +16,12 @@ const INSTALL_DIR = (() => {
   return fs.existsSync(path.join(d, 'node')) && fs.existsSync(path.join(d, 'mediamtx')) ? d : null;
 })();
 
-/** Работает ли панель службой systemd с защитой ProtectHome/PrivateTmp (тогда /home и /tmp ей не годятся). */
-export const SANDBOXED = !IS_WINDOWS && (!!process.env.INVOCATION_ID || process.env.RTSPATOM_SANDBOX === '1');
+/**
+ * Работает ли панель службой rtspatom с защитой ProtectHome/PrivateTmp (тогда /home и /tmp ей не годятся).
+ * Признак задаёт сама служба (Environment=RTSPATOM_SANDBOX=1): INVOCATION_ID есть у любого процесса
+ * из systemd, в том числе у запущенного вручную из службы-агента.
+ */
+export const SANDBOXED = !IS_WINDOWS && process.env.RTSPATOM_SANDBOX === '1';
 
 /** Действующая папка архива: выбранная в панели, иначе из config.json. */
 export function effectiveArchiveDir(db, config) {
