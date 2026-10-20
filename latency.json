@@ -1,0 +1,78 @@
+{
+  "RTSP → WebRTC": {
+    "transport": "webrtc",
+    "median": 53,
+    "min": 37,
+    "max": 88,
+    "results": [
+      37,
+      37,
+      53,
+      53,
+      70,
+      88
+    ],
+    "reported": "12"
+  },
+  "RTMP → WebRTC": {
+    "transport": "webrtc",
+    "median": 37,
+    "min": 20,
+    "max": 70,
+    "results": [
+      20,
+      37,
+      37,
+      37,
+      37,
+      53,
+      70
+    ],
+    "reported": "8"
+  },
+  "SRT → WebRTC": {
+    "transport": "webrtc",
+    "median": 202,
+    "min": 185,
+    "max": 219,
+    "results": [
+      185,
+      185,
+      202,
+      202,
+      218,
+      219
+    ],
+    "reported": "9"
+  },
+  "UDP → WebRTC": {
+    "transport": "webrtc",
+    "median": 68,
+    "min": 67,
+    "max": 102,
+    "results": [
+      67,
+      68,
+      68,
+      69,
+      102
+    ],
+    "reported": "9"
+  },
+  "RTSP → HLS": {
+    "transport": "hls",
+    "median": 700,
+    "min": 699,
+    "max": 736,
+    "results": [
+      699,
+      699,
+      700,
+      700,
+      717,
+      733,
+      736
+    ],
+    "reported": "714"
+  }
+}
