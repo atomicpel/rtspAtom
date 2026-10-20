@@ -1,0 +1,337 @@
+# Проверка Windows-пакета на чистой машине (GitHub Actions, windows-runner, права администратора).
+# Установщик запускается в Windows PowerShell 5.1 — как у пользователя Windows 11;
+# сам тест — в PowerShell 7 (pwsh).
+#   pwsh scripts/windows-test.ps1 -Zip out\rtspatom-...-windows-x64.zip
+param([Parameter(Mandatory)][string]$Zip)
+
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$Port = 18080
+$Password = 'ci-пароль-12345'
+$DataRoot = Join-Path $env:ProgramData 'RTSPAtom'
+$InstallDir = Join-Path $env:ProgramFiles 'RTSPAtom'
+$W = Join-Path ($env:RUNNER_TEMP ?? $env:TEMP) 'rtspatom-wtest'
+$procs = @()
+
+function Annotate([string]$title, [string]$text) {
+  $t = ($text -replace '%', '%25' -replace "`r", '' -replace "`n", '%0A')
+  Write-Host "::error title=$title::$t"
+}
+function Fail([string]$m) {
+  Write-Host "::error title=Windows::$m"
+  Write-Host "ОШИБКА: $m" -ForegroundColor Red
+  if (Test-Path "$DataRoot\logs") {
+    Get-ChildItem "$DataRoot\logs" -File -ErrorAction SilentlyContinue | ForEach-Object {
+      $tail = (Get-Content $_.FullName -Tail 30 -ErrorAction SilentlyContinue) -join "`n"
+      if ($tail) { Annotate "log $($_.Name)" $tail }
+    }
+  }
+  foreach ($f in 'camera.log', 'ffmpeg.log') {
+    if (Test-Path "$W\$f") { Write-Host "::group::$f"; Get-Content "$W\$f" -Tail 40; Write-Host '::endgroup::' }
+  }
+  exit 1
+}
+function Step([string]$m) { Write-Host "==> $m" -ForegroundColor Cyan }
+
+function Install-Bundle([string[]]$Extra) {
+  $dir = (Get-ChildItem $W -Directory | Where-Object Name -like 'rtspatom-*' | Select-Object -First 1).FullName
+  $log = Join-Path $W "install-$([guid]::NewGuid().ToString('N').Substring(0,6)).log"
+  $p = Start-Process powershell.exe -Wait -PassThru -NoNewWindow -RedirectStandardOutput $log `
+    -ArgumentList (@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$dir\install.ps1`"") + $Extra)
+  $text = Get-Content $log -Raw -Encoding UTF8
+  Write-Host $text
+  if ($p.ExitCode -ne 0 -or $text -match 'Ошибка:') {
+    Annotate 'install.ps1' ((($text -split "`n") | Select-Object -Last 40) -join "`n")
+    Fail "install.ps1 завершился с кодом $($p.ExitCode)"
+  }
+}
+
+function New-Session([string]$base) {
+  $s = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+  $body = @{ login = 'admin'; password = $Password } | ConvertTo-Json
+  Invoke-RestMethod "$base/api/auth/login" -Method Post -WebSession $s -SkipCertificateCheck `
+    -ContentType 'application/json; charset=utf-8' -Headers @{ 'X-RTSPAtom' = '1' } -Body $body | Out-Null
+  return $s
+}
+function Api([string]$method, [string]$url, $body, $s) {
+  $p = @{ Uri = $url; Method = $method; WebSession = $s; SkipCertificateCheck = $true; Headers = @{ 'X-RTSPAtom' = '1' } }
+  if ($null -ne $body) { $p.Body = ($body | ConvertTo-Json -Depth 5); $p.ContentType = 'application/json; charset=utf-8' }
+  Invoke-RestMethod @p
+}
+function Wait-Http([string]$url, [int]$sec = 30) {
+  for ($i = 0; $i -lt $sec * 2; $i++) {
+    try { Invoke-WebRequest $url -SkipCertificateCheck -TimeoutSec 3 | Out-Null; return } catch { Start-Sleep -Milliseconds 500 }
+  }
+  Fail "нет ответа от $url"
+}
+
+try {
+  Remove-Item $W -Recurse -Force -ErrorAction SilentlyContinue
+  New-Item -ItemType Directory -Path $W | Out-Null
+  Expand-Archive -LiteralPath $Zip -DestinationPath $W
+  $bundle = (Get-ChildItem $W -Directory | Select-Object -First 1).FullName
+
+  # ---------- Занятые порты ----------
+  # Имитируем «чужую» программу на порту панели и на порту HLS MediaMTX:
+  # установщик должен сам взять следующие свободные порты.
+  Step "Занимаю порты $Port и 8888 посторонними процессами"
+  foreach ($bp in @(@($Port, '0.0.0.0'), @(8888, '127.0.0.1'))) {
+    $procs += Start-Process "$bundle\node\node.exe" -PassThru -NoNewWindow `
+      -ArgumentList @('-e', "`"require('net').createServer().listen($($bp[0]),'$($bp[1])')`"")
+  }
+  # Как второй MediaMTX на этом же компьютере: UDP 8189 (ICE) и 8890 (SRT) на [::] (двойной сокет Go)
+  foreach ($up in 8189, 8890) {
+    $procs += Start-Process "$bundle\node\node.exe" -PassThru -NoNewWindow `
+      -ArgumentList @('-e', "`"require('dgram').createSocket({type:'udp6',ipv6Only:false}).bind($up,'::')`"")
+  }
+  Start-Sleep -Seconds 1
+
+  # ---------- Установка ----------
+  Step 'Установка (Windows PowerShell 5.1)'
+  Install-Bundle @('-Port', $Port, '-AdminPassword', "`"$Password`"")
+  $cfg = Get-Content "$DataRoot\config.json" -Raw | ConvertFrom-Json
+  if ($cfg.port -eq $Port) { Fail "установщик занял уже занятый порт $Port" }
+  if (([Uri]$cfg.mediamtx.hlsUrl).Port -eq 8888) { Fail 'установщик занял уже занятый порт 8888' }
+  if ([int]$cfg.mediamtx.icePort -eq 8189) { Fail 'установщик занял порт ICE 8189, занятый на [::] другой программой' }
+  if ([int]$cfg.mediamtx.srtPort -eq 8890) { Fail 'установщик занял порт SRT 8890, занятый на [::] другой программой' }
+  if ((Get-Content "$DataRoot\mediamtx.yml" -Raw) -notmatch "hlsAddress: 127\.0\.0\.1:$(([Uri]$cfg.mediamtx.hlsUrl).Port)") { Fail 'адрес HLS в mediamtx.yml не совпадает с config.json' }
+  Write-Host "Порты подобраны: панель $($cfg.port), HLS $(([Uri]$cfg.mediamtx.hlsUrl).Port), API $(([Uri]$cfg.mediamtx.apiUrl).Port)"
+  $Port = [int]$cfg.port
+
+  foreach ($s in 'rtspatom', 'rtspatom-mediamtx') {
+    $svc = Get-CimInstance Win32_Service -Filter "Name='$s'"
+    if (-not $svc) { Fail "служба $s не зарегистрирована" }
+    if ($svc.State -ne 'Running') { Fail "служба $s не запущена ($($svc.State))" }
+    if ($svc.StartMode -ne 'Auto') { Fail "служба $s не в автозапуске ($($svc.StartMode))" }
+    if ($svc.StartName -notmatch 'LocalService') { Fail "служба $s работает от $($svc.StartName), ожидалась LocalService" }
+  }
+  if (-not (Get-NetFirewallRule -Name 'RTSPAtom-HTTP' -ErrorAction SilentlyContinue)) { Fail 'нет правила брандмауэра' }
+  foreach ($r in 'RTSPAtom-ICE-UDP', 'RTSPAtom-ICE-TCP', 'RTSPAtom-RTMP', 'RTSPAtom-SRT') {
+    if (-not (Get-NetFirewallRule -Name $r -ErrorAction SilentlyContinue)) { Fail "нет правила брандмауэра $r (WebRTC)" }
+  }
+  $yml = Get-Content "$DataRoot\mediamtx.yml" -Raw
+  if (-not $cfg.mediamtx.webrtcUrl) { Fail 'в config.json нет mediamtx.webrtcUrl' }
+  if ($yml -notmatch "webrtcAddress: 127\.0\.0\.1:$(([Uri]$cfg.mediamtx.webrtcUrl).Port)") { Fail 'адрес WHEP в mediamtx.yml не совпадает с config.json' }
+  if ($yml -notmatch 'webrtcLocalUDPAddress: :(\d+)') { Fail 'в mediamtx.yml нет порта ICE' }
+  Write-Host "WebRTC: WHEP $(([Uri]$cfg.mediamtx.webrtcUrl).Port), ICE $($Matches[1]) UDP/TCP"
+  $adminOut = & cmd.exe /c "`"$InstallDir\rtspatom-admin.cmd`" list-users" 2>&1
+  if (($adminOut -join "`n") -notmatch 'admin') { Fail "rtspatom-admin не работает: $adminOut" }
+
+  $B = "http://127.0.0.1:$Port"
+  Wait-Http "$B/api/auth/status"
+  $st = Invoke-RestMethod "$B/api/auth/status"
+  if ($st.platform -ne 'windows') { Fail "platform = $($st.platform)" }
+  if ((Invoke-WebRequest "$B/").Content -notmatch 'id="root"') { Fail 'фронтенд не отдаётся' }
+  $S = New-Session $B
+
+  for ($i = 0; $i -lt 40; $i++) { if ((Api GET "$B/api/system" $null $S).mediamtx.reachable) { break }; Start-Sleep -Milliseconds 500 }
+  $sys = Api GET "$B/api/system" $null $S
+  if (-not $sys.mediamtx.reachable) { Fail "панель не видит MediaMTX: $($sys.mediamtx.lastError)" }
+  Write-Host "Система: $($sys.platform), MediaMTX $($sys.mediamtx.version)"
+
+  # Снаружи у MediaMTX открыты порт медиа WebRTC (ICE) и приём от энкодеров (RTMP, SRT), остальное — 127.0.0.1
+  $mtx = Get-Process mediamtx | Where-Object { $_.Path -like "$InstallDir*" }
+  $listen = @(Get-NetTCPConnection -State Listen -OwningProcess $mtx.Id | ForEach-Object { "$($_.LocalAddress):$($_.LocalPort)" })
+  $listen += @(Get-NetUDPEndpoint -OwningProcess $mtx.Id -ErrorAction SilentlyContinue | ForEach-Object { "udp $($_.LocalAddress):$($_.LocalPort)" })
+  $icePort = [regex]::Match((Get-Content "$DataRoot\mediamtx.yml" -Raw), 'webrtcLocalUDPAddress: :(\d+)').Groups[1].Value
+  $ymlText = Get-Content "$DataRoot\mediamtx.yml" -Raw
+  $rtmpPort = [regex]::Match($ymlText, 'rtmpAddress: :(\d+)').Groups[1].Value
+  $srtPort = [regex]::Match($ymlText, 'srtAddress: :(\d+)').Groups[1].Value
+  $exposed = $listen | Where-Object { $_ -notmatch '^(udp )?(127\.0\.0\.1|::1):' -and $_ -notmatch ":($icePort|$rtmpPort|$srtPort)`$" }
+  if ($exposed) { Fail "MediaMTX слушает внешние адреса: $($exposed -join ', ')" }
+  Write-Host "MediaMTX слушает: $($listen -join ', ')"
+
+  # ---------- Тестовая камера ----------
+  Step 'Тестовая камера RTSP (MediaMTX + ffmpeg)'
+  @'
+logLevel: info
+api: no
+rtsp: yes
+rtspAddress: 127.0.0.1:18554
+rtpAddress: :18000
+rtcpAddress: :18001
+rtmp: no
+hls: no
+webrtc: no
+srt: no
+moq: no
+paths:
+  all_others:
+'@ | Set-Content "$W\camera.yml" -Encoding ascii
+  $procs += Start-Process "$bundle\mediamtx\mediamtx.exe" -ArgumentList "`"$W\camera.yml`"" -PassThru -NoNewWindow `
+    -RedirectStandardOutput "$W\camera.log" -RedirectStandardError "$W\camera.err"
+  Start-Sleep -Seconds 1
+  $procs += Start-Process ffmpeg -PassThru -NoNewWindow -RedirectStandardError "$W\ffmpeg.log" -ArgumentList @(
+    '-hide_banner', '-loglevel', 'error', '-re', '-f', 'lavfi', '-i', 'testsrc=size=640x360:rate=25',
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-g', '25', '-pix_fmt', 'yuv420p',
+    '-f', 'rtsp', '-rtsp_transport', 'tcp', 'rtsp://127.0.0.1:18554/cam')
+  Start-Sleep -Seconds 2
+
+  # ---------- Камера через панель ----------
+  Step 'Добавление камеры и видео через панель'
+
+  $probe = Api POST "$B/api/streams/probe" @{ url = 'rtsp://127.0.0.1:18554/cam'; transport = 'tcp' } $S
+  if (-not $probe.ok -or ($probe.tracks -notcontains 'H264')) { Fail "проверка камеры: $($probe | ConvertTo-Json -Compress)" }
+  $stream = Api POST "$B/api/streams" @{ name = 'Камера въезда (Windows)'; url = 'rtsp://127.0.0.1:18554/cam'; transport = 'tcp' } $S
+  if ($stream.name -ne 'Камера въезда (Windows)') { Fail "кириллица искажена: $($stream.name)" }
+  $status = ''
+  for ($i = 0; $i -lt 40; $i++) {
+    $status = ((Api GET "$B/api/streams" $null $S) | Where-Object id -eq $stream.id).status
+    if ($status -eq 'online') { break }
+    Start-Sleep -Seconds 1
+  }
+  if ($status -ne 'online') { Fail "поток не перешёл в online ($status)" }
+
+  $master = $null
+  for ($i = 0; $i -lt 30; $i++) {
+    try { $master = (Invoke-WebRequest "$B/hls/$($stream.id)/index.m3u8" -WebSession $S).Content; break } catch { Start-Sleep -Seconds 1 }
+  }
+  if (-not $master) { Fail 'index.m3u8 не получен' }
+  if ($master -is [byte[]]) { $master = [Text.Encoding]::UTF8.GetString($master) }
+  $variant = ($master -split "`n" | Where-Object { $_ -and $_ -notmatch '^#' -and $_ -match '\.m3u8' } | Select-Object -First 1).Trim()
+  $vtext = (Invoke-WebRequest "$B/hls/$($stream.id)/$variant" -WebSession $S).Content
+  if ($vtext -is [byte[]]) { $vtext = [Text.Encoding]::UTF8.GetString($vtext) }
+  $seg = $null; $gap = $false
+  foreach ($line in $vtext -split "`n") {
+    $line = $line.Trim()
+    if ($line -like '#EXT-X-GAP*') { $gap = $true; continue }
+    if (-not $line -or $line.StartsWith('#')) { continue }
+    if (-not $gap) { $seg = $line; break }
+    $gap = $false
+  }
+  if (-not $seg -and $vtext -match '#EXT-X-PART:[^\n]*URI="([^"]+)"') { $seg = $Matches[1] }
+  if (-not $seg) { Fail "в плейлисте нет сегментов: $vtext" }
+  $r = Invoke-WebRequest "$B/hls/$($stream.id)/$seg" -WebSession $S
+  $size = $r.RawContentLength
+  if ($size -lt 500) { Fail "сегмент слишком мал ($size байт)" }
+  Write-Host "Сегмент $seg получен через панель: $size байт"
+  try { Invoke-WebRequest "$B/hls/$($stream.id)/index.m3u8" | Out-Null; Fail 'видео отдаётся без входа' } catch {
+    if ($_.Exception.Response.StatusCode.value__ -ne 401) { Fail "без входа ожидался код 401, получен $($_.Exception.Response.StatusCode.value__)" }
+  }
+
+  # ---------- Архив ----------
+  Step 'Архив: запись на диск и выдача через панель'
+  $dur = 0; $spans = @()
+  for ($i = 0; $i -lt 40; $i++) {
+    $from = [DateTime]::UtcNow.AddHours(-1).ToString('yyyy-MM-ddTHH:mm:ssZ'); $to = [DateTime]::UtcNow.AddMinutes(1).ToString('yyyy-MM-ddTHH:mm:ssZ')
+    $spans = @()
+    try {
+      $resp = Invoke-WebRequest "$B/api/archive/$($stream.id)/spans?start=$from&end=$to" -WebSession $S -SkipHttpErrorCheck
+      if ($resp.StatusCode -eq 200) { $spans = @($resp.Content | ConvertFrom-Json) }
+    } catch { $spans = @() }
+    $dur = 0; foreach ($x in $spans) { $dur += [double]$x.duration }
+    if ($dur -ge 8) { break }
+    Start-Sleep -Seconds 1
+  }
+  $archDir = Join-Path $DataRoot "data\archive\s_$($stream.id)"
+  if ($dur -lt 8) {
+    # диагностика: ответ панели и сервера выдачи записей MediaMTX напрямую (в текст ошибки — журналы CI не видны)
+    $diag = @()
+    try { $pr = Invoke-WebRequest "$B/api/archive/$($stream.id)/spans?start=$from&end=$to" -WebSession $S -SkipHttpErrorCheck; $diag += "панель: $($pr.StatusCode) $($pr.Content)" } catch { $diag += "панель: $_" }
+    $pb = ([Uri]$cfg.mediamtx.playbackUrl).Port
+    try { $pr = Invoke-WebRequest "http://127.0.0.1:$pb/list?path=s_$($stream.id)" -SkipHttpErrorCheck; $diag += "MediaMTX /list: $($pr.StatusCode) $($pr.Content)" } catch { $diag += "MediaMTX /list: $_" }
+    try { $pc = Invoke-RestMethod "$(($cfg.mediamtx.apiUrl).TrimEnd('/'))/v3/config/paths/get/s_$($stream.id)"; $diag += "recordPath: $($pc.recordPath) record: $($pc.record)" } catch { $diag += "конфиг пути: $_" }
+    $diag += @(Get-Content "$DataRoot\logs\rtspatom-mediamtx.out.log" -Tail 6 -ErrorAction SilentlyContinue)
+    Fail "запись не выдаётся (записано $dur с; файлы: $((Get-ChildItem $archDir -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name) -join ', ')) | $($diag -join ' | ')"
+  }
+  if (-not (Get-ChildItem $archDir -Filter *.mp4 -ErrorAction SilentlyContinue)) { Fail "в $archDir нет файлов записи" }
+  $st = $spans[0].start
+  $st0 = if ($st -is [DateTime]) { $st.ToUniversalTime() } else { [DateTimeOffset]::Parse([string]$st, [Globalization.CultureInfo]::InvariantCulture).UtcDateTime }
+  $astart = $st0.AddSeconds(2).ToString('yyyy-MM-ddTHH:mm:ssZ', [Globalization.CultureInfo]::InvariantCulture)
+  $r = Invoke-WebRequest "$B/archive/$($stream.id)/video?start=$astart&duration=4" -WebSession $S
+  if ($r.RawContentLength -lt 10000) { Fail "видео из архива слишком мало ($($r.RawContentLength) байт)" }
+  Write-Host "Архив: записано $([math]::Round($dur)) с, фрагмент $($r.RawContentLength) байт, каталог $archDir"
+
+  # ---------- Папка архива из «Настройки → Архив» ----------
+  # Новая проверка: при сбое — предупреждение в сводке (не блокирует публикацию), подробности в журнале
+  Step 'Смена папки архива из панели'
+  try {
+    $disks = @(Api GET "$B/api/archive/disks" $null $S)
+    if (-not ($disks | Where-Object { $_.mount -eq 'C:\' })) { throw "в списке дисков нет C:\: $($disks | ConvertTo-Json -Compress)" }
+    $bad = Api POST "$B/api/archive/check-dir" @{ path = 'C:\Windows\rtspatom-archive' } $S
+    if ($bad.ok) { throw 'папка в C:\Windows принята' }
+    $newArch = 'C:\RTSPAtom-archive-test'
+    $chk = Api POST "$B/api/archive/check-dir" @{ path = $newArch } $S
+    if (-not $chk.ok) {
+      # нет прав у LocalService — выполняем подсказанные панелью команды и проверяем ещё раз
+      if (-not $chk.fix) { throw "папка не подходит: $($chk | ConvertTo-Json -Compress)" }
+      Write-Host "Панель подсказала команды: $($chk.fix)"
+      New-Item -ItemType Directory -Force -Path $newArch | Out-Null
+      icacls.exe $newArch /grant '*S-1-5-19:(OI)(CI)M' /Q | Out-Null
+      $chk = Api POST "$B/api/archive/check-dir" @{ path = $newArch } $S
+      if (-not $chk.ok) { throw "после команд папка всё ещё не подходит: $($chk | ConvertTo-Json -Compress)" }
+    }
+    $res = Api PUT "$B/api/archive/dir" @{ path = $newArch; records = 'move' } $S
+    if ($res.dir -ne $newArch) { throw "папка не сменилась: $($res | ConvertTo-Json -Compress)" }
+    $deadline = (Get-Date).AddSeconds(120)
+    do { Start-Sleep 2; $a = Api GET "$B/api/archive" $null $S } while ($a.relocation.state -eq 'running' -and (Get-Date) -lt $deadline)
+    if ($a.relocation.state -ne 'done') { throw "перенос записей: $($a.relocation | ConvertTo-Json -Compress)" }
+    if (-not (Get-ChildItem (Join-Path $newArch "s_$($stream.id)") -Filter *.mp4 -ErrorAction SilentlyContinue)) { throw 'в новой папке нет записей' }
+    $r2 = Invoke-WebRequest "$B/archive/$($stream.id)/video?start=$astart&duration=3" -WebSession $S
+    if ($r2.RawContentLength -lt 10000) { throw "перенесённая запись не отдаётся ($($r2.RawContentLength) байт)" }
+    Write-Host "Папка архива: $newArch, перенесено файлов $($a.relocation.filesDone), запись отдаётся"
+    Write-Host "::notice title=Папка архива (Windows)::смена из панели работает: $newArch, перенесено файлов $($a.relocation.filesDone)"
+  } catch {
+    Write-Host "::warning title=Папка архива (Windows)::$($_.Exception.Message)"
+  }
+
+  # ---------- Энкодер отправляет поток сам (RTMP и SRT) ----------
+  Step 'Приём от энкодера: RTMP и SRT'
+  foreach ($proto in 'rtmp', 'srt') {
+    $push = Api POST "$B/api/streams" @{ name = "Энкодер $proto (Windows)"; mode = 'push' } $S
+    if (-not $push.push.key) { Fail "нет ключа публикации: $($push | ConvertTo-Json -Compress)" }
+    $target = if ($proto -eq 'rtmp') { @('-f', 'flv', "rtmp://127.0.0.1:$($push.push.rtmpPort)/live/$($push.push.key)") }
+              else { @('-f', 'mpegts', "srt://127.0.0.1:$($push.push.srtPort)?streamid=publish:live/$($push.push.key)&latency=20000") }
+    Start-Sleep -Seconds 2
+    $procs += Start-Process ffmpeg -PassThru -NoNewWindow -RedirectStandardError "$W\ffmpeg-$proto.log" -ArgumentList (@(
+      '-hide_banner', '-loglevel', 'error', '-re', '-f', 'lavfi', '-i', 'testsrc=size=640x360:rate=25',
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-g', '25', '-bf', '0', '-pix_fmt', 'yuv420p') + $target)
+    $status = ''
+    for ($i = 0; $i -lt 30; $i++) {
+      $status = ((Api GET "$B/api/streams" $null $S) | Where-Object id -eq $push.id).status
+      if ($status -eq 'online') { break }
+      Start-Sleep -Seconds 1
+    }
+    if ($status -ne 'online') { Fail "поток от энкодера ($proto) не появился ($status): $(Get-Content "$W\ffmpeg-$proto.log" -Raw)" }
+    Write-Host "Энкодер по $proto принят"
+  }
+
+  # ---------- Перезапуск службы ----------
+  Step 'Перезапуск службы rtspatom'
+  Restart-Service rtspatom
+  Wait-Http "$B/api/auth/status"
+
+  # ---------- Обновление с включением HTTPS ----------
+  Step 'Повторная установка с -Tls (обновление, данные должны сохраниться)'
+  Install-Bundle @('-Tls')
+  $cfg2 = Get-Content "$DataRoot\config.json" -Raw | ConvertFrom-Json
+  if ($cfg2.port -ne $Port) { Fail "при обновлении порт сменился: $Port -> $($cfg2.port)" }
+  $BS = "https://127.0.0.1:$Port"
+  Wait-Http "$BS/api/auth/status"
+  $S2 = New-Session $BS
+  $streamsAfter = Api GET "$BS/api/streams" $null $S2
+  if (-not ($streamsAfter | Where-Object id -eq $stream.id)) { Fail 'после обновления пропали данные' }
+  if (-not (Api GET "$BS/api/system" $null $S2).tlsEnabled) { Fail 'HTTPS не включился' }
+  Write-Host 'HTTPS работает, данные сохранены'
+
+  # ---------- Удаление ----------
+  Step 'Удаление (данные сохраняются)'
+  $p = Start-Process powershell.exe -Wait -PassThru -NoNewWindow `
+    -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$InstallDir\uninstall.ps1`"", '-Yes')
+  if ($p.ExitCode -ne 0) { Fail "uninstall.ps1 завершился с кодом $($p.ExitCode)" }
+  if (Get-Service rtspatom -ErrorAction SilentlyContinue) { Fail 'служба rtspatom не удалена' }
+  if (Get-Service rtspatom-mediamtx -ErrorAction SilentlyContinue) { Fail 'служба rtspatom-mediamtx не удалена' }
+  if (Test-Path $InstallDir) { Fail "каталог $InstallDir не удалён" }
+  if (-not (Test-Path "$DataRoot\data\rtspatom.db")) { Fail 'база удалена без -Purge' }
+  if (Get-NetFirewallRule -Name 'RTSPAtom-HTTP' -ErrorAction SilentlyContinue) { Fail 'правило брандмауэра не удалено' }
+  foreach ($r in 'RTSPAtom-ICE-UDP', 'RTSPAtom-RTMP', 'RTSPAtom-SRT') {
+    if (Get-NetFirewallRule -Name $r -ErrorAction SilentlyContinue) { Fail "правило брандмауэра $r не удалено" }
+  }
+
+  Write-Host "::notice title=Windows::Занятые порты обойдены (панель на $Port), установка, службы (LocalService), камера RTSP -> MediaMTX -> панель -> HLS ($size байт), архив (запись и выдача), приём от энкодера по RTMP и SRT, HTTPS, обновление и удаление проверены на $((Get-CimInstance Win32_OperatingSystem).Caption)"
+  Write-Host 'Windows: всё работает' -ForegroundColor Green
+} catch {
+  Fail "$($_.Exception.Message) (строка $($_.InvocationInfo.ScriptLineNumber))"
+} finally {
+  $procs | ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
+}
