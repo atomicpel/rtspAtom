@@ -3,6 +3,7 @@ import { HttpError, badRequest, notFound } from '../lib/http.js';
 import { canAccessStream, hasRole } from '../lib/access.js';
 import { getSettings } from '../lib/settings.js';
 import { pathNameFor } from '../lib/mediamtx.js';
+import { checkDir, listDisks, relocationInfo, switchArchiveDir } from '../lib/archivedir.js';
 import { newId } from '../lib/security.js';
 import { nowIso } from '../lib/db.js';
 
@@ -66,11 +67,16 @@ export function registerArchive(router, app) {
     const s = getSettings(db);
     const rows = db.prepare('SELECT * FROM streams ORDER BY sort, created_at').all()
       .filter((r) => canAccessStream(ctx.user, r.id));
+    const admin = ctx.user.isAdmin;
     return {
       enabled: !!app.archive,
       days: s.archiveDays,
       minFreeGb: s.archiveMinFreeGb,
-      dir: ctx.user.isAdmin ? app.config.archiveDir : undefined,
+      dir: admin ? app.archive?.dir : undefined,
+      // папка из файла настроек (установщика) — для подсказки «вернуть как было»
+      defaultDir: admin ? app.config.archiveDir : undefined,
+      relocation: admin && app.archive ? relocationInfo(app.archive) : undefined,
+      warning: app.archive?.mountProblem || '',
       totalBytes: st?.totalBytes || 0,
       bytesPerDay: st?.bytesPerDay || 0,
       capacityDays: st?.capacityDays ?? null,
@@ -86,6 +92,25 @@ export function registerArchive(router, app) {
       })),
     };
   }, { auth: 'operator' });
+
+  // ---------- Папка архива ----------
+  router.get('/api/archive/disks', async () => listDisks(), { auth: 'admin' });
+
+  router.post('/api/archive/check-dir', async (ctx) => {
+    const body = await ctx.json();
+    const res = await checkDir(body.path, { dataDir: app.config.dataDir, currentDir: app.archive?.dir });
+    return res;
+  }, { auth: 'admin' });
+
+  router.put('/api/archive/dir', async (ctx) => {
+    if (!app.archive || !app.sync) throw new HttpError(503, 'Архив выключен');
+    const body = await ctx.json();
+    try {
+      return await switchArchiveDir(app, body.path, body.records || 'move', { user: ctx.user.login, ip: ctx.ip });
+    } catch (err) {
+      throw new HttpError(err.status || 500, err.message, err.fix ? { fix: err.fix } : {});
+    }
+  }, { auth: 'admin' });
 
   // Промежутки записи потока: [{ start, duration }] (секунды)
   router.get('/api/archive/:id/spans', async (ctx) => {

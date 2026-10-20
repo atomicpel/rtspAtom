@@ -175,6 +175,25 @@ CODE=$(curl -s -o /dev/null -w '%{http_code}' "$B/archive/$STREAM/video?start=$A
 [ "$CODE" = "401" ] || fail "архив без входа вернул $CODE"
 [ -n "${GITHUB_ACTIONS:-}" ] && echo "::notice title=Архив::записано $DUR с, фрагмент MP4 $ASIZE байт ($(cat "$W/archive.dur") с) отдан через панель; без входа — 401"
 
+# Смена папки архива из «Настройки → Архив»: MediaMTX пишет дальше в новую папку,
+# старые записи переносятся и по-прежнему воспроизводятся
+R=$(curl -s "${H[@]}" -X PUT -d "{\"path\":\"$W/archive2\",\"records\":\"move\"}" "$B/api/archive/dir")
+echo "Смена папки архива: $R"
+echo "$R" | grep -q "\"dir\":\"$W/archive2\"" || fail "папка архива не сменилась: $R"
+for i in $(seq 1 90); do
+  curl -sf -b "$J" "$B/api/archive" | grep -q '"relocation":{"state":"done"' && break
+  sleep 1
+done
+curl -sf -b "$J" "$B/api/archive" | grep -o '"relocation":{[^}]*}'
+curl -sf -b "$J" "$B/api/archive" | grep -q '"relocation":{"state":"done"' || fail "перенос записей не завершился"
+! ls "$W/archive/s_$STREAM/"*.mp4 >/dev/null 2>&1 || fail "в прежней папке остались записи"
+NEWEST=$(ls -t "$W/archive2/s_$STREAM/"*.mp4 | head -1)
+S1=$(stat -c %s "$NEWEST"); sleep 4; S2=$(stat -c %s "$NEWEST")
+[ "$S2" -gt "$S1" ] || fail "запись в новую папку не идёт ($NEWEST: $S1 → $S2 байт)"
+CODE=$(curl -s -o "$W/archive-moved.mp4" -w '%{http_code}' -b "$J" "$B/archive/$STREAM/video?start=$ASTART&duration=3")
+[ "$CODE" = "200" ] && [ "$(stat -c %s "$W/archive-moved.mp4")" -gt 10000 ] || fail "перенесённая запись не воспроизводится (код $CODE)"
+[ -n "${GITHUB_ACTIONS:-}" ] && echo "::notice title=Папка архива::смена папки из панели: записи перенесены, запись идёт в новую папку, старый фрагмент отдаётся"
+
 # Скриншоты интерфейса (только в CI): ещё три тестовые камеры с разными картинками
 if [ -n "${SHOTS_DIR:-}" ]; then
   i=2
@@ -244,3 +263,4 @@ curl -sf -b "$J" "$B/api/archive/$STREAM/spans?start=$(date -u -d '-1 hour' +%Y-
 
 echo "E2E: всё работает"
 [ -n "${GITHUB_ACTIONS:-}" ] && echo "::notice title=E2E::Камера RTSP -> MediaMTX -> панель -> HLS: сегмент $SEG ($SIZE байт) получен через прокси; MediaMTX снаружи открыт только портами ICE 8189, RTMP 1935, SRT 8890"
+exit 0

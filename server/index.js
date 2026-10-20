@@ -5,9 +5,10 @@ import path from 'node:path';
 import { loadConfig, IS_WINDOWS } from './lib/config.js';
 import { openDb } from './lib/db.js';
 import { EventLog } from './lib/eventlog.js';
-import { getSettings } from './lib/settings.js';
+import { getSettings, getValue } from './lib/settings.js';
 import { MediaMtxClient, StreamSync } from './lib/mediamtx.js';
 import { ArchiveManager } from './lib/archive.js';
+import { effectiveArchiveDir, initExpectedMount, startRelocation } from './lib/archivedir.js';
 import { createHandler } from './lib/app.js';
 import { startHealth } from './lib/health.js';
 import { APP_VERSION } from './routes/system.js';
@@ -18,8 +19,10 @@ const log = new EventLog(db);
 const health = startHealth({ dataDir: config.dataDir, log, version: APP_VERSION });
 const client = new MediaMtxClient(config.mediamtx.apiUrl);
 const settings = () => getSettings(db);
-const sync = new StreamSync({ db, client, log, settings, archiveDir: config.archiveDir, relayUrl: config.mediamtx.rtspUrl });
-const archive = new ArchiveManager({ dir: config.archiveDir, log, settings });
+// папка архива: выбранная в «Настройки → Архив», иначе из config.json
+const archiveDir = effectiveArchiveDir(db, config);
+const sync = new StreamSync({ db, client, log, settings, archiveDir, relayUrl: config.mediamtx.rtspUrl });
+const archive = new ArchiveManager({ dir: archiveDir, log, settings });
 
 const app = { db, config, log, sync, archive, startedAt: Date.now() };
 const handler = createHandler(app);
@@ -62,12 +65,16 @@ server.listen(config.port, config.host, () => {
   }
 });
 
+initExpectedMount(app);
 try {
   archive.start();
 } catch (err) {
-  log.error('error', `Каталог архива ${config.archiveDir} недоступен: ${err.message}`);
+  log.error('error', `Каталог архива ${archiveDir} недоступен: ${err.message}`);
 }
 sync.start();
+// перенос записей из прежней папки, прерванный перезапуском, — продолжаем
+const pendingMove = getValue(db, 'archiveMove');
+if (pendingMove?.from && pendingMove.from !== archive.dir) startRelocation(app, pendingMove.from, pendingMove.mode).catch(() => {});
 
 function housekeeping() {
   try {

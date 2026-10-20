@@ -67,14 +67,24 @@ $desktop = [Environment]::GetFolderPath('CommonDesktopDirectory')
 if ($desktop) { Remove-Item -LiteralPath (Join-Path $desktop 'RTSP Atom.url') -Force -ErrorAction SilentlyContinue }
 
 Start-Sleep -Seconds 1
+# Папка архива (выбранная в панели — из базы, иначе из config.json); узнаём, пока программа на месте
+$archiveDir = ''
+try { $archiveDir = ([IO.File]::ReadAllText((Join-Path $DataRoot 'config.json')).TrimStart([char]0xFEFF) | ConvertFrom-Json).archiveDir } catch {}
+$nodeExe = Join-Path $InstallDir 'node\node.exe'
+$cliJs = Join-Path $InstallDir 'app\server\cli.js'
+if ((Test-Path $nodeExe) -and (Test-Path $cliJs)) {
+  try {
+    $env:RTSPATOM_CONFIG = Join-Path $DataRoot 'config.json'
+    $eff = & $nodeExe --disable-warning=ExperimentalWarning $cliJs archive-dir 2>$null | Select-Object -Last 1
+    if ($LASTEXITCODE -eq 0 -and $eff) { $archiveDir = "$eff".Trim() }
+  } catch {}
+}
 Set-Location $env:TEMP
 Remove-Item -LiteralPath $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
 if (Test-Path $InstallDir) {
   Write-Host "!!  Не все файлы удалось удалить из $InstallDir — удалите каталог вручную после перезагрузки" -ForegroundColor Yellow
 }
 
-$archiveDir = ''
-try { $archiveDir = ([IO.File]::ReadAllText((Join-Path $DataRoot 'config.json')).TrimStart([char]0xFEFF) | ConvertFrom-Json).archiveDir } catch {}
 if ($Purge) {
   Remove-Item -LiteralPath $DataRoot -Recurse -Force -ErrorAction SilentlyContinue
   if ($archiveDir -and -not $archiveDir.StartsWith($DataRoot, [StringComparison]::OrdinalIgnoreCase)) {

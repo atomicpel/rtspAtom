@@ -248,6 +248,11 @@ try {
   $r = Invoke-Native 'icacls.exe' @($summary.archiveDir, '/grant', '*S-1-5-19:(OI)(CI)M', '/Q')
   if ($r.Code -ne 0) { Warn "права на каталог архива настроены не полностью: $($r.Output)" }
   $env:RTSPATOM_CONFIG = $ConfigFile
+  if ($ArchiveDir) {
+    # явно указанный каталог важнее выбранного раньше в «Настройки → Архив»
+    $r = Invoke-Native $Node @('--disable-warning=ExperimentalWarning', $Cli, 'archive-dir', '--reset')
+    if ($r.Code -ne 0) { Warn "не удалось применить -ArchiveDir: $($r.Output)" }
+  }
 
   # --- Службы (WinSW) -----------------------------------------------------------------
   Say 'Регистрирую службы Windows'
@@ -366,10 +371,13 @@ try {
   Write-Host "    Панель на этом компьютере:  $url  (ярлык «RTSP Atom» на рабочем столе)"
   if ($ip) { Write-Host "    С других компьютеров:       ${proto}://${ip}:$($summary.port)/" }
   Write-Host "    Видео WebRTC:               порт $($summary.icePort) UDP/TCP (открыт в брандмауэре Windows)"
+  $archiveNow = $summary.archiveDir
+  $r = Invoke-Native $Node @('--disable-warning=ExperimentalWarning', $Cli, 'archive-dir')
+  if ($r.Code -eq 0 -and $r.Output) { $archiveNow = ($r.Output -split "`n" | Select-Object -Last 1).Trim() }
   try {
-    $drive = (Get-Item $summary.archiveDir).PSDrive
-    Write-Host "    Архив:                      $($summary.archiveDir) (свободно $([math]::Round($drive.Free / 1GB)) ГБ)"
-  } catch { Write-Host "    Архив:                      $($summary.archiveDir)" }
+    $drive = (Get-Item $archiveNow).PSDrive
+    Write-Host "    Архив:                      $archiveNow (свободно $([math]::Round($drive.Free / 1GB)) ГБ)"
+  } catch { Write-Host "    Архив:                      $archiveNow" }
   Write-Host "    Энкодеры:                   RTMP порт $($summary.rtmpPort), SRT порт $($summary.srtPort) (адреса и ключ — в панели, «Потоки»)"
   Write-Host "    Журналы:                    $LogDir"
   Write-Host '    Утилита:                    rtspatom-admin help  (командная строка от имени администратора)'

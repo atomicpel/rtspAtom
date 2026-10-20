@@ -1,11 +1,12 @@
 import type {
-  ArchiveInfo, ArchiveSpan, Bookmark,
+  ArchiveDirCheck, ArchiveDisk, ArchiveInfo, ArchiveRecordsMode, ArchiveSpan, Bookmark,
   IpRule, LogEntry, ProbeResult, Settings, Stream, SystemInfo, User, WallConfig, WallState,
 } from './types';
 import { markOffline, markOnline } from './connection';
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  /** data — тело ответа с ошибкой (например, fix — команды для исправления) */
+  constructor(public status: number, message: string, public data?: any) {
     super(message);
   }
 }
@@ -44,7 +45,7 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
     if (res.status === 401 && !url.startsWith('/api/auth/')) {
       window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
     }
-    throw new ApiError(res.status, data?.error || `Ошибка ${res.status}`);
+    throw new ApiError(res.status, data?.error || `Ошибка ${res.status}`, data);
   }
   return data as T;
 }
@@ -112,6 +113,10 @@ export const api = {
   recordAll: (record: boolean) => put<{ changed: number }>('/api/streams-record', { record }),
 
   archive: () => get<ArchiveInfo>('/api/archive'),
+  archiveDisks: () => get<ArchiveDisk[]>('/api/archive/disks'),
+  checkArchiveDir: (path: string) => post<ArchiveDirCheck>('/api/archive/check-dir', { path }),
+  setArchiveDir: (path: string, records: ArchiveRecordsMode) =>
+    put<{ dir: string; previous: string; files: number; bytes: number; records: ArchiveRecordsMode }>('/api/archive/dir', { path, records }),
   archiveSpans: (id: string, start: Date, end: Date) =>
     get<ArchiveSpan[]>(`/api/archive/${id}/spans?start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(end.toISOString())}`),
   bookmarks: (q: { streamId?: string; from?: Date; to?: Date; q?: string }) => {

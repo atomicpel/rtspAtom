@@ -98,11 +98,14 @@ for d in app node mediamtx; do
   rm -rf "$PREFIX/$d"
   mv "$PREFIX/$d.new" "$PREFIX/$d"
 done
+# остатки быстрого обновления (update.sh): после полной установки откатывать некуда
+rm -rf "$PREFIX/app.prev" "$PREFIX/app.bad" "$PREFIX/VERSION.prev"
 chown -R root:root "$PREFIX"
 chmod -R u=rwX,go=rX "$PREFIX"
 chmod 755 "$PREFIX/node/bin/node" "$PREFIX/mediamtx/mediamtx"
 [ -f "$SRC/VERSION" ] && install -m 644 "$SRC/VERSION" "$PREFIX/VERSION"
 install -m 755 "$SRC/uninstall.sh" "$PREFIX/uninstall.sh"
+[ -f "$SRC/update.sh" ] && install -m 755 "$SRC/update.sh" "$PREFIX/update.sh"
 install -m 755 "$SRC/deploy/rtspatom-admin" /usr/local/bin/rtspatom-admin
 
 say "Каталоги данных и настроек"
@@ -193,6 +196,10 @@ case "$ARCHIVE_NOW" in
 esac
 install -d -m 750 -o "$SVC_USER" -g "$SVC_USER" "$ARCHIVE_NOW"
 chown "$SVC_USER:$SVC_USER" "$ARCHIVE_NOW"
+if [ -n "${ARCHIVE_DIR:-}" ]; then
+  # явно указанный --archive-dir важнее папки, выбранной раньше в «Настройки → Архив»
+  /usr/local/bin/rtspatom-admin archive-dir --reset >/dev/null || warn "не удалось применить --archive-dir"
+fi
 
 YML="$CONF_DIR/mediamtx.yml"
 RENDERED="$(mktemp)"
@@ -306,7 +313,10 @@ say "Готово: $(head -1 "$PREFIX/VERSION" 2>/dev/null || echo "RTSP Atom")"
 echo "    Панель:   $TLS_NOW://$(hostname -I 2>/dev/null | awk '{print $1}'):$PORT_NOW"
 echo "    Видео:    WebRTC через порт $P_ICE (UDP и TCP) — он должен быть открыт для рабочих мест"
 echo "    Энкодеры: RTMP rtmp://<сервер>:$P_RTMP/live, SRT srt://<сервер>:$P_SRT — ключ потока выдаёт панель"
-echo "    Архив:    $ARCHIVE_NOW (свободно $(df -h --output=avail "$ARCHIVE_NOW" 2>/dev/null | tail -1 | tr -d ' '))"
+# действующая папка: выбранная в панели или из config.json
+ARCHIVE_EFF="$(/usr/local/bin/rtspatom-admin archive-dir 2>/dev/null | tail -1 || true)"
+[ -n "$ARCHIVE_EFF" ] || ARCHIVE_EFF="$ARCHIVE_NOW"
+echo "    Архив:    $ARCHIVE_EFF (свободно $(df -h --output=avail "$ARCHIVE_EFF" 2>/dev/null | tail -1 | tr -d ' '))"
 echo "    Журнал:   journalctl -u rtspatom -f"
 echo "    Утилита:  sudo rtspatom-admin help"
 echo "    Удаление: sudo $PREFIX/uninstall.sh"

@@ -94,11 +94,58 @@ export interface ArchiveStreamInfo {
   oldest: string | null;
 }
 
+export interface ArchiveRelocation {
+  state: 'running' | 'done' | 'error';
+  mode: 'move' | 'delete';
+  from: string;
+  to: string;
+  filesTotal: number;
+  filesDone: number;
+  bytesTotal: number;
+  bytesDone: number;
+  failed: number;
+  lastError: string;
+  startedAt: string;
+  finishedAt: string | null;
+  interrupted?: boolean;
+}
+
+export interface ArchiveDisk {
+  mount: string;
+  device: string;
+  fstype: string;
+  size: number;
+  free: number;
+  system: boolean;
+}
+
+export interface ArchiveDirCheck {
+  ok: boolean;
+  problem?: string;
+  fix?: string;
+  path?: string;
+  current?: boolean;
+  exists?: boolean;
+  free?: number | null;
+  size?: number | null;
+  mount?: string | null;
+  device?: string | null;
+  systemDisk?: boolean;
+  sameFs?: boolean | null;
+  entries?: number;
+  streamDirs?: number;
+}
+
+export type ArchiveRecordsMode = 'move' | 'delete' | 'keep';
+
 export interface ArchiveInfo {
   enabled: boolean;
   days: number;
   minFreeGb: number;
   dir?: string;
+  defaultDir?: string;
+  relocation?: ArchiveRelocation | null;
+  warning?: string;
   totalBytes: number;
   bytesPerDay: number;
   capacityDays: number | null;

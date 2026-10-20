@@ -41,10 +41,11 @@ cp -r "$ROOT/dist" "$STAGE/app/public"
 # Установщик и службы
 cp "$ROOT/deploy/install.sh" "$STAGE/install.sh"
 cp "$ROOT/deploy/uninstall.sh" "$STAGE/uninstall.sh"
+cp "$ROOT/deploy/update.sh" "$STAGE/update.sh"
 cp "$ROOT/deploy/rtspatom-admin" "$ROOT/deploy/mediamtx.yml" "$ROOT/deploy/ports.mjs" "$STAGE/deploy/"
 cp "$ROOT/deploy/systemd/"*.service "$STAGE/deploy/systemd/"
 cp "$ROOT/INSTALL.md" "$STAGE/INSTALL.md"
-chmod 755 "$STAGE/install.sh" "$STAGE/uninstall.sh" "$STAGE/deploy/rtspatom-admin" \
+chmod 755 "$STAGE/install.sh" "$STAGE/uninstall.sh" "$STAGE/update.sh" "$STAGE/deploy/rtspatom-admin" \
   "$STAGE/node/bin/node" "$STAGE/mediamtx/mediamtx"
 
 cat > "$STAGE/VERSION" <<EOF

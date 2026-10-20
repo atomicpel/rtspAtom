@@ -13,10 +13,12 @@ if command -v systemctl >/dev/null; then
   rm -f /etc/systemd/system/rtspatom.service /etc/systemd/system/rtspatom-mediamtx.service
   systemctl daemon-reload 2>/dev/null || true
 fi
+# папка архива (выбранная в панели или из config.json) — узнаём, пока утилита на месте
+ARCHIVE_DIR="$(/usr/local/bin/rtspatom-admin archive-dir 2>/dev/null | tail -1 || true)"
+[ -n "$ARCHIVE_DIR" ] || ARCHIVE_DIR="$(sed -n 's/^ *"archiveDir": *"\(.*\)",\{0,1\} *$/\1/p' /etc/rtspatom/config.json 2>/dev/null | head -1)"
 rm -f /usr/local/bin/rtspatom-admin
 rm -rf /opt/rtspatom
 
-ARCHIVE_DIR="$(sed -n 's/^ *"archiveDir": *"\(.*\)",\{0,1\} *$/\1/p' /etc/rtspatom/config.json 2>/dev/null | head -1)"
 if [ $PURGE -eq 1 ]; then
   rm -rf /var/lib/rtspatom /etc/rtspatom
   case "$ARCHIVE_DIR" in

@@ -4,6 +4,8 @@ import readline from 'node:readline';
 import { loadConfig } from './lib/config.js';
 import { openDb, nowIso } from './lib/db.js';
 import { hashPassword, newId } from './lib/security.js';
+import { getValue, setValue } from './lib/settings.js';
+import { effectiveArchiveDir, forbiddenReason, normalizeDir, prepareDir } from './lib/archivedir.js';
 
 const MIN_PASSWORD = 8;
 
@@ -15,6 +17,9 @@ const HELP = `Использование: rtspatom-admin <команда> [па�
   list-users                  список пользователей
   unblock-ip [ip]             снять блокировку входа (без ip — со всех адресов)
   clear-ip-rules              удалить все правила IP-фильтра (если закрыли себе доступ)
+  archive-dir                 показать папку архива
+  archive-dir <папка>         сменить папку архива (записи не переносятся; затем перезапустите панель)
+  archive-dir --reset         вернуть папку из файла настроек (config.json)
 
 Пароль запрашивается интерактивно; для скриптов: --password-stdin или --password-env ИМЯ_ПЕРЕМЕННОЙ`;
 
@@ -132,6 +137,39 @@ async function main() {
       const n = db.prepare('DELETE FROM ip_rules').run().changes;
       logAdmin(`Удалены все правила IP-фильтра (${n}) из командной строки`);
       console.log(`Удалено правил: ${n}`);
+      break;
+    }
+    case 'archive-dir': {
+      // В «Настройки → Архив» то же самое — с проверкой прав и переносом записей.
+      if (rest.includes('--reset')) {
+        setValue(db, 'archiveDir', null);
+        console.log(effectiveArchiveDir(db, config));
+        break;
+      }
+      if (!args[0]) {
+        console.log(effectiveArchiveDir(db, config));
+        break;
+      }
+      const { dir, problem } = normalizeDir(args[0]);
+      if (!dir) throw new Error(problem);
+      // утилита запускается не службой, но папка нужна именно службе: проверяем с её ограничениями
+      const why = forbiddenReason(dir, { dataDir: config.dataDir, sandboxed: process.platform !== 'win32' });
+      if (why) throw new Error(`эта папка не подходит: ${why}`);
+      try {
+        await prepareDir(dir);
+      } catch (err) {
+        throw new Error(`${err.message}${err.fix ? `\nВыполните:\n${err.fix}` : ''}`);
+      }
+      if (process.platform === 'win32') {
+        // службы работают от LocalService (S-1-5-19): даём им право записи, как это делает установщик
+        const { execFileSync } = await import('node:child_process');
+        execFileSync('icacls.exe', [dir, '/grant', '*S-1-5-19:(OI)(CI)M', '/Q'], { stdio: 'ignore' });
+      }
+      const old = effectiveArchiveDir(db, config);
+      setValue(db, 'archiveDir', dir);
+      if (getValue(db, 'archiveMove')) setValue(db, 'archiveMove', null);
+      logAdmin(`Папка архива изменена из командной строки: ${old} → ${dir} (записи не переносились)`);
+      console.log(`Папка архива: ${dir}. Перезапустите панель, чтобы запись пошла туда.`);
       break;
     }
     default:

@@ -70,6 +70,16 @@ async function session(viewport, prefix, extra = {}) {
       await page.keyboard.press('Escape');
       } catch (err) { console.log(`::warning title=Скриншот энкодера::${String(err.message).split('\n')[0]}`); }
     }
+    if (hash === 'settings') {
+      // окно выбора папки архива: путь без прав у службы — панель подсказывает команды
+      try {
+        await page.getByRole('button', { name: 'Изменить папку' }).click();
+        await page.getByLabel('Новая папка на сервере').fill('/srv/rtspatom-archive');
+        await wait(1500);
+        await shot(page, '09b-archive-dir');
+        await page.keyboard.press('Escape');
+      } catch (err) { console.log(`::warning title=Скриншот папки архива::${String(err.message).split('\n')[0]}`); }
+    }
   }
   await ctx.close();
 }

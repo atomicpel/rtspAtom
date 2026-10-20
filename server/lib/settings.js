@@ -49,6 +49,19 @@ export function validateSettings(input) {
   return { clean, errors };
 }
 
+/** Служебное значение в таблице настроек (не из SETTINGS_SCHEMA, например папка архива). */
+export function getValue(db, key, def = undefined) {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+  if (!row) return def;
+  const v = parseJson(row.value, undefined);
+  return v === undefined ? def : v;
+}
+
+export function setValue(db, key, value) {
+  if (value === undefined || value === null) db.prepare('DELETE FROM settings WHERE key = ?').run(key);
+  else saveSettings(db, { [key]: value });
+}
+
 export function saveSettings(db, values) {
   const stmt = db.prepare(
     'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',

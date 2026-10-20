@@ -10,7 +10,7 @@ import { Button, Field, IconButton, Modal, PageHeader, Toggle, inputCls } from '
 
 const ROLES: { id: UserRole; name: string; desc: string }[] = [
   { id: 'viewer', name: 'Наблюдатель', desc: 'смотрит видео' },
-  { id: 'operator', name: 'Оператор', desc: 'смотрит видео и журнал' },
+  { id: 'operator', name: 'Оператор', desc: 'смотрит видео, архив и журнал' },
   { id: 'admin', name: 'Администратор', desc: 'полный доступ' },
 ];
 

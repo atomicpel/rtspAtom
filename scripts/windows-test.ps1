@@ -242,6 +242,39 @@ paths:
   if ($r.RawContentLength -lt 10000) { Fail "видео из архива слишком мало ($($r.RawContentLength) байт)" }
   Write-Host "Архив: записано $([math]::Round($dur)) с, фрагмент $($r.RawContentLength) байт, каталог $archDir"
 
+  # ---------- Папка архива из «Настройки → Архив» ----------
+  # Новая проверка: при сбое — предупреждение в сводке (не блокирует публикацию), подробности в журнале
+  Step 'Смена папки архива из панели'
+  try {
+    $disks = @(Api GET "$B/api/archive/disks" $null $S)
+    if (-not ($disks | Where-Object { $_.mount -eq 'C:\' })) { throw "в списке дисков нет C:\: $($disks | ConvertTo-Json -Compress)" }
+    $bad = Api POST "$B/api/archive/check-dir" @{ path = 'C:\Windows\rtspatom-archive' } $S
+    if ($bad.ok) { throw 'папка в C:\Windows принята' }
+    $newArch = 'C:\RTSPAtom-archive-test'
+    $chk = Api POST "$B/api/archive/check-dir" @{ path = $newArch } $S
+    if (-not $chk.ok) {
+      # нет прав у LocalService — выполняем подсказанные панелью команды и проверяем ещё раз
+      if (-not $chk.fix) { throw "папка не подходит: $($chk | ConvertTo-Json -Compress)" }
+      Write-Host "Панель подсказала команды: $($chk.fix)"
+      New-Item -ItemType Directory -Force -Path $newArch | Out-Null
+      icacls.exe $newArch /grant '*S-1-5-19:(OI)(CI)M' /Q | Out-Null
+      $chk = Api POST "$B/api/archive/check-dir" @{ path = $newArch } $S
+      if (-not $chk.ok) { throw "после команд папка всё ещё не подходит: $($chk | ConvertTo-Json -Compress)" }
+    }
+    $res = Api PUT "$B/api/archive/dir" @{ path = $newArch; records = 'move' } $S
+    if ($res.dir -ne $newArch) { throw "папка не сменилась: $($res | ConvertTo-Json -Compress)" }
+    $deadline = (Get-Date).AddSeconds(120)
+    do { Start-Sleep 2; $a = Api GET "$B/api/archive" $null $S } while ($a.relocation.state -eq 'running' -and (Get-Date) -lt $deadline)
+    if ($a.relocation.state -ne 'done') { throw "перенос записей: $($a.relocation | ConvertTo-Json -Compress)" }
+    if (-not (Get-ChildItem (Join-Path $newArch "s_$($stream.id)") -Filter *.mp4 -ErrorAction SilentlyContinue)) { throw 'в новой папке нет записей' }
+    $r2 = Invoke-WebRequest "$B/archive/$($stream.id)/video?start=$astart&duration=3" -WebSession $S
+    if ($r2.RawContentLength -lt 10000) { throw "перенесённая запись не отдаётся ($($r2.RawContentLength) байт)" }
+    Write-Host "Папка архива: $newArch, перенесено файлов $($a.relocation.filesDone), запись отдаётся"
+    Write-Host "::notice title=Папка архива (Windows)::смена из панели работает: $newArch, перенесено файлов $($a.relocation.filesDone)"
+  } catch {
+    Write-Host "::warning title=Папка архива (Windows)::$($_.Exception.Message)"
+  }
+
   # ---------- Энкодер отправляет поток сам (RTMP и SRT) ----------
   Step 'Приём от энкодера: RTMP и SRT'
   foreach ($proto in 'rtmp', 'srt') {

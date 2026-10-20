@@ -8,7 +8,9 @@ import { openDb } from '../lib/db.js';
 import { EventLog } from '../lib/eventlog.js';
 import { getSettings, saveSettings } from '../lib/settings.js';
 import { MediaMtxClient, StreamSync } from '../lib/mediamtx.js';
-import { ArchiveManager, segmentStart } from '../lib/archive.js';
+import { ArchiveManager, moveFile, segmentStart } from '../lib/archive.js';
+import { forbiddenReason, mountOf, mountPoints, normalizeDir, startRelocation } from '../lib/archivedir.js';
+import { getValue, setValue } from '../lib/settings.js';
 import { createHandler } from '../lib/app.js';
 import { startFakeMediaMtx } from './fake-mediamtx.js';
 
@@ -592,6 +594,203 @@ test('архив: при нехватке места удаляются самы
   const st = await m.refresh();
   assert.equal(st.streams.a.files, 1);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('папка архива: проверка, список дисков, смена с переносом, удалением и без переноса', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rtspatom-dir-'));
+  const A = path.join(root, 'a');
+  fs.mkdirSync(A);
+  app.config.dataDir = path.join(root, 'data');
+  fs.mkdirSync(app.config.dataDir);
+  app.sync.archiveDir = A;
+  app.archive = new ArchiveManager({ dir: A, log: app.log, settings: () => getSettings(app.db), quietMs: 300 });
+  let r = await admin.post('/api/streams', { name: 'Перенос', url: 'rtsp://10.9.9.8/main' });
+  const id = r.data.id;
+  await app.sync.trigger();
+  assert.equal(fake.paths.get(`s_${id}`).recordPath, `${A}/%path/%Y-%m-%d_%H-%M-%S-%f`);
+  const seg = (dir, name, size, ageMin) => {
+    fs.mkdirSync(path.join(dir, `s_${id}`), { recursive: true });
+    const f = path.join(dir, `s_${id}`, name);
+    fs.writeFileSync(f, Buffer.alloc(size, 7));
+    const t = new Date(Date.now() - ageMin * 60_000);
+    fs.utimesSync(f, t, t);
+    return f;
+  };
+  seg(A, '2026-10-19_10-00-00-000000.mp4', 3000, 120);
+  seg(A, '2026-10-19_10-10-00-000000.mp4', 2000, 110);
+  seg(A, '2026-10-19_10-20-00-000000.mp4', 1000, 0); // только что дописан — переносится после паузы
+
+  // проверка папки
+  const check = async (p) => (await admin.post('/api/archive/check-dir', { path: p })).data;
+  assert.match((await check('archive')).problem, /полный путь/);
+  assert.match((await check('/usr/local/archive')).problem, /системный каталог/);
+  assert.match((await check('/proc/archive')).problem, /служебная/);
+  assert.match((await check('/')).problem, /Корень/);
+  assert.match((await check(`${root}/a%b`)).problem, /%/);
+  assert.match((await check(app.config.dataDir)).problem, /база и настройки/);
+  assert.match((await check(root)).problem, /база и настройки/, 'папка, внутри которой лежит база, тоже не подходит');
+  fs.writeFileSync(path.join(root, 'file'), 'x');
+  assert.match((await check(path.join(root, 'file', 'sub'))).problem, /файл, а не папка/);
+  assert.match((await check(path.join(A, `s_${id}`))).problem, /записей одной из камер/);
+  const B = path.join(root, 'b', 'archive');
+  let c = await check(`  "${B}/"  `);
+  assert.equal(c.ok, true);
+  assert.equal(c.path, B);
+  assert.equal(c.exists, false, 'проверка ничего не создаёт');
+  assert.equal(fs.existsSync(path.join(root, 'b')), false);
+  assert.equal(c.sameFs, true);
+  assert.ok(c.free > 0 && c.size > 0);
+  assert.equal((await check(A)).current, true);
+  r = await remoteAdmin.post('/api/archive/check-dir', { path: B });
+  assert.equal(r.status, 200, 'администратору с другого адреса тоже можно');
+  const viewer = new Client('10.0.0.41');
+  await admin.post('/api/users', { login: 'dirviewer', password: 'viewer-pass', role: 'operator' });
+  await viewer.post('/api/auth/login', { login: 'dirviewer', password: 'viewer-pass' });
+  assert.equal((await viewer.post('/api/archive/check-dir', { path: B })).status, 403);
+  assert.equal((await viewer.put('/api/archive/dir', { path: B, records: 'move' })).status, 403);
+  assert.equal((await viewer.get('/api/archive')).data.dir, undefined, 'папку видит только администратор');
+
+  r = await admin.get('/api/archive/disks');
+  assert.equal(r.status, 200);
+  assert.ok(Array.isArray(r.data));
+  if (process.platform === 'linux') assert.ok(r.data.some((d) => d.mount === '/'), 'системный диск в списке');
+
+  // смена с переносом
+  r = await admin.put('/api/archive/dir', { path: B, records: 'bad' });
+  assert.equal(r.status, 400);
+  r = await admin.put('/api/archive/dir', { path: A, records: 'move' });
+  assert.match(r.data.error, /текущая папка/);
+  r = await admin.put('/api/archive/dir', { path: B, records: 'move' });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.equal(r.data.files, 3);
+  assert.equal(r.data.bytes, 6000);
+  assert.equal(app.archive.dir, B);
+  assert.equal(getValue(app.db, 'archiveDir'), B);
+  assert.equal(fake.paths.get(`s_${id}`).recordPath, `${B}/%path/%Y-%m-%d_%H-%M-%S-%f`, 'MediaMTX пишет в новую папку');
+  r = await admin.get('/api/archive');
+  assert.equal(r.data.dir, B);
+  assert.equal(r.data.relocation.state, 'running');
+  assert.deepEqual(getValue(app.db, 'archiveMove'), { from: A, mode: 'move' });
+  r = await admin.put('/api/archive/dir', { path: path.join(root, 'c'), records: 'move' });
+  assert.equal(r.status, 409, 'пока идёт перенос, папку не меняем');
+  await app.archive.relocation.promise;
+  r = await admin.get('/api/archive');
+  assert.equal(r.data.relocation.state, 'done');
+  assert.equal(r.data.relocation.filesDone, 3);
+  assert.equal(r.data.relocation.bytesDone, 6000);
+  assert.equal(r.data.relocation.promise, undefined);
+  assert.equal(fs.readdirSync(path.join(B, `s_${id}`)).length, 3);
+  assert.equal(fs.existsSync(path.join(A, `s_${id}`)), false, 'пустой каталог камеры убран');
+  assert.equal(fs.existsSync(A), true, 'сама прежняя папка остаётся (может быть точкой монтирования)');
+  assert.equal(getValue(app.db, 'archiveMove'), undefined);
+  r = await admin.get(`/api/logs?category=admin&q=${encodeURIComponent('Папка архива изменена')}`);
+  assert.equal(r.data.items.length, 1);
+
+  // смена с удалением старых записей
+  const C = path.join(root, 'c');
+  r = await admin.put('/api/archive/dir', { path: C, records: 'delete' });
+  assert.equal(r.status, 200);
+  await app.archive.relocation.promise;
+  assert.equal(app.archive.relocation.mode, 'delete');
+  assert.equal(fs.existsSync(path.join(B, `s_${id}`)), false);
+  assert.equal(fs.existsSync(path.join(C, `s_${id}`)), false, 'в новую папку ничего не переносилось');
+
+  // без переноса: записи остаются, предупреждение в журнале
+  seg(C, '2026-10-19_11-00-00-000000.mp4', 500, 60);
+  const D = path.join(root, 'd');
+  r = await admin.put('/api/archive/dir', { path: D, records: 'keep' });
+  assert.equal(r.status, 200);
+  assert.equal(app.archive.relocation.state, 'done', 'нового переноса нет');
+  assert.equal(fs.existsSync(path.join(C, `s_${id}`, '2026-10-19_11-00-00-000000.mp4')), true);
+  r = await admin.get(`/api/logs?q=${encodeURIComponent('остались записи')}`);
+  assert.equal(r.data.items.length, 1);
+
+  // прерванный остановкой перенос продолжается после запуска
+  setValue(app.db, 'archiveMove', { from: C, mode: 'move' });
+  app.archive.stopping = true;
+  await startRelocation(app, C, 'move');
+  assert.equal(app.archive.relocation.interrupted, true);
+  assert.deepEqual(getValue(app.db, 'archiveMove'), { from: C, mode: 'move' }, 'задание сохранено');
+  app.archive.stopping = false;
+  await startRelocation(app, C, 'move');
+  assert.equal(app.archive.relocation.state, 'done');
+  assert.equal(fs.existsSync(path.join(D, `s_${id}`, '2026-10-19_11-00-00-000000.mp4')), true);
+  assert.equal(getValue(app.db, 'archiveMove'), undefined);
+
+  // недоступная для записи папка: понятная ошибка и команды для исправления (root права не проверяет)
+  if (process.getuid && process.getuid() !== 0) {
+    const ro = path.join(root, 'ro');
+    fs.mkdirSync(ro, { mode: 0o555 });
+    c = await check(path.join(ro, 'archive'));
+    assert.equal(c.ok, false);
+    assert.match(c.fix, /sudo mkdir -p .*\nsudo chown /);
+    r = await admin.put('/api/archive/dir', { path: path.join(ro, 'archive'), records: 'keep' });
+    assert.equal(r.status, 400);
+    assert.match(r.data.fix, /sudo chown/);
+    fs.chmodSync(ro, 0o755);
+  }
+
+  await admin.del(`/api/streams/${id}`);
+  setValue(app.db, 'archiveDir', null);
+  setValue(app.db, 'archiveMount', null);
+  app.archive = undefined;
+  app.sync.archiveDir = '';
+  delete app.config.dataDir;
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('папка архива: правила путей, точки монтирования, перенос между дисками', async () => {
+  assert.match(normalizeDir('').problem, /Укажите/);
+  if (process.platform !== 'win32') {
+    assert.equal(normalizeDir('/srv/archive/../video/').dir, '/srv/video');
+    assert.match(forbiddenReason('/home/user/archive', { sandboxed: true }), /ProtectHome/);
+    assert.match(forbiddenReason('/tmp/archive', { sandboxed: true }), /временные/);
+    assert.equal(forbiddenReason('/tmp/archive', { sandboxed: false }), null, 'вне службы /tmp допустим (тесты, разработка)');
+    assert.match(forbiddenReason('/etc/rtspatom/archive', { sandboxed: false }), /системный/);
+    assert.equal(forbiddenReason('/srv/archive', { sandboxed: true }), null);
+    assert.equal(forbiddenReason('/var/lib/rtspatom/archive', { sandboxed: true, dataDir: '/var/lib/rtspatom' }), null);
+    assert.match(forbiddenReason('/var/lib', { sandboxed: true, dataDir: '/var/lib/rtspatom' }), /база/);
+  }
+  const mounts = mountPoints('/dev/vda1 / ext4 rw 0 0\n/dev/sdb1 /srv/arch\\040ive ext4 rw 0 0\ntmpfs /run tmpfs rw 0 0\n');
+  assert.equal(mounts[1].mount, '/srv/arch ive');
+  assert.equal(mountOf('/srv/arch ive/s_1', mounts).device, '/dev/sdb1');
+  assert.equal(mountOf('/srv/archive2', mounts).mount, '/', 'похожее имя — не та точка монтирования');
+
+  // диск архива не подключён — предупреждение
+  const errors = [];
+  const m = new ArchiveManager({ dir: '/srv/arch ive', log: { error: (c, msg) => errors.push(msg), info: () => {} }, settings: () => ({}) });
+  m.expectedMount = '/srv/arch ive';
+  assert.equal(m.checkMount(mounts), '');
+  assert.match(m.checkMount(mountPoints('/dev/vda1 / ext4 rw 0 0\n')), /не подключён/);
+  assert.equal(errors.length, 1);
+  m.checkMount(mountPoints('/dev/vda1 / ext4 rw 0 0\n'));
+  assert.equal(errors.length, 1, 'не чаще раза в час');
+
+  // перенос на другой диск: копирование через .part с сохранением времени файла
+  const a = fs.mkdtempSync(path.join(os.tmpdir(), 'rtspatom-mv-'));
+  const src = path.join(a, 'x.mp4');
+  fs.writeFileSync(src, Buffer.alloc(4096, 1));
+  const t = new Date(Date.now() - 3600_000);
+  fs.utimesSync(src, t, t);
+  let otherDisk = null;
+  try {
+    if (fs.statSync('/dev/shm').dev !== fs.statSync(a).dev) otherDisk = fs.mkdtempSync('/dev/shm/rtspatom-mv-');
+  } catch { /* нет /dev/shm */ }
+  const dstDir = otherDisk || path.join(a, 'same');
+  const dst = path.join(dstDir, 's_1', 'x.mp4');
+  assert.equal(await moveFile(src, dst), otherDisk ? 'copied' : 'renamed');
+  assert.equal(fs.existsSync(src), false);
+  assert.equal(fs.statSync(dst).size, 4096);
+  assert.ok(Math.abs(fs.statSync(dst).mtimeMs - t.getTime()) < 2000, 'время файла сохранено');
+  assert.equal(fs.readdirSync(path.dirname(dst)).some((f) => f.endsWith('.part')), false);
+  // такой же файл уже есть — дубль удаляется; другой — ошибка, исходный цел
+  fs.writeFileSync(src, Buffer.alloc(4096, 1));
+  assert.equal(await moveFile(src, dst), 'duplicate');
+  fs.writeFileSync(src, Buffer.alloc(10, 1));
+  await assert.rejects(moveFile(src, dst), /другой файл/);
+  assert.equal(fs.existsSync(src), true);
+  fs.rmSync(a, { recursive: true, force: true });
+  if (otherDisk) fs.rmSync(otherDisk, { recursive: true, force: true });
 });
 
 test('удаление потока удаляет путь MediaMTX', async () => {

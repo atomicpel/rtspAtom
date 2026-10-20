@@ -92,6 +92,9 @@ jobs:
           BUNDLE=$(echo "$OUTPUT" | sed -n 1p)
           echo "BUNDLE=$BUNDLE" >> "$GITHUB_ENV"
           echo "BUNDLE_NAME=$(basename "$BUNDLE" .tar.gz)" >> "$GITHUB_ENV"
+          # пакет быстрого обновления панели (только app/, без Node.js и MediaMTX)
+          UPDATE=$(scripts/build-update.sh out | tail -1)
+          echo "UPDATE=$UPDATE" >> "$GITHUB_ENV"
           WOUT=$(scripts/build-bundle-windows.sh "$NODE_WIN_ZIP" "$MTX_WIN_ZIP" "$WINSW_EXE" out-win)
           echo "$WOUT"
           echo "WIN_BUNDLE=$(echo "$WOUT" | sed -n 1p)" >> "$GITHUB_ENV"
@@ -122,7 +125,7 @@ jobs:
 
       - name: Проверка установщика в Debian 12 (база Astra 1.8)
         run: |
-          docker run --rm -v "$PWD:/w" -w /w debian:12 bash scripts/install-test.sh "$BUNDLE" 2>&1 | tee install-test.log
+          docker run --rm -v "$PWD:/w" -w /w debian:12 bash scripts/install-test.sh "$BUNDLE" "$UPDATE" 2>&1 | tee install-test.log
           test "${PIPESTATUS[0]}" -eq 0 || { echo "::error title=Тест установщика::$(tail -n 40 install-test.log | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"; exit 1; }
 
       - name: Проверка установщика в образе Astra Linux 1.8 (если доступен)
@@ -130,7 +133,7 @@ jobs:
         run: |
           for img in registry.astralinux.ru/library/astra/ubi18:latest registry.astralinux.ru/astra/ubi18:latest; do
             if docker pull -q "$img" 2>/dev/null; then
-              if docker run --rm -v "$PWD:/w" -w /w "$img" bash scripts/install-test.sh "$BUNDLE"; then
+              if docker run --rm -v "$PWD:/w" -w /w "$img" bash scripts/install-test.sh "$BUNDLE" "$UPDATE"; then
                 echo "::notice title=Astra Linux::Установщик проверен в образе $img ($(docker run --rm "$img" cat /etc/astra_version 2>/dev/null || echo 'версия не определена'))"
                 exit 0
               fi
@@ -194,8 +197,8 @@ jobs:
         run: |
           set -Eeuo pipefail; trap 'echo "::error title=Ошибка в строке $LINENO::$BASH_COMMAND"' ERR
           ls -lh out/
-          LNX=$(ls out/*.tar.gz); WIN=$(ls out/*.zip)
-          LNX_NAME=$(basename "$LNX" .tar.gz); WIN_NAME=$(basename "$WIN" .zip)
+          LNX=$(ls out/*-astra-x86_64.tar.gz); WIN=$(ls out/*.zip); UPD=$(ls out/*-update.tar.gz)
+          LNX_NAME=$(basename "$LNX" .tar.gz); WIN_NAME=$(basename "$WIN" .zip); UPD_NAME=$(basename "$UPD" .tar.gz)
           VERSIONS=$(tar -xzOf "$LNX" "$LNX_NAME/VERSION")
           NOTES=$(cat <<EOF
           Сборка ветки ${GITHUB_REF_NAME} (${GITHUB_SHA::7}).
@@ -204,6 +207,7 @@ jobs:
           |---|---|---|
           | Astra Linux SE 1.8 (x86_64) | \`${LNX_NAME}.tar.gz\` | распаковать, \`sudo ./install.sh\` |
           | Windows 11 (x64) | \`${WIN_NAME}.zip\` | распаковать, запустить \`install.cmd\` |
+          | Astra Linux: обновление только панели (уже установлена 1.6.0 и новее) | \`${UPD_NAME}.tar.gz\` | распаковать, \`sudo ./${UPD_NAME}/update.sh\` |
 
           Подробная инструкция — INSTALL.md внутри каждого архива. Контрольные суммы — файлы .sha256.
 

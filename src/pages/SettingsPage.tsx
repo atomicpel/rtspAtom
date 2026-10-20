@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Plus, Trash2 } from 'lucide-react';
+import { FolderOpen, Plus, Trash2 } from 'lucide-react';
 import type { IpRule, Settings } from '../lib/types';
 import { api, errorMessage } from '../lib/api';
 import { usePolling } from '../lib/usePolling';
@@ -10,6 +10,48 @@ import { onReconnected } from '../lib/connection';
 import { useToast } from '../components/Toast';
 import { Button, Field, IconButton, Notice, PageHeader, Section, Toggle, inputCls } from '../components/ui';
 import { fmtBytes } from '../lib/archiveTime';
+import { ArchiveDirDialog } from '../components/ArchiveDirDialog';
+import type { ArchiveRelocation } from '../lib/types';
+
+const filesWord = (n: number) => {
+  const m10 = n % 10;
+  const m100 = n % 100;
+  return `${n} ${m10 === 1 && m100 !== 11 ? 'файл' : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? 'файла' : 'файлов'}`;
+};
+
+function RelocationStatus({ r }: { r: ArchiveRelocation }) {
+  const pct = r.bytesTotal ? Math.min(100, Math.round((r.bytesDone / r.bytesTotal) * 100)) : 0;
+  const what = r.mode === 'delete' ? 'Удаление записей из прежней папки' : 'Перенос записей';
+  if (r.state === 'running') {
+    return (
+      <div className="border border-line rounded-md p-3 space-y-2">
+        <p className="text-[13px] text-fg">
+          {what} <span className="font-mono text-muted break-all">{r.from}</span>
+          {r.mode === 'move' && <> → <span className="font-mono text-muted break-all">{r.to}</span></>}
+        </p>
+        <div className="h-1.5 rounded-full bg-raised overflow-hidden" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+          <div className="h-full bg-steel transition-[width] duration-500" style={{ width: `${pct}%` }} />
+        </div>
+        <p className="text-xs text-muted tabular">
+          {r.mode === 'move' ? `${fmtBytes(r.bytesDone)} из ${fmtBytes(r.bytesTotal)} (${pct}%), ` : ''}файлов {r.filesDone} из {r.filesTotal}.
+          Новые записи уже пишутся в новую папку; закрывать страницу можно.
+        </p>
+      </div>
+    );
+  }
+  // завершённый показываем сутки
+  if (r.finishedAt && Date.now() - Date.parse(r.finishedAt) > 86400_000) return null;
+  if (r.state === 'error') {
+    return (
+      <Notice tone={r.interrupted ? 'warn' : 'error'}>
+        {r.interrupted
+          ? `${what} прерван перезапуском панели и продолжится автоматически.`
+          : `${what} завершён с ошибками: не обработано ${filesWord(r.failed)}. ${r.lastError}`}
+      </Notice>
+    );
+  }
+  return <p>{what} завершён: {filesWord(r.filesDone)}{r.mode === 'move' ? `, ${fmtBytes(r.bytesDone)}` : ''}.</p>;
+}
 
 const TTL = [
   { v: 900, l: '15 минут' }, { v: 3600, l: '1 час' }, { v: 4 * 3600, l: '4 часа' },
@@ -24,7 +66,11 @@ export function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const { data: sys } = usePolling(api.system, 10000);
   const { data: ipData, setData: setIpData } = usePolling(api.ipRules);
-  const { data: arch, reload: reloadArch } = usePolling(api.archive, 60000);
+  const [relocating, setRelocating] = useState(false);
+  const { data: arch, reload: reloadArch } = usePolling(api.archive, relocating ? 3000 : 60000);
+  useEffect(() => { setRelocating(arch?.relocation?.state === 'running'); }, [arch]);
+  const [dirOpen, setDirOpen] = useState(false);
+  const platform = useAuth().platform;
   const recordAll = async (record: boolean) => {
     try {
       const r = await api.recordAll(record);
@@ -140,13 +186,24 @@ export function SettingsPage() {
             <Toggle checked={settings.archiveNewStreams} onChange={(v) => set({ archiveNewStreams: v })} label="Записывать новые потоки" />
           </div>
         </div>
+        {arch?.dir && (
+          <div className="mt-5 flex flex-wrap items-end gap-3">
+            <div className="min-w-0 flex-1">
+              <span className="block text-[13px] text-muted mb-1.5">Папка архива на сервере</span>
+              <div className="h-9 flex items-center px-3 rounded-md bg-raised font-mono text-[13px] text-fg overflow-x-auto whitespace-nowrap">{arch.dir}</div>
+            </div>
+            <Button icon={FolderOpen} onClick={() => setDirOpen(true)} disabled={relocating}
+              title={relocating ? 'Дождитесь окончания переноса записей' : undefined}>Изменить папку</Button>
+          </div>
+        )}
         {arch && (
           <div className="mt-4 text-[13px] text-muted space-y-1">
+            {arch.warning && <Notice tone="error">{arch.warning}</Notice>}
+            {arch.relocation && <RelocationStatus r={arch.relocation} />}
             <p>
               Занято {fmtBytes(arch.totalBytes)}
               {arch.disk && <>, свободно {fmtBytes(arch.disk.free)} из {fmtBytes(arch.disk.size)}</>}
-              {arch.bytesPerDay > 0 && <>; запись ≈ {fmtBytes(arch.bytesPerDay)} в сутки</>}
-              {arch.dir && <>. Каталог: <span className="text-fg">{arch.dir}</span></>}
+              {arch.bytesPerDay > 0 && <>; запись ≈ {fmtBytes(arch.bytesPerDay)} в сутки</>}.
             </p>
             {arch.capacityDays !== null && (
               arch.capacityDays < settings.archiveDays
@@ -160,6 +217,11 @@ export function SettingsPage() {
               <Button variant="ghost" onClick={() => recordAll(false)}>Выключить для всех</Button>
             </p>
           </div>
+        )}
+        {arch?.dir && (
+          <ArchiveDirDialog open={dirOpen} onClose={() => setDirOpen(false)} arch={arch} platform={platform}
+            minFreeGb={saved?.archiveMinFreeGb ?? settings.archiveMinFreeGb}
+            onChanged={(dir) => { toast('success', `Папка архива: ${dir}`); reloadArch(); }} />
         )}
       </Section>
 
