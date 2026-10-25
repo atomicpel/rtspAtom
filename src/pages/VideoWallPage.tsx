@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
-  Bookmark, Crop, Expand, History, Maximize, Minimize, MonitorPlay, Plus, RefreshCw, Replace, Search, Trash2, Video, Wand2, X,
+  Bookmark, Crop, Save, Expand, History, Maximize, Minimize, MonitorPlay, Plus, RefreshCw, Replace, Search, Trash2, Video, Wand2, X,
 } from 'lucide-react';
 import type { Stream, WallCell, WallConfig, WallLayout } from '../lib/types';
 import { api, ApiError, errorMessage } from '../lib/api';
@@ -63,6 +63,8 @@ export function VideoWallPage({ onNavigate }: { onNavigate: (page: string) => vo
   const [refreshInterval, setRefreshInterval] = useState(0);
   const [reloadKey, setReloadKey] = useState(0);
   const [configs, setConfigs] = useState<WallConfig[]>([]);
+  // раскладка, которую последней открыли или сохранили, — её можно перезаписать после правок
+  const [activePreset, setActivePreset] = useState<string | null>(null);
   const [fit, setFit] = useState<'contain' | 'cover'>(() => {
     try { return localStorage.getItem('rtspatom_fit') === 'cover' ? 'cover' : 'contain'; } catch { return 'contain'; }
   });
@@ -211,13 +213,36 @@ export function VideoWallPage({ onNavigate }: { onNavigate: (page: string) => vo
 
   const openPicker = (i: number) => { setSearch(''); setPicker(i); };
 
+  const current = () => ({ layout, cells: cells.slice(0, L.n).map((c) => ({ streamId: c.streamId || null })) });
+  const sameAsCurrent = (c: WallConfig) => {
+    const cur = current();
+    return c.layout === cur.layout && JSON.stringify(c.cells.slice(0, cur.cells.length).map((x) => x.streamId || null))
+      === JSON.stringify(cur.cells.map((x) => x.streamId));
+  };
+
   const savePreset = async () => {
     const name = presetName.trim();
     if (!name) return;
+    // такое название уже есть — обновляем ту раскладку, а не плодим двойник
+    const existing = configs.find((c) => c.name.toLowerCase() === name.toLowerCase());
+    if (existing) return overwritePreset(existing);
     try {
-      setConfigs(await api.addWallConfig({ name, layout, cells: cells.slice(0, L.n) }));
+      const list = await api.addWallConfig({ name, ...current() });
+      setConfigs(list);
+      setActivePreset(list.find((c) => c.name === name)?.id || null);
       setPresetName('');
       toast('success', `Раскладка «${name}» сохранена`);
+    } catch (err) {
+      toast('error', errorMessage(err));
+    }
+  };
+
+  const overwritePreset = async (c: WallConfig) => {
+    try {
+      setConfigs(await api.updateWallConfig(c.id, current()));
+      setActivePreset(c.id);
+      setPresetName('');
+      toast('success', `Раскладка «${c.name}» обновлена`);
     } catch (err) {
       toast('error', errorMessage(err));
     }
@@ -228,12 +253,14 @@ export function VideoWallPage({ onNavigate }: { onNavigate: (page: string) => vo
     c.cells.forEach((x, i) => { if (i < 16) next[i] = { streamId: x.streamId || null }; });
     setLayout(c.layout);
     setCells(next);
+    setActivePreset(c.id);
     setPresetsOpen(false);
   };
 
   const deletePreset = async (c: WallConfig) => {
     try {
       setConfigs(await api.deleteWallConfig(c.id));
+      if (activePreset === c.id) setActivePreset(null);
     } catch (err) {
       toast('error', errorMessage(err));
     }
@@ -402,10 +429,28 @@ export function VideoWallPage({ onNavigate }: { onNavigate: (page: string) => vo
       </Modal>
 
       <Modal open={presetsOpen} onClose={() => setPresetsOpen(false)} title="Раскладки">
+        {(() => {
+          const act = configs.find((c) => c.id === activePreset);
+          if (!act) return null;
+          const same = sameAsCurrent(act);
+          return (
+            <div className="flex items-center gap-3 mb-4 p-3 rounded-md border border-line">
+              <span className="flex-1 text-sm min-w-0">
+                Открыта раскладка <b className="text-fg">«{act.name}»</b>
+                <span className="block text-xs text-muted">{same ? 'Изменений нет' : 'Камеры или сетка изменены'}</span>
+              </span>
+              <Button icon={Save} variant={same ? 'subtle' : 'primary'} disabled={same} onClick={() => overwritePreset(act)}>
+                Сохранить изменения
+              </Button>
+            </div>
+          );
+        })()}
         <form className="flex gap-2 mb-4" onSubmit={(e) => { e.preventDefault(); savePreset(); }}>
-          <input className={inputCls} placeholder="Название текущей раскладки" value={presetName}
+          <input className={inputCls} placeholder="Название новой раскладки" value={presetName}
             onChange={(e) => setPresetName(e.target.value)} />
-          <Button type="submit" variant="primary" disabled={!presetName.trim()}>Сохранить</Button>
+          <Button type="submit" variant={activePreset ? 'subtle' : 'primary'} disabled={!presetName.trim()} className="shrink-0 whitespace-nowrap">
+            {configs.some((c) => c.name.toLowerCase() === presetName.trim().toLowerCase()) ? 'Перезаписать' : 'Сохранить как новую'}
+          </Button>
         </form>
         {configs.length === 0 ? (
           <p className="text-muted text-sm">Сохраните текущую расстановку камер, чтобы потом вернуть её одним щелчком.</p>
@@ -416,7 +461,9 @@ export function VideoWallPage({ onNavigate }: { onNavigate: (page: string) => vo
                 <button onClick={() => loadPreset(c)} className="flex-1 flex items-center gap-3 px-2 py-1.5 rounded text-left hover:bg-raised">
                   <span className="text-muted"><GridGlyph cols={LAYOUTS.find((l) => l.id === c.layout)?.cols || 2} /></span>
                   {c.name}
+                  {c.id === activePreset && <span className="text-[11px] px-1.5 py-0.5 rounded bg-raised text-muted">открыта</span>}
                 </button>
+                <IconButton icon={Save} label="Записать сюда текущую расстановку" onClick={() => overwritePreset(c)} />
                 <IconButton icon={Trash2} label="Удалить раскладку" onClick={() => deletePreset(c)} />
               </li>
             ))}

@@ -46,6 +46,20 @@ export function registerWall(router, app) {
     return list(ctx.user.id);
   });
 
+  // Перезаписать раскладку текущей расстановкой (и при желании переименовать)
+  router.put('/api/wall/configs/:id', async (ctx) => {
+    const row = db.prepare('SELECT * FROM wall_configs WHERE id = ? AND user_id = ?').get(ctx.params.id, ctx.user.id);
+    if (!row) throw notFound('Конфигурация не найдена');
+    const b = await ctx.json();
+    const name = b.name === undefined ? row.name : String(b.name || '').trim().slice(0, 100);
+    if (!name) throw badRequest('Укажите название конфигурации');
+    const layout = b.layout === undefined ? row.layout : b.layout;
+    if (!LAYOUTS.includes(layout)) throw badRequest('Неизвестная раскладка');
+    const cells = b.cells === undefined ? row.cells : JSON.stringify(cleanCells(b.cells));
+    db.prepare('UPDATE wall_configs SET name = ?, layout = ?, cells = ? WHERE id = ?').run(name, layout, cells, row.id);
+    return list(ctx.user.id);
+  });
+
   router.delete('/api/wall/configs/:id', (ctx) => {
     const r = db.prepare('DELETE FROM wall_configs WHERE id = ? AND user_id = ?').run(ctx.params.id, ctx.user.id);
     if (r.changes === 0) throw notFound('Конфигурация не найдена');

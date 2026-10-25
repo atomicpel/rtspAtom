@@ -154,6 +154,7 @@ export const api = {
   saveWallState: (s: WallState) => put<WallState>('/api/wall/state', s),
   wallConfigs: () => get<WallConfig[]>('/api/wall/configs'),
   addWallConfig: (c: Omit<WallConfig, 'id' | 'createdAt'>) => post<WallConfig[]>('/api/wall/configs', c),
+  updateWallConfig: (id: string, c: Partial<Omit<WallConfig, 'id' | 'createdAt'>>) => put<WallConfig[]>(`/api/wall/configs/${id}`, c),
   deleteWallConfig: (id: string) => del<WallConfig[]>(`/api/wall/configs/${id}`),
 };
 

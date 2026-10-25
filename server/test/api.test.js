@@ -830,6 +830,26 @@ test('адрес клиента: X-Forwarded-For только от 127.0.0.1 и 
   app.config.trustProxy = prev;
 });
 
+test('раскладки стены: сохранение, перезапись, переименование', async () => {
+  let r = await admin.post('/api/wall/configs', { name: 'Пост 1', layout: '2x2', cells: [{ streamId: 'a' }, { streamId: 'b' }] });
+  assert.equal(r.status, 200);
+  const id = r.data.find((c) => c.name === 'Пост 1').id;
+  r = await admin.put(`/api/wall/configs/${id}`, { layout: '3x3', cells: [{ streamId: 'c' }, null, { streamId: 'a' }] });
+  assert.equal(r.status, 200);
+  let c = r.data.find((x) => x.id === id);
+  assert.equal(c.name, 'Пост 1', 'название сохраняется');
+  assert.equal(c.layout, '3x3');
+  assert.deepEqual(c.cells.map((x) => x.streamId), ['c', null, 'a']);
+  r = await admin.put(`/api/wall/configs/${id}`, { name: 'Пост 1 (ночь)' });
+  c = r.data.find((x) => x.id === id);
+  assert.equal(c.name, 'Пост 1 (ночь)');
+  assert.equal(c.layout, '3x3', 'без layout раскладка не меняется');
+  assert.equal(r.data.length, 1, 'двойник не создан');
+  assert.equal((await admin.put(`/api/wall/configs/${id}`, { layout: '5x5' })).status, 400);
+  assert.equal((await admin.put('/api/wall/configs/nope', { layout: '2x2' })).status, 404);
+  await admin.del(`/api/wall/configs/${id}`);
+});
+
 test('выход завершает сессию', async () => {
   let r = await admin.post('/api/auth/logout');
   assert.equal(r.status, 200);

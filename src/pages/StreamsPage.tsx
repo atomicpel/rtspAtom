@@ -272,6 +272,19 @@ export function StreamsPage() {
             <input className={inputCls} value={form.url} placeholder="rtsp://192.168.1.64:554/Streaming/Channels/101"
               onChange={(e) => { setForm({ ...form, url: e.target.value }); setCheck({ state: 'idle', text: '' }); }} />
           </Field>
+          {detected === 'HLS' && (() => {
+            // у HDMI-энкодеров рядом с HLS обычно есть RTSP с тем же номером потока: …/0.m3u8 → rtsp://…:554/0
+            const m = /^https?:\/\/([^/:]+)(?::\d+)?\/(\w+)\.m3u8/i.exec(form.url.trim());
+            const guess = m ? `rtsp://${m[1]}:554/${m[2]}` : '';
+            return (
+              <Notice tone="warn">
+                HLS — самый ненадёжный и медленный способ забирать видео (задержка 2–10 с, некоторые энкодеры обрывают его
+                через несколько секунд, хотя VLC показывает). Включите в энкодере RTSP-адрес потока
+                {guess ? <> (обычно <span className="font-mono text-fg">{guess}</span>)</> : null} или отправку RTMP
+                («Энкодер отправляет сам»).
+              </Notice>
+            );
+          })()}
           <div className="grid sm:grid-cols-3 gap-4">
             <Field label="Логин камеры">
               <input className={inputCls} value={form.sourceLogin} autoComplete="off"
