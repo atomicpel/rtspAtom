@@ -1,0 +1,9 @@
+node_modules/
+.next/
+dist/
+build/
+out/
+data/
+dl/
+e2e/
+*.log

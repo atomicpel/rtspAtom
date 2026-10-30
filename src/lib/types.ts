@@ -1,0 +1,256 @@
+export type UserRole = 'admin' | 'operator' | 'viewer';
+
+/** Тип источника определяется сервером по схеме URL. */
+export type StreamProtocol = 'rtsp' | 'rtmp' | 'hls' | 'srt' | 'udp' | 'push';
+export type StreamTransport = 'auto' | 'tcp' | 'udp';
+
+/** idle — камера подключается только при просмотре (режим «по запросу»). */
+export type StreamStatus = 'online' | 'offline' | 'reconnecting' | 'idle';
+
+export interface Stream {
+  id: string;
+  name: string;
+  description: string;
+  /** pull — сервер забирает по адресу; push — энкодер отправляет сам (RTMP/SRT) */
+  mode: 'pull' | 'push';
+  /** Только администратору и только для push */
+  push: { key: string; path: string; rtmpPort: number; srtPort: number } | null;
+  url: string;
+  protocol: StreamProtocol;
+  transport: StreamTransport;
+  sourceLogin: string;
+  hasPassword: boolean;
+  isActive: boolean;
+  /** Запись в архив включена */
+  record: boolean;
+  status: StreamStatus;
+  tracks: string[];
+  viewers: number;
+  sort: number;
+  /** Управление энкодером (только администратору) */
+  encoder?: StreamEncoder;
+}
+
+export interface StreamEncoder {
+  enabled: boolean;
+  auto: boolean;
+  host: string;
+  login: string;
+  hasPassword: boolean;
+  output: number | null;
+  minKbps: number;
+  maxKbps: number;
+  state: { currentKbps: number | null; output: number | null; lastChange: string | null; lastNote: string; ceilingKbps: number | null } | null;
+}
+
+export interface EncoderCheck {
+  ok: boolean;
+  error?: string;
+  output?: number;
+  matched?: boolean;
+  bitrate?: number | null;
+  framerate?: number | null;
+  gop?: number | null;
+  rcMode?: string | null;
+  profile?: string | null;
+  rtspUri?: string | null;
+  missing?: string[];
+  raw?: string;
+}
+
+export interface User {
+  id: string;
+  login: string;
+  role: UserRole;
+  isAdmin: boolean;
+  allowedCidrs: string[];
+  allowedStreamIds: string[]; // пусто = все потоки
+  isActive: boolean;
+  createdAt: string;
+  lastLoginAt: string | null;
+}
+
+export interface IpRule {
+  id: string;
+  cidr: string;
+  type: 'white' | 'black';
+  priority: number;
+  comment: string;
+  createdAt: string;
+}
+
+export type LogLevel = 'info' | 'warning' | 'error' | 'debug';
+export type LogCategory = 'auth' | 'access' | 'stream' | 'error' | 'admin';
+
+export interface LogEntry {
+  id: string;
+  timestamp: string;
+  level: LogLevel;
+  category: LogCategory;
+  user: string;
+  ip: string;
+  stream: string;
+  message: string;
+}
+
+export interface Settings {
+  tlsEnabled: boolean; // только чтение — задаётся в config.json
+  sessionTtl: number;
+  maxConnections: number;
+  logFormat: 'syslog' | 'json';
+  rateLimitLogin: number;
+  rateLimitApi: number;
+  logRetentionDays: number;
+  camerasAlwaysOn: boolean;
+  lowLatency: boolean;
+  archiveDays: number;
+  archiveMinFreeGb: number;
+  archiveNewStreams: boolean;
+}
+
+export interface ArchiveSpan {
+  start: string; // ISO
+  duration: number; // секунды
+}
+
+export interface ArchiveStreamInfo {
+  id: string;
+  name: string;
+  description: string;
+  record: boolean;
+  isActive: boolean;
+  bytes: number;
+  oldest: string | null;
+}
+
+export interface ArchiveRelocation {
+  state: 'running' | 'done' | 'error';
+  mode: 'move' | 'delete';
+  from: string;
+  to: string;
+  filesTotal: number;
+  filesDone: number;
+  bytesTotal: number;
+  bytesDone: number;
+  failed: number;
+  lastError: string;
+  startedAt: string;
+  finishedAt: string | null;
+  interrupted?: boolean;
+}
+
+export interface ArchiveDisk {
+  mount: string;
+  device: string;
+  fstype: string;
+  size: number;
+  free: number;
+  system: boolean;
+}
+
+export interface ArchiveDirCheck {
+  ok: boolean;
+  problem?: string;
+  fix?: string;
+  path?: string;
+  current?: boolean;
+  exists?: boolean;
+  free?: number | null;
+  size?: number | null;
+  mount?: string | null;
+  device?: string | null;
+  systemDisk?: boolean;
+  sameFs?: boolean | null;
+  entries?: number;
+  streamDirs?: number;
+}
+
+export type ArchiveRecordsMode = 'move' | 'delete' | 'keep';
+
+export interface ArchiveInfo {
+  enabled: boolean;
+  days: number;
+  minFreeGb: number;
+  dir?: string;
+  defaultDir?: string;
+  relocation?: ArchiveRelocation | null;
+  warning?: string;
+  totalBytes: number;
+  bytesPerDay: number;
+  capacityDays: number | null;
+  disk: { free: number; size: number } | null;
+  streams: ArchiveStreamInfo[];
+}
+
+export interface Bookmark {
+  id: string;
+  streamId: string;
+  ts: string;
+  note: string;
+  user: string;
+  createdAt: string;
+  canDelete: boolean;
+}
+
+export interface SystemInfo {
+  version: string;
+  node: string;
+  hostname: string;
+  platform: string;
+  os: 'linux' | 'windows';
+  tlsEnabled: boolean;
+  /** IPv4-адреса сервера в сети (только администратору) */
+  addresses?: string[];
+  mediamtx: { reachable: boolean; version: string | null; lastError: string; lastSyncAt: string | null };
+}
+
+export interface WallCell {
+  streamId: string | null;
+}
+
+export type WallLayout = '1x1' | '2x2' | '3x3' | '4x4';
+
+export interface WallState {
+  layout: WallLayout;
+  cells: WallCell[];
+  refreshInterval: number;
+}
+
+export interface WallConfig {
+  id: string;
+  name: string;
+  layout: WallLayout;
+  cells: WallCell[];
+  createdAt: string;
+}
+
+export interface ProbeResult {
+  ok: boolean;
+  tracks: string[];
+  protocol: StreamProtocol;
+  warning: string;
+}
+
+export interface MonitorPoint {
+  t: number; cpu: number; user: number; system: number; iowait: number; steal: number;
+  mem: number; load: number; rxMbps: number; txMbps: number; errorsPerMin: number; online: number; total: number;
+}
+
+export interface MonitorCheck { level: 'error' | 'warn' | 'info'; area: string; title: string; detail?: string; fix?: string }
+
+export interface MonitorStream {
+  id: string; name: string; active: boolean; mode: 'pull' | 'push'; online: boolean; kbps: number; errorsPerMin: number;
+  dropsPerHour: number; readers: number; tracks: string[]; record: boolean; encoderAuto: boolean;
+  tuner: { currentKbps: number | null } | null;
+  encoderSettings: { bitrate: number | null; framerate: number | null; gop: number | null } | null;
+}
+
+export interface MonitorSnapshot {
+  at: string; cores: number; load: number[];
+  mem: { total: number; available: number; swapTotal: number; swapUsed: number };
+  point: MonitorPoint; history: MonitorPoint[];
+  ifaces: { name: string; driver: string; speed: number | null; duplex: string | null; rxMbps: number; txMbps: number; rxErrors: number; txErrors: number; rxDropped: number; txDropped: number }[];
+  top: { name: string; cpu: number; count: number }[];
+  streams: MonitorStream[];
+  checks: MonitorCheck[];
+}

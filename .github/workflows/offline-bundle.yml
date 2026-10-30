@@ -1,0 +1,228 @@
+name: Офлайн-пакеты (Astra Linux и Windows)
+
+on:
+  push:
+    branches: [rtsp-control-panel-0c095, main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  NODE_MAJOR: '24'
+  # Версия MediaMTX зафиксирована: deploy/mediamtx.yml проверен именно с ней.
+  MEDIAMTX_VERSION: v1.21.2
+  # Обёртка служб Windows: https://github.com/winsw/winsw
+  WINSW_VERSION: v2.12.0
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_MAJOR }}
+          cache: npm
+
+      - name: Зависимости фронтенда
+        run: npm ci --no-audit --no-fund
+
+      - name: Проверка типов
+        run: npm run typecheck
+
+      - name: Сборка фронтенда
+        run: npm run build
+
+      - name: Тесты сервера
+        run: npm run test:server
+
+      - name: Скачать Node.js для Linux x64
+        run: |
+          set -Eeuo pipefail; trap 'echo "::error title=Ошибка в строке $LINENO::$BASH_COMMAND"' ERR
+          VER=$(curl -sf https://nodejs.org/dist/index.json | jq -r --arg m "v${NODE_MAJOR}." '[.[] | select(.version | startswith($m))][0].version')
+          echo "Node.js $VER"
+          mkdir -p dl && cd dl
+          curl -sfLO "https://nodejs.org/dist/$VER/node-$VER-linux-x64.tar.xz"
+          curl -sfL "https://nodejs.org/dist/$VER/SHASUMS256.txt" | grep " node-$VER-linux-x64.tar.xz\$" | sha256sum -c -
+          echo "NODE_TAR=$PWD/node-$VER-linux-x64.tar.xz" >> "$GITHUB_ENV"
+          curl -sfLO "https://nodejs.org/dist/$VER/node-$VER-win-x64.zip"
+          curl -sfL "https://nodejs.org/dist/$VER/SHASUMS256.txt" | grep " node-$VER-win-x64.zip\$" | sha256sum -c -
+          echo "NODE_WIN_ZIP=$PWD/node-$VER-win-x64.zip" >> "$GITHUB_ENV"
+
+      - name: Скачать MediaMTX
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail; trap 'echo "::error title=Ошибка в строке $LINENO::$BASH_COMMAND"' ERR
+          TAG="$MEDIAMTX_VERSION"
+          LATEST=$(gh api repos/bluenviron/mediamtx/releases/latest --jq .tag_name || echo "?")
+          [ "$LATEST" = "$TAG" ] || echo "::notice title=MediaMTX::Доступна новая версия $LATEST (в пакете $TAG)"
+          echo "MediaMTX $TAG"
+          cd dl
+          gh release download "$TAG" --repo bluenviron/mediamtx --pattern "mediamtx_${TAG}_linux_amd64.tar.gz" --clobber
+          gh release download "$TAG" --repo bluenviron/mediamtx --pattern "mediamtx_${TAG}_windows_amd64.zip" --clobber
+          if gh release download "$TAG" --repo bluenviron/mediamtx --pattern "checksums.sha256" --clobber 2>/dev/null; then
+            grep -E "mediamtx_${TAG}_(linux_amd64.tar.gz|windows_amd64.zip)" checksums.sha256 | sha256sum -c -
+          fi
+          echo "MTX_TAR=$PWD/mediamtx_${TAG}_linux_amd64.tar.gz" >> "$GITHUB_ENV"
+          echo "MTX_WIN_ZIP=$PWD/mediamtx_${TAG}_windows_amd64.zip" >> "$GITHUB_ENV"
+
+      - name: Скачать WinSW (службы Windows)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail; trap 'echo "::error title=Ошибка в строке $LINENO::$BASH_COMMAND"' ERR
+          cd dl
+          echo "Файлы релиза WinSW $WINSW_VERSION:"; gh release view "$WINSW_VERSION" --repo winsw/winsw --json assets --jq '.assets[].name'
+          gh release download "$WINSW_VERSION" --repo winsw/winsw --pattern 'WinSW-x64.exe' --clobber \
+            || gh release download "$WINSW_VERSION" --repo winsw/winsw --pattern 'WinSW.NET461.exe' --clobber
+          if [ -f WinSW-x64.exe ]; then F=WinSW-x64.exe; else F=WinSW.NET461.exe; fi
+          sha256sum "$F"
+          echo "WINSW_EXE=$PWD/$F" >> "$GITHUB_ENV"
+
+      - name: Собрать пакет
+        run: |
+          set -Eeuo pipefail; trap 'echo "::error title=Ошибка в строке $LINENO::$BASH_COMMAND"' ERR
+          OUTPUT=$(scripts/build-bundle.sh "$NODE_TAR" "$MTX_TAR" out)
+          echo "$OUTPUT"
+          BUNDLE=$(echo "$OUTPUT" | sed -n 1p)
+          echo "BUNDLE=$BUNDLE" >> "$GITHUB_ENV"
+          echo "BUNDLE_NAME=$(basename "$BUNDLE" .tar.gz)" >> "$GITHUB_ENV"
+          # пакет быстрого обновления панели (только app/, без Node.js и MediaMTX)
+          UPDATE=$(scripts/build-update.sh out | tail -1)
+          echo "UPDATE=$UPDATE" >> "$GITHUB_ENV"
+          WOUT=$(scripts/build-bundle-windows.sh "$NODE_WIN_ZIP" "$MTX_WIN_ZIP" "$WINSW_EXE" out-win)
+          echo "$WOUT"
+          echo "WIN_BUNDLE=$(echo "$WOUT" | sed -n 1p)" >> "$GITHUB_ENV"
+          ls -lh out/ out-win/
+
+      - name: Сквозной тест (камера RTSP -> MediaMTX -> панель -> HLS)
+        run: |
+          set -Eeuo pipefail; trap 'echo "::error title=Ошибка в строке $LINENO::$BASH_COMMAND"' ERR
+          # ffmpeg — тестовые камеры, tesseract — чтение часов в кадре при замере задержки
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg tesseract-ocr fonts-dejavu-core >/dev/null
+          mkdir -p e2e && tar -xzf "$BUNDLE" -C e2e
+          D=e2e/$BUNDLE_NAME
+          npm install --no-save --no-audit --no-fund playwright@1.48.2 >/dev/null
+          E2E_DIR=$PWD/e2e-logs SHOTS_DIR=$PWD/screenshots scripts/e2e.sh "$D/node/bin/node" "$D/mediamtx/mediamtx" "$D/app"
+
+      - name: Скриншоты интерфейса в ветку ci-screenshots
+        if: github.event_name == 'push'
+        run: |
+          set -Eeuo pipefail
+          [ -d screenshots ] && ls screenshots/*.png >/dev/null 2>&1 || { echo "Скриншотов нет"; exit 0; }
+          cd screenshots
+          git init -q -b ci-screenshots
+          git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+          printf '# Скриншоты интерфейса\n\nСборка %s (%s). Обновляются автоматически.\n' "$GITHUB_REF_NAME" "${GITHUB_SHA::7}" > README.md
+          git add -A && git commit -qm "Скриншоты ${GITHUB_SHA::7}"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-screenshots
+          echo "::notice title=Скриншоты::$(ls *.png | wc -l) снимков в ветке ci-screenshots"
+
+      - name: Проверка установщика в Debian 12 (база Astra 1.8)
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w debian:12 bash scripts/install-test.sh "$BUNDLE" "$UPDATE" 2>&1 | tee install-test.log
+          test "${PIPESTATUS[0]}" -eq 0 || { echo "::error title=Тест установщика::$(tail -n 40 install-test.log | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"; exit 1; }
+
+      - name: Проверка установщика в образе Astra Linux 1.8 (если доступен)
+        continue-on-error: true
+        run: |
+          for img in registry.astralinux.ru/library/astra/ubi18:latest registry.astralinux.ru/astra/ubi18:latest; do
+            if docker pull -q "$img" 2>/dev/null; then
+              if docker run --rm -v "$PWD:/w" -w /w "$img" bash scripts/install-test.sh "$BUNDLE" "$UPDATE"; then
+                echo "::notice title=Astra Linux::Установщик проверен в образе $img ($(docker run --rm "$img" cat /etc/astra_version 2>/dev/null || echo 'версия не определена'))"
+                exit 0
+              fi
+              echo "::warning title=Astra Linux::Установщик не прошёл проверку в образе $img"
+              exit 1
+            fi
+          done
+          echo "::notice title=Astra Linux::Образ Astra Linux недоступен из GitHub Actions — проверка пропущена (проверено на Debian 12)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle-astra
+          path: out/*
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle-windows
+          path: out-win/*
+          retention-days: 30
+
+  windows:
+    name: Проверка на Windows
+    needs: build
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: bundle-windows
+          path: out-win
+
+      - name: ffmpeg для тестовой камеры
+        shell: pwsh
+        run: |
+          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { choco install ffmpeg -y --no-progress | Out-Null }
+          ffmpeg -hide_banner -version | Select-Object -First 1
+
+      - name: Установка, видео, HTTPS, обновление и удаление
+        shell: pwsh
+        run: |
+          $zip = (Get-ChildItem out-win -Filter '*.zip').FullName
+          ./scripts/windows-test.ps1 -Zip $zip
+
+  release:
+    name: Публикация
+    needs: [build, windows]
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+
+      - name: Опубликовать в Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -Eeuo pipefail; trap 'echo "::error title=Ошибка в строке $LINENO::$BASH_COMMAND"' ERR
+          ls -lh out/
+          LNX=$(ls out/*-astra-x86_64.tar.gz); WIN=$(ls out/*.zip); UPD=$(ls out/*-update.tar.gz)
+          LNX_NAME=$(basename "$LNX" .tar.gz); WIN_NAME=$(basename "$WIN" .zip); UPD_NAME=$(basename "$UPD" .tar.gz)
+          VERSIONS=$(tar -xzOf "$LNX" "$LNX_NAME/VERSION")
+          NOTES=$(cat <<EOF
+          Сборка ветки ${GITHUB_REF_NAME} (${GITHUB_SHA::7}).
+
+          | Система | Файл | Установка |
+          |---|---|---|
+          | Astra Linux SE 1.8 (x86_64) | \`${LNX_NAME}.tar.gz\` | распаковать, \`sudo ./install.sh\` |
+          | Windows 11 (x64) | \`${WIN_NAME}.zip\` | распаковать, запустить \`install.cmd\` |
+          | Astra Linux: обновление только панели (уже установлена 1.6.0 и новее) | \`${UPD_NAME}.tar.gz\` | распаковать, \`sudo ./${UPD_NAME}/update.sh\` |
+
+          Подробная инструкция — INSTALL.md внутри каждого архива. Контрольные суммы — файлы .sha256.
+
+          \`\`\`
+          ${VERSIONS}
+          \`\`\`
+          EOF
+          )
+          NOTES=$(echo "$NOTES" | sed 's/^          //')
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            gh release create "$TAG" out/* --title "RTSP Atom $TAG" --notes "$NOTES"
+          else
+            TAG="offline-${GITHUB_REF_NAME//\//-}"
+            gh release delete "$TAG" --cleanup-tag -y 2>/dev/null || true
+            gh release create "$TAG" out/* --prerelease --target "$GITHUB_SHA" \
+              --title "Офлайн-пакеты: $GITHUB_REF_NAME" --notes "$NOTES"
+          fi

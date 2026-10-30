@@ -1,0 +1,20 @@
+[Unit]
+Description=RTSP Atom - видеосервер MediaMTX
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rtspatom
+Group=rtspatom
+WorkingDirectory=/var/lib/rtspatom
+ExecStart=/opt/rtspatom/mediamtx/mediamtx /etc/rtspatom/mediamtx.yml
+Restart=always
+RestartSec=3
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
