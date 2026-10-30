@@ -5,7 +5,7 @@ import { nowIso } from '../lib/db.js';
 import { getSettings, saveSettings, validateSettings } from '../lib/settings.js';
 import { PLATFORM } from '../lib/config.js';
 
-export const APP_VERSION = '1.6.4';
+export const APP_VERSION = '1.6.5';
 const LOG_LEVELS = ['info', 'warning', 'error', 'debug'];
 const LOG_CATEGORIES = ['auth', 'access', 'stream', 'error', 'admin'];
 
@@ -145,6 +145,12 @@ export function registerSystem(router, app) {
     { user: ctx.user.login, ip: ctx.ip });
     return { ok: true };
   });
+
+  // ---------- Состояние системы: нагрузка, сеть, потоки, проверки ----------
+  router.get('/api/monitor', () => {
+    if (!app.monitor) return { checks: [], history: [], streams: [] };
+    return app.monitor.snapshot();
+  }, { auth: 'admin' });
 
   // ---------- Сведения о системе ----------
   router.get('/api/system', (ctx) => ({

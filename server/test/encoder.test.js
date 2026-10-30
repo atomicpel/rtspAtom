@@ -104,3 +104,31 @@ test('автоподстройка: снижает при потерях, под
   assert.ok(fe.sets.every((s) => s.rtsp_uri === '/10' && s.venc_framerate === '25'), 'остальные поля всегда те же');
   fe.server.close();
 });
+
+test('энкодер: рекомендуемые настройки — GOP = частоте кадров, лишние выходы выключены, остальное не тронуто', async () => {
+  const { applyRecommended } = await import('../lib/encoder.js');
+  const fe = fakeEncoder();
+  const host = await fe.listen();
+  const e = { host, login: 'admin', password: 'secret' };
+  Object.assign(fe.outputs[0], { venc_gop: '127', http_hls_enable: '1', rtmp_publish_enable: '1', venc_rc_mode: '1', venc_bitrate: '1000' });
+  const r = await applyRecommended(e, 0);
+  assert.deepEqual(Object.keys(r.changed).sort(), ['http_hls_enable', 'rtmp_publish_enable', 'venc_gop']);
+  assert.equal(fe.outputs[0].venc_gop, '25');
+  assert.equal(fe.outputs[0].http_hls_enable, '0');
+  assert.equal(fe.outputs[0].venc_rc_mode, '1', 'режим кодирования не трогаем');
+  assert.equal(fe.outputs[0].venc_bitrate, '1000');
+  const again = await applyRecommended(e, 0);
+  assert.deepEqual(again.changed, {}, 'повторно ничего не отправляется');
+  assert.equal(fe.sets.length, 1);
+  fe.server.close();
+});
+
+test('энкодер: общие логин, пароль и пределы подставляются, свои у потока важнее', async () => {
+  const { encoderOf, setEncoderDefaults } = await import('../lib/encoder.js');
+  setEncoderDefaults({ login: 'root', password: 'shared', minKbps: 500, maxKbps: 1500 });
+  let e = encoderOf({ url: 'rtsp://11.196.27.139:8554/10', encoder: '{"auto":true}' });
+  assert.deepEqual([e.host, e.login, e.password, e.minKbps, e.maxKbps], ['11.196.27.139', 'root', 'shared', 500, 1500]);
+  e = encoderOf({ url: 'rtsp://x/10', encoder: '{"login":"op","password":"own","maxKbps":900}' });
+  assert.deepEqual([e.login, e.password, e.minKbps, e.maxKbps], ['op', 'own', 500, 900]);
+  setEncoderDefaults({});
+});

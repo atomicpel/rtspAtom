@@ -1,5 +1,5 @@
 import type {
-  ArchiveDirCheck, ArchiveDisk, EncoderCheck, ArchiveInfo, ArchiveRecordsMode, ArchiveSpan, Bookmark,
+  ArchiveDirCheck, ArchiveDisk, EncoderCheck, MonitorSnapshot, ArchiveInfo, ArchiveRecordsMode, ArchiveSpan, Bookmark,
   IpRule, LogEntry, ProbeResult, Settings, Stream, SystemInfo, User, WallConfig, WallState,
 } from './types';
 import { markOffline, markOnline } from './connection';
@@ -113,6 +113,13 @@ export const api = {
   saveEncoder: (id: string, e: { enabled?: boolean; auto?: boolean; host?: string; login?: string; password?: string; minKbps?: number; maxKbps?: number }) =>
     put<Stream>(`/api/streams/${id}/encoder`, e),
   checkEncoder: (id: string, e: { host?: string; login?: string; password?: string }) => post<EncoderCheck>(`/api/streams/${id}/encoder/check`, e),
+  recommendEncoder: (id: string) => post<{ ok: boolean; changed: Record<string, unknown> }>(`/api/streams/${id}/encoder/recommended`),
+  monitor: () => get<MonitorSnapshot>('/api/monitor'),
+  encoderDefaults: () => get<{ login: string; hasPassword: boolean; minKbps: number; maxKbps: number }>('/api/encoders/defaults'),
+  saveEncoderDefaults: (d: { login?: string; password?: string; minKbps?: number; maxKbps?: number }) =>
+    put<{ login: string; hasPassword: boolean; minKbps: number; maxKbps: number }>('/api/encoders/defaults', d),
+  encodersAuto: (auto: boolean) => post<{ count: number }>('/api/encoders/auto', { auto }),
+  encodersRecommended: () => post<{ results: { name: string; ok: boolean; error?: string; changed?: Record<string, unknown> }[] }>('/api/encoders/recommended'),
   setEncoderBitrate: (id: string, kbps: number) => post<{ ok: boolean; bitrate: number; output: number }>(`/api/streams/${id}/encoder/bitrate`, { kbps }),
   recordAll: (record: boolean) => put<{ changed: number }>('/api/streams-record', { record }),
 

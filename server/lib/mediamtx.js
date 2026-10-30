@@ -202,6 +202,7 @@ export class StreamSync {
     this.lastSyncAt = null;
     this.version = null;
     this.prevReady = new Map();
+    this.drops = new Map(); // streamId -> [время пропадания, …] за последние сутки (для панели состояния)
     this.syncing = null;
     this.pending = false;
     this.timers = [];
@@ -376,8 +377,10 @@ export class StreamSync {
         readers: Array.isArray(it.readers) ? it.readers.length : 0,
         // Зрители WebRTC видны в MediaMTX как читатели типа webRTCSession
         webrtcReaders: Array.isArray(it.readers) ? it.readers.filter((r) => /webrtc/i.test(r?.type || '')).length : 0,
-        bytesReceived: Number(it.bytesReceived) || 0,
-        bytesSent: Number(it.bytesSent) || 0,
+        bytesReceived: Number(it.inboundBytes ?? it.bytesReceived) || 0,
+        bytesSent: Number(it.outboundBytes ?? it.bytesSent) || 0,
+        // испорченные входящие кадры (MediaMTX 1.15+): растут при потерях пакетов по дороге от источника
+        framesInError: Number(it.inboundFramesInError) || 0,
         tracks: trackNames(it),
       });
     }
@@ -401,7 +404,12 @@ export class StreamSync {
         this.prevReady.set(name, ready);
         const label = stream.name;
         if (ready) this.log.info('stream', `Поток в сети: ${label}`, { stream: stream.name });
-        else if (!onDemand || stream.push_key || this.#recording(stream)) this.log.warn('stream', `Поток недоступен: ${label}`, { stream: stream.name });
+        else if (!onDemand || stream.push_key || this.#recording(stream)) {
+          this.log.warn('stream', `Поток недоступен: ${label}`, { stream: stream.name });
+          const list = (this.drops.get(stream.id) || []).filter((t) => Date.now() - t < 86400_000);
+          list.push(Date.now());
+          this.drops.set(stream.id, list);
+        }
       }
     }
     for (const name of [...this.prevReady.keys()]) if (!want.has(name)) this.prevReady.delete(name);

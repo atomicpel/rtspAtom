@@ -1,6 +1,6 @@
 {
   "name": "rtspatom-server",
-  "version": "1.6.4",
+  "version": "1.6.5",
   "private": true,
   "type": "module",
   "description": "Серверная часть панели RTSP Atom (без внешних зависимостей)",

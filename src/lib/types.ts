@@ -230,3 +230,27 @@ export interface ProbeResult {
   protocol: StreamProtocol;
   warning: string;
 }
+
+export interface MonitorPoint {
+  t: number; cpu: number; user: number; system: number; iowait: number; steal: number;
+  mem: number; load: number; rxMbps: number; txMbps: number; errorsPerMin: number; online: number; total: number;
+}
+
+export interface MonitorCheck { level: 'error' | 'warn' | 'info'; area: string; title: string; detail?: string; fix?: string }
+
+export interface MonitorStream {
+  id: string; name: string; active: boolean; mode: 'pull' | 'push'; online: boolean; kbps: number; errorsPerMin: number;
+  dropsPerHour: number; readers: number; tracks: string[]; record: boolean; encoderAuto: boolean;
+  tuner: { currentKbps: number | null } | null;
+  encoderSettings: { bitrate: number | null; framerate: number | null; gop: number | null } | null;
+}
+
+export interface MonitorSnapshot {
+  at: string; cores: number; load: number[];
+  mem: { total: number; available: number; swapTotal: number; swapUsed: number };
+  point: MonitorPoint; history: MonitorPoint[];
+  ifaces: { name: string; driver: string; speed: number | null; duplex: string | null; rxMbps: number; txMbps: number; rxErrors: number; txErrors: number; rxDropped: number; txDropped: number }[];
+  top: { name: string; cpu: number; count: number }[];
+  streams: MonitorStream[];
+  checks: MonitorCheck[];
+}

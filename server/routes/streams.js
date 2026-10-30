@@ -5,7 +5,8 @@ import { nowIso } from '../lib/db.js';
 import { getSettings } from '../lib/settings.js';
 import { canAccessStream, hasRole } from '../lib/access.js';
 import { detectProtocol, redactUrl, buildSourceUrl, pathNameOf, SOURCE_PROTOCOLS } from '../lib/mediamtx.js';
-import { ENCODER_DEFAULTS, detectOutput, encoderOf, hostOf, setBitrate, summary } from '../lib/encoder.js';
+import { ENCODER_DEFAULTS, applyRecommended, detectOutput, encoderDefaults, encoderOf, hostOf, setBitrate, setEncoderDefaults, summary } from '../lib/encoder.js';
+import { getValue, setValue } from '../lib/settings.js';
 
 const TRANSPORTS = ['auto', 'tcp', 'udp'];
 
@@ -132,23 +133,31 @@ export function registerStreams(router, app) {
     if (!cur) throw notFound('Поток не найден');
     const b = await ctx.json();
     const prev = encoderOf(cur);
+    let own = {};
+    try { own = JSON.parse(cur.encoder || '{}'); } catch { /* пусто */ }
     const host = b.host !== undefined ? String(b.host || '').trim() : prev.host;
     if (host && !/^[A-Za-z0-9.-]+(:\d{1,5})?$/.test(host)) throw badRequest('Адрес энкодера: IP или имя, например 11.196.27.131');
+    // пустые логин, пароль и пределы потока берутся из общих настроек энкодеров
     const next = {
-      enabled: b.enabled !== undefined ? !!b.enabled : !!prev.enabled,
-      auto: b.auto !== undefined ? !!b.auto : !!prev.auto,
+      enabled: b.enabled !== undefined ? !!b.enabled : !!own.enabled,
+      auto: b.auto !== undefined ? !!b.auto : !!own.auto,
       host: host && host !== hostOf(cur.url) ? host : '',
-      login: b.login !== undefined ? String(b.login).slice(0, 64) : prev.login,
-      password: b.password ? String(b.password).slice(0, 128) : prev.password,
-      output: b.output === null || b.output === undefined ? prev.output : intOr(b.output, null, 0, 3),
-      minKbps: intOr(b.minKbps, prev.minKbps ?? ENCODER_DEFAULTS.minKbps, 100, 32000),
-      maxKbps: intOr(b.maxKbps, prev.maxKbps ?? ENCODER_DEFAULTS.maxKbps, 100, 32000),
+      output: b.output === null || b.output === undefined ? own.output ?? null : intOr(b.output, null, 0, 3),
     };
-    if (next.maxKbps < next.minKbps) throw badRequest('Максимальный битрейт меньше минимального');
+    const login = b.login !== undefined ? String(b.login).slice(0, 64) : own.login;
+    if (login && login !== encoderDefaults().login) next.login = login;
+    const password = b.password ? String(b.password).slice(0, 128) : own.password;
+    if (password) next.password = password;
+    const minK = b.minKbps !== undefined ? intOr(b.minKbps, null, 100, 32000) : own.minKbps;
+    const maxK = b.maxKbps !== undefined ? intOr(b.maxKbps, null, 100, 32000) : own.maxKbps;
+    if (minK && minK !== encoderDefaults().minKbps) next.minKbps = minK;
+    if (maxK && maxK !== encoderDefaults().maxKbps) next.maxKbps = maxK;
+    const eff = { minKbps: next.minKbps ?? encoderDefaults().minKbps, maxKbps: next.maxKbps ?? encoderDefaults().maxKbps };
+    if (eff.maxKbps < eff.minKbps) throw badRequest('Максимальный битрейт меньше минимального');
     if (next.auto && !next.enabled) next.enabled = true;
     db.prepare('UPDATE streams SET encoder = ? WHERE id = ?').run(JSON.stringify(next), cur.id);
     app.tuner?.forget(cur.id);
-    log.info('admin', `Энкодер потока «${cur.name}»: автоподстройка ${next.auto ? `включена (${next.minKbps}–${next.maxKbps} Кбит/с)` : 'выключена'}`,
+    log.info('admin', `Энкодер потока «${cur.name}»: автоподстройка ${next.auto ? `включена (${eff.minKbps}–${eff.maxKbps} Кбит/с)` : 'выключена'}`,
       { user: ctx.user.login, ip: ctx.ip, stream: cur.name });
     return streamToApi(getStream(cur.id), ctx.user);
   }, { auth: 'admin' });
@@ -173,6 +182,72 @@ export function registerStreams(router, app) {
     } catch (err) {
       return { ok: false, error: err.message };
     }
+  }, { auth: 'admin' });
+
+  // Рекомендуемые настройки энкодера: GOP = частоте кадров, лишние выходы выключены
+  async function recommendedFor(cur, user, ip) {
+    const e = encoderOf(cur);
+    if (!e.host) throw new Error('не указан адрес энкодера');
+    const d = await detectOutput(e, cur.url);
+    const r = await applyRecommended(e, d.output);
+    const what = Object.entries(r.changed).map(([k, v]) => `${k}=${v}`).join(', ');
+    if (what) log.info('admin', `Энкодер потока «${cur.name}»: рекомендуемые настройки (${what})`, { user, ip, stream: cur.name });
+    app.monitor?.encoderCache.delete(cur.id);
+    return { changed: r.changed };
+  }
+
+  router.post('/api/streams/:id/encoder/recommended', async (ctx) => {
+    const cur = getStream(ctx.params.id);
+    if (!cur) throw notFound('Поток не найден');
+    try { return { ok: true, ...(await recommendedFor(cur, ctx.user.login, ctx.ip)) }; } catch (err) { throw badRequest(err.message); }
+  }, { auth: 'admin' });
+
+  // ---------- Общие настройки энкодеров и действия для всех ----------
+  const managed = () => db.prepare('SELECT * FROM streams WHERE is_active = 1').all()
+    .filter((r) => !r.push_key && r.protocol === 'rtsp' && encoderOf(r).host);
+
+  router.get('/api/encoders/defaults', () => {
+    const d = encoderDefaults();
+    return { login: d.login, hasPassword: !!d.password, minKbps: d.minKbps, maxKbps: d.maxKbps };
+  }, { auth: 'admin' });
+
+  router.put('/api/encoders/defaults', async (ctx) => {
+    const b = await ctx.json();
+    const prev = getValue(db, 'encoderDefaults', {});
+    const next = {
+      login: b.login !== undefined ? String(b.login).slice(0, 64) : prev.login || 'admin',
+      password: b.password ? String(b.password).slice(0, 128) : prev.password || '',
+      minKbps: intOr(b.minKbps, prev.minKbps ?? ENCODER_DEFAULTS.minKbps, 100, 32000),
+      maxKbps: intOr(b.maxKbps, prev.maxKbps ?? ENCODER_DEFAULTS.maxKbps, 100, 32000),
+    };
+    if (next.maxKbps < next.minKbps) throw badRequest('Максимальный битрейт меньше минимального');
+    setValue(db, 'encoderDefaults', next);
+    setEncoderDefaults(next);
+    app.tuner?.state.clear();
+    log.info('admin', `Общие настройки энкодеров: логин ${next.login}, пределы ${next.minKbps}–${next.maxKbps} Кбит/с`, { user: ctx.user.login, ip: ctx.ip });
+    return { login: next.login, hasPassword: !!next.password, minKbps: next.minKbps, maxKbps: next.maxKbps };
+  }, { auth: 'admin' });
+
+  // Включить/выключить автоподстройку у всех потоков с RTSP-энкодерами
+  router.post('/api/encoders/auto', async (ctx) => {
+    const auto = !!(await ctx.json()).auto;
+    const rows = managed();
+    for (const r of rows) {
+      const own = JSON.parse(r.encoder || '{}');
+      db.prepare('UPDATE streams SET encoder = ? WHERE id = ?').run(JSON.stringify({ ...own, enabled: true, auto }), r.id);
+      app.tuner?.forget(r.id);
+    }
+    log.info('admin', `Автоподстройка битрейта ${auto ? 'включена' : 'выключена'} для всех энкодеров (${rows.length})`, { user: ctx.user.login, ip: ctx.ip });
+    return { count: rows.length };
+  }, { auth: 'admin' });
+
+  // Рекомендуемые настройки всем энкодерам (по очереди), результат по каждому
+  router.post('/api/encoders/recommended', async (ctx) => {
+    const results = [];
+    for (const r of managed()) {
+      try { results.push({ name: r.name, ok: true, ...(await recommendedFor(r, ctx.user.login, ctx.ip)) }); } catch (err) { results.push({ name: r.name, ok: false, error: err.message }); }
+    }
+    return { results };
   }, { auth: 'admin' });
 
   // Задать битрейт вручную

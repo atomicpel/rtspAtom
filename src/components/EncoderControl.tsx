@@ -15,7 +15,7 @@ export function EncoderControl({ stream, onSaved }: { stream: Stream; onSaved: (
   const e = stream.encoder;
   const [form, setForm] = useState({ host: '', login: 'admin', password: '', minKbps: 600, maxKbps: 2000, auto: false });
   const [check, setCheck] = useState<EncoderCheck | null>(null);
-  const [busy, setBusy] = useState<'' | 'check' | 'save' | 'rate'>('');
+  const [busy, setBusy] = useState<'' | 'check' | 'save' | 'rate' | 'rec'>('');
   const [manual, setManual] = useState('');
 
   useEffect(() => {
@@ -125,6 +125,18 @@ export function EncoderControl({ stream, onSaved }: { stream: Stream; onSaved: (
         )}
         <div className="flex items-end gap-2 flex-wrap">
           <Button type="button" variant="subtle" busy={busy === 'save'} onClick={() => save()}>Сохранить доступ и пределы</Button>
+          <Button type="button" variant="ghost" busy={busy === 'rec'} disabled={!form.host} title="GOP = частоте кадров, лишние выходы (HLS, TS, FLV, RTMP, PUSH, мультикаст) выключить"
+            onClick={async () => {
+              if (!confirm('Записать в энкодер рекомендуемые настройки? Поток перезапустится на 2–3 секунды.')) return;
+              setBusy('rec');
+              try {
+                if (form.password || form.host !== e.host || form.login !== e.login) onSaved(await api.saveEncoder(stream.id, { enabled: true, ...creds }));
+                const r = await api.recommendEncoder(stream.id);
+                const keys = Object.keys(r.changed);
+                toast('success', keys.length ? `Изменено: ${keys.join(', ')}` : 'Энкодер уже настроен как надо');
+                doCheck();
+              } catch (err) { toast('error', errorMessage(err)); } finally { setBusy(''); }
+            }}>Рекомендуемые настройки</Button>
           <span className="flex-1" />
           <input type="number" min={100} max={32000} className={`${inputCls} w-32`} placeholder="Кбит/с" value={manual} onChange={(ev) => setManual(ev.target.value)} aria-label="Битрейт вручную" />
           <Button type="button" busy={busy === 'rate'} disabled={!manual || !form.host} onClick={setRate}>Задать битрейт</Button>

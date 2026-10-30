@@ -11,6 +11,7 @@ import { UsersPage } from './pages/UsersPage';
 import { LogsPage } from './pages/LogsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { ArchivePage } from './pages/ArchivePage';
+import { StatusPage } from './pages/StatusPage';
 import type { User } from './lib/types';
 
 const PAGES: (NavItem & { allowed: (u: User) => boolean })[] = [
@@ -19,6 +20,7 @@ const PAGES: (NavItem & { allowed: (u: User) => boolean })[] = [
   { id: 'streams', label: 'Потоки', allowed: (u) => u.isAdmin },
   { id: 'users', label: 'Пользователи', allowed: (u) => u.isAdmin },
   { id: 'logs', label: 'Журнал', allowed: (u) => u.isAdmin || u.role === 'operator' },
+  { id: 'status', label: 'Состояние', allowed: (u) => u.isAdmin },
   { id: 'settings', label: 'Настройки', allowed: (u) => u.isAdmin },
 ];
 
@@ -50,6 +52,7 @@ function AppContent() {
       {current === 'users' && <UsersPage />}
       {current === 'logs' && <LogsPage />}
       {current === 'settings' && <SettingsPage />}
+      {current === 'status' && <StatusPage />}
     </Layout>
   );
 }

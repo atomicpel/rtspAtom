@@ -17,9 +17,18 @@ export const SET_KEYS = [
 
 export const ENCODER_DEFAULTS = { enabled: false, auto: false, host: '', login: 'admin', password: '', output: null, minKbps: 600, maxKbps: 2000 };
 
-/** Настройки энкодера потока (из столбца encoder). */
+// Общие для всех энкодеров логин, пароль и пределы (Состояние → Энкодеры); у потока можно задать свои
+let shared = {};
+export function setEncoderDefaults(d) { shared = { ...(d || {}) }; }
+export function encoderDefaults() { return { ...ENCODER_DEFAULTS, ...shared }; }
+
+/** Настройки энкодера потока (из столбца encoder, пустые поля — из общих). */
 export function encoderOf(row) {
-  const e = { ...ENCODER_DEFAULTS, ...parseJson(row?.encoder, {}) };
+  const own = parseJson(row?.encoder, {});
+  const e = { ...ENCODER_DEFAULTS, ...shared, ...own };
+  if (!own.password && shared.password) { e.password = shared.password; e.login = own.login && own.login !== 'admin' ? own.login : shared.login || e.login; }
+  if (own.minKbps === undefined && shared.minKbps) e.minKbps = shared.minKbps;
+  if (own.maxKbps === undefined && shared.maxKbps) e.maxKbps = shared.maxKbps;
   if (!e.host) e.host = hostOf(row?.url);
   return e;
 }
@@ -143,6 +152,34 @@ export async function setBitrate(e, output, kbps) {
   const got = Number(after.fields.venc_bitrate);
   if (got !== Number(kbps)) throw new Error(`энкодер ${e.host} не применил битрейт: просили ${kbps}, стоит ${after.fields.venc_bitrate}`);
   return got;
+}
+
+/** Меняет несколько полей выхода и проверяет, что энкодер их принял. */
+export async function setFields(e, output, changes) {
+  const { fields } = await readOutput(e, output);
+  const diff = Object.fromEntries(Object.entries(changes).filter(([k, v]) => String(fields[k]) !== String(v)));
+  if (!Object.keys(diff).length) return { changed: {}, fields };
+  const q = buildSetQuery(0, output, fields, diff);
+  await encGet(e, `/set_output?${q}`, 10000);
+  await new Promise((r) => { const t = setTimeout(r, 1500); t.unref?.(); });
+  const after = await readOutput(e, output);
+  const bad = Object.keys(diff).filter((k) => String(after.fields[k]) !== String(diff[k]));
+  if (bad.length) throw new Error(`энкодер ${e.host} не применил: ${bad.join(', ')}`);
+  return { changed: diff, fields: after.fields };
+}
+
+/**
+ * Рекомендуемые настройки для показа с минимальной задержкой и устойчивостью:
+ * опорный кадр раз в секунду (GOP = частоте кадров), лишние выходы выключены, RTSP включён.
+ * Режим кодирования и профиль не трогаем: их числовые значения у прошивок различаются.
+ */
+export async function applyRecommended(e, output) {
+  const { fields } = await readOutput(e, output);
+  const fps = Number(fields.venc_framerate) || 25;
+  return setFields(e, output, {
+    venc_gop: fps, rtsp_enable: 1,
+    http_hls_enable: 0, http_ts_enable: 0, http_flv_enable: 0, rtmp_enable: 0, rtmp_publish_enable: 0, multicast_enable: 0,
+  });
 }
 
 // ---------- Автоподстройка ----------

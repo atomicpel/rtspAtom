@@ -10,7 +10,8 @@ import { MediaMtxClient, StreamSync } from './lib/mediamtx.js';
 import { ArchiveManager } from './lib/archive.js';
 import { effectiveArchiveDir, initExpectedMount, startRelocation } from './lib/archivedir.js';
 import { createHandler } from './lib/app.js';
-import { EncoderTuner } from './lib/encoder.js';
+import { EncoderTuner, setEncoderDefaults } from './lib/encoder.js';
+import { Monitor } from './lib/monitor.js';
 import { startHealth } from './lib/health.js';
 import { APP_VERSION } from './routes/system.js';
 
@@ -25,8 +26,10 @@ const archiveDir = effectiveArchiveDir(db, config);
 const sync = new StreamSync({ db, client, log, settings, archiveDir, relayUrl: config.mediamtx.rtspUrl });
 const archive = new ArchiveManager({ dir: archiveDir, log, settings });
 
+setEncoderDefaults(getValue(db, 'encoderDefaults', {}));
 const tuner = new EncoderTuner({ db, log, client });
 const app = { db, config, log, sync, archive, tuner, startedAt: Date.now() };
+app.monitor = new Monitor({ app });
 const handler = createHandler(app);
 
 let server;
@@ -74,6 +77,7 @@ try {
   log.error('error', `Каталог архива ${archiveDir} недоступен: ${err.message}`);
 }
 sync.start();
+app.monitor.start(); // страница «Состояние»: нагрузка, потоки, проверки
 tuner.start(); // автоподстройка битрейта энкодеров (только у потоков, где она включена)
 // перенос записей из прежней папки, прерванный перезапуском, — продолжаем
 const pendingMove = getValue(db, 'archiveMove');

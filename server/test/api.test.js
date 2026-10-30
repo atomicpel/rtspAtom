@@ -850,6 +850,40 @@ test('раскладки стены: сохранение, перезапись,
   await admin.del(`/api/wall/configs/${id}`);
 });
 
+test('состояние системы: нагрузка, потоки, проверки', async () => {
+  const { Monitor } = await import('../lib/monitor.js');
+  app.monitor = new Monitor({ app });
+  app.monitor.sample();
+  await new Promise((r) => setTimeout(r, 150));
+  app.monitor.sample();
+  const r = await admin.get('/api/monitor');
+  assert.equal(r.status, 200);
+  assert.ok(r.data.cores >= 1);
+  assert.ok(Array.isArray(r.data.history) && r.data.history.length >= 1);
+  assert.ok(Array.isArray(r.data.streams));
+  assert.ok(Array.isArray(r.data.checks));
+  assert.ok(r.data.checks.every((c) => ['error', 'warn', 'info'].includes(c.level) && c.title));
+  // два потока с одного энкодера — предупреждение
+  await admin.post('/api/streams', { name: 'Энк А', url: 'rtsp://10.1.1.1:8554/10' });
+  await admin.post('/api/streams', { name: 'Энк Б', url: 'rtsp://10.1.1.1:8554/11' });
+  app.monitor.sample();
+  const c = (await admin.get('/api/monitor')).data.checks;
+  assert.ok(c.some((x) => /С одного энкодера 10\.1\.1\.1/.test(x.title)), JSON.stringify(c.map((x) => x.title)));
+  // общие настройки энкодеров и включение автоподстройки для всех
+  let d = await admin.put('/api/encoders/defaults', { login: 'admin', password: 'p1', minKbps: 500, maxKbps: 1500 });
+  assert.equal(d.data.hasPassword, true);
+  assert.equal(d.data.password, undefined, 'пароль не отдаётся');
+  d = await admin.post('/api/encoders/auto', { auto: true });
+  assert.ok(d.data.count >= 2);
+  const st = (await admin.get('/api/streams')).data.find((x) => x.name === 'Энк А');
+  assert.equal(st.encoder.auto, true);
+  assert.equal(st.encoder.minKbps, 500);
+  assert.equal(st.encoder.hasPassword, true);
+  await admin.post('/api/encoders/auto', { auto: false });
+  for (const s of (await admin.get('/api/streams')).data.filter((x) => x.name.startsWith('Энк '))) await admin.del(`/api/streams/${s.id}`);
+  app.monitor = undefined;
+});
+
 test('выход завершает сессию', async () => {
   let r = await admin.post('/api/auth/logout');
   assert.equal(r.status, 200);
