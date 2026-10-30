@@ -8,6 +8,7 @@ import { codecHints } from '../lib/codecs';
 import { useToast } from '../components/Toast';
 import { VideoPlayer } from '../components/VideoPlayer';
 import { EncoderInfo, EncoderTips } from '../components/EncoderInfo';
+import { EncoderControl } from '../components/EncoderControl';
 import {
   Button, Empty, Field, IconButton, Modal, Notice, PageHeader, STATUS_TEXT, StatusDot, Toggle, inputCls,
 } from '../components/ui';
@@ -200,6 +201,7 @@ export function StreamsPage() {
                   <div className="text-[13px] text-muted truncate">
                     {s.mode === 'push' && s.status !== 'online' ? 'Ждёт поток от энкодера' : STATUS_TEXT[s.status]}
                     {s.tracks.length > 0 && `, ${s.tracks.join(', ')}`}
+                    {s.encoder?.auto && `, автобитрейт${s.encoder.state?.currentKbps ? ` ${s.encoder.state.currentKbps} Кбит/с` : ''}`}
                     {', '}{s.mode === 'push' ? 'энкодер отправляет сам (RTMP / SRT)' : s.url}
                   </div>
                 </div>
@@ -321,6 +323,9 @@ export function StreamsPage() {
             <span className="text-muted text-[13px]">срок хранения и запас места — в настройках</span>
           </div>
           <EncoderTips />
+          {editing?.encoder && (
+            <EncoderControl stream={editing} onSaved={(st) => { setEditing(st); setData(streams.map((x) => (x.id === st.id ? st : x))); }} />
+          )}
           <button type="submit" className="hidden" />
         </form>
       </Modal>

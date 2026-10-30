@@ -5,6 +5,7 @@ import { nowIso } from '../lib/db.js';
 import { getSettings } from '../lib/settings.js';
 import { canAccessStream, hasRole } from '../lib/access.js';
 import { detectProtocol, redactUrl, buildSourceUrl, pathNameOf, SOURCE_PROTOCOLS } from '../lib/mediamtx.js';
+import { ENCODER_DEFAULTS, detectOutput, encoderOf, hostOf, setBitrate, summary } from '../lib/encoder.js';
 
 const TRANSPORTS = ['auto', 'tcp', 'udp'];
 
@@ -110,8 +111,89 @@ export function registerStreams(router, app) {
       tracks: st?.tracks || [],
       viewers: viewersOf(s.id),
       sort: s.sort,
+      encoder: user.isAdmin ? encoderToApi(s) : undefined,
     };
   }
+
+  function encoderToApi(s) {
+    const e = encoderOf(s);
+    return {
+      enabled: !!e.enabled, auto: !!e.auto, host: e.host, login: e.login, hasPassword: !!e.password,
+      output: e.output, minKbps: e.minKbps, maxKbps: e.maxKbps,
+      state: app.tuner?.info(s.id) || null,
+    };
+  }
+
+  // ---------- Энкодер потока: доступ к веб-интерфейсу и автоподстройка битрейта ----------
+  const intOr = (v, d, lo, hi) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n >= lo && n <= hi ? n : d; };
+
+  router.put('/api/streams/:id/encoder', async (ctx) => {
+    const cur = getStream(ctx.params.id);
+    if (!cur) throw notFound('Поток не найден');
+    const b = await ctx.json();
+    const prev = encoderOf(cur);
+    const host = b.host !== undefined ? String(b.host || '').trim() : prev.host;
+    if (host && !/^[A-Za-z0-9.-]+(:\d{1,5})?$/.test(host)) throw badRequest('Адрес энкодера: IP или имя, например 11.196.27.131');
+    const next = {
+      enabled: b.enabled !== undefined ? !!b.enabled : !!prev.enabled,
+      auto: b.auto !== undefined ? !!b.auto : !!prev.auto,
+      host: host && host !== hostOf(cur.url) ? host : '',
+      login: b.login !== undefined ? String(b.login).slice(0, 64) : prev.login,
+      password: b.password ? String(b.password).slice(0, 128) : prev.password,
+      output: b.output === null || b.output === undefined ? prev.output : intOr(b.output, null, 0, 3),
+      minKbps: intOr(b.minKbps, prev.minKbps ?? ENCODER_DEFAULTS.minKbps, 100, 32000),
+      maxKbps: intOr(b.maxKbps, prev.maxKbps ?? ENCODER_DEFAULTS.maxKbps, 100, 32000),
+    };
+    if (next.maxKbps < next.minKbps) throw badRequest('Максимальный битрейт меньше минимального');
+    if (next.auto && !next.enabled) next.enabled = true;
+    db.prepare('UPDATE streams SET encoder = ? WHERE id = ?').run(JSON.stringify(next), cur.id);
+    app.tuner?.forget(cur.id);
+    log.info('admin', `Энкодер потока «${cur.name}»: автоподстройка ${next.auto ? `включена (${next.minKbps}–${next.maxKbps} Кбит/с)` : 'выключена'}`,
+      { user: ctx.user.login, ip: ctx.ip, stream: cur.name });
+    return streamToApi(getStream(cur.id), ctx.user);
+  }, { auth: 'admin' });
+
+  // Проверка: читаем настройки выхода энкодера (ничего не меняя)
+  router.post('/api/streams/:id/encoder/check', async (ctx) => {
+    const cur = getStream(ctx.params.id);
+    if (!cur) throw notFound('Поток не найден');
+    const b = await ctx.json();
+    const e = { ...encoderOf(cur) };
+    if (b.host) e.host = String(b.host).trim();
+    if (b.login !== undefined) e.login = String(b.login);
+    if (b.password) e.password = String(b.password);
+    if (!e.host) throw badRequest('Не указан адрес энкодера');
+    try {
+      const d = await detectOutput(e, cur.url);
+      const sum = summary(d.fields);
+      return {
+        ok: sum.missing.length === 0, output: d.output, matched: d.matched, ...sum,
+        raw: sum.missing.length ? String(d.raw).slice(0, 1500) : undefined,
+      };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  }, { auth: 'admin' });
+
+  // Задать битрейт вручную
+  router.post('/api/streams/:id/encoder/bitrate', async (ctx) => {
+    const cur = getStream(ctx.params.id);
+    if (!cur) throw notFound('Поток не найден');
+    const kbps = intOr((await ctx.json()).kbps, null, 100, 32000);
+    if (!kbps) throw badRequest('Битрейт: от 100 до 32000 Кбит/с');
+    const e = encoderOf(cur);
+    if (!e.host) throw badRequest('Не указан адрес энкодера');
+    try {
+      const d = await detectOutput(e, cur.url);
+      const before = d.fields.venc_bitrate;
+      const got = await setBitrate(e, d.output, kbps);
+      app.tuner?.forget(cur.id);
+      log.info('admin', `Энкодер потока «${cur.name}»: битрейт ${before} → ${got} Кбит/с (вручную)`, { user: ctx.user.login, ip: ctx.ip, stream: cur.name });
+      return { ok: true, bitrate: got, output: d.output };
+    } catch (err) {
+      throw badRequest(err.message);
+    }
+  }, { auth: 'admin' });
 
   router.get('/api/streams', (ctx) =>
     db.prepare('SELECT * FROM streams ORDER BY sort, created_at').all()
@@ -203,6 +285,7 @@ export function registerStreams(router, app) {
     log.info('admin', `Удалён поток «${cur.name}» вместе с архивом`, { user: ctx.user.login, ip: ctx.ip, stream: cur.name });
     sync();
     app.archive?.removeStream(cur.id);
+    app.tuner?.forget(cur.id);
   }, { auth: 'admin' });
 
   router.post('/api/streams/probe', async (ctx) => {

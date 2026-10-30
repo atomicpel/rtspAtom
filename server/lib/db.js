@@ -141,6 +141,10 @@ const MIGRATIONS = [
   );
   CREATE INDEX bookmarks_stream_ts ON bookmarks(stream_id, ts);
   `,
+  // 5 — управление энкодером потока (адрес, логин, пароль, автоподстройка битрейта), JSON
+  `
+  ALTER TABLE streams ADD COLUMN encoder TEXT NOT NULL DEFAULT '{}';
+  `,
 ];
 
 export function openDb(file) {

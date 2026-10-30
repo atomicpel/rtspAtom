@@ -27,6 +27,35 @@ export interface Stream {
   tracks: string[];
   viewers: number;
   sort: number;
+  /** Управление энкодером (только администратору) */
+  encoder?: StreamEncoder;
+}
+
+export interface StreamEncoder {
+  enabled: boolean;
+  auto: boolean;
+  host: string;
+  login: string;
+  hasPassword: boolean;
+  output: number | null;
+  minKbps: number;
+  maxKbps: number;
+  state: { currentKbps: number | null; output: number | null; lastChange: string | null; lastNote: string; ceilingKbps: number | null } | null;
+}
+
+export interface EncoderCheck {
+  ok: boolean;
+  error?: string;
+  output?: number;
+  matched?: boolean;
+  bitrate?: number | null;
+  framerate?: number | null;
+  gop?: number | null;
+  rcMode?: string | null;
+  profile?: string | null;
+  rtspUri?: string | null;
+  missing?: string[];
+  raw?: string;
 }
 
 export interface User {

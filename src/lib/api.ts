@@ -1,5 +1,5 @@
 import type {
-  ArchiveDirCheck, ArchiveDisk, ArchiveInfo, ArchiveRecordsMode, ArchiveSpan, Bookmark,
+  ArchiveDirCheck, ArchiveDisk, EncoderCheck, ArchiveInfo, ArchiveRecordsMode, ArchiveSpan, Bookmark,
   IpRule, LogEntry, ProbeResult, Settings, Stream, SystemInfo, User, WallConfig, WallState,
 } from './types';
 import { markOffline, markOnline } from './connection';
@@ -110,6 +110,10 @@ export const api = {
   updateStream: (id: string, s: StreamInput) => put<Stream>(`/api/streams/${id}`, s),
   deleteStream: (id: string) => del<void>(`/api/streams/${id}`),
   newPushKey: (id: string) => post<Stream>(`/api/streams/${id}/push-key`),
+  saveEncoder: (id: string, e: { enabled?: boolean; auto?: boolean; host?: string; login?: string; password?: string; minKbps?: number; maxKbps?: number }) =>
+    put<Stream>(`/api/streams/${id}/encoder`, e),
+  checkEncoder: (id: string, e: { host?: string; login?: string; password?: string }) => post<EncoderCheck>(`/api/streams/${id}/encoder/check`, e),
+  setEncoderBitrate: (id: string, kbps: number) => post<{ ok: boolean; bitrate: number; output: number }>(`/api/streams/${id}/encoder/bitrate`, { kbps }),
   recordAll: (record: boolean) => put<{ changed: number }>('/api/streams-record', { record }),
 
   archive: () => get<ArchiveInfo>('/api/archive'),

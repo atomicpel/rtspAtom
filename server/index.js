@@ -10,6 +10,7 @@ import { MediaMtxClient, StreamSync } from './lib/mediamtx.js';
 import { ArchiveManager } from './lib/archive.js';
 import { effectiveArchiveDir, initExpectedMount, startRelocation } from './lib/archivedir.js';
 import { createHandler } from './lib/app.js';
+import { EncoderTuner } from './lib/encoder.js';
 import { startHealth } from './lib/health.js';
 import { APP_VERSION } from './routes/system.js';
 
@@ -24,7 +25,8 @@ const archiveDir = effectiveArchiveDir(db, config);
 const sync = new StreamSync({ db, client, log, settings, archiveDir, relayUrl: config.mediamtx.rtspUrl });
 const archive = new ArchiveManager({ dir: archiveDir, log, settings });
 
-const app = { db, config, log, sync, archive, startedAt: Date.now() };
+const tuner = new EncoderTuner({ db, log, client });
+const app = { db, config, log, sync, archive, tuner, startedAt: Date.now() };
 const handler = createHandler(app);
 
 let server;
@@ -72,6 +74,7 @@ try {
   log.error('error', `Каталог архива ${archiveDir} недоступен: ${err.message}`);
 }
 sync.start();
+tuner.start(); // автоподстройка битрейта энкодеров (только у потоков, где она включена)
 // перенос записей из прежней папки, прерванный перезапуском, — продолжаем
 const pendingMove = getValue(db, 'archiveMove');
 if (pendingMove?.from && pendingMove.from !== archive.dir) startRelocation(app, pendingMove.from, pendingMove.mode).catch(() => {});
