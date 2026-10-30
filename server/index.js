@@ -27,7 +27,7 @@ const sync = new StreamSync({ db, client, log, settings, archiveDir, relayUrl: c
 const archive = new ArchiveManager({ dir: archiveDir, log, settings });
 
 setEncoderDefaults(getValue(db, 'encoderDefaults', {}));
-const tuner = new EncoderTuner({ db, log, client });
+const tuner = new EncoderTuner({ db, log, client, sync });
 const app = { db, config, log, sync, archive, tuner, startedAt: Date.now() };
 app.monitor = new Monitor({ app });
 const handler = createHandler(app);

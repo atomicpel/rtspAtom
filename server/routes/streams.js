@@ -5,6 +5,7 @@ import { nowIso } from '../lib/db.js';
 import { getSettings } from '../lib/settings.js';
 import { canAccessStream, hasRole } from '../lib/access.js';
 import { detectProtocol, redactUrl, buildSourceUrl, pathNameOf, SOURCE_PROTOCOLS } from '../lib/mediamtx.js';
+import { reconnectAndWait } from '../lib/encoder.js';
 import { ENCODER_DEFAULTS, applyRecommended, detectOutput, encoderDefaults, encoderOf, hostOf, setBitrate, setEncoderDefaults, summary } from '../lib/encoder.js';
 import { getValue, setValue } from '../lib/settings.js';
 
@@ -190,6 +191,7 @@ export function registerStreams(router, app) {
     if (!e.host) throw new Error('не указан адрес энкодера');
     const d = await detectOutput(e, cur.url);
     const r = await applyRecommended(e, d.output);
+    if (Object.keys(r.changed).length) await reconnectAndWait(app.sync, app.sync?.client, cur.id);
     const what = Object.entries(r.changed).map(([k, v]) => `${k}=${v}`).join(', ');
     if (what) log.info('admin', `Энкодер потока «${cur.name}»: рекомендуемые настройки (${what})`, { user, ip, stream: cur.name });
     app.monitor?.encoderCache.delete(cur.id);
@@ -263,6 +265,7 @@ export function registerStreams(router, app) {
       const before = d.fields.venc_bitrate;
       const got = await setBitrate(e, d.output, kbps);
       app.tuner?.forget(cur.id);
+      await reconnectAndWait(app.sync, app.sync?.client, cur.id);
       log.info('admin', `Энкодер потока «${cur.name}»: битрейт ${before} → ${got} Кбит/с (вручную)`, { user: ctx.user.login, ip: ctx.ip, stream: cur.name });
       return { ok: true, bitrate: got, output: d.output };
     } catch (err) {

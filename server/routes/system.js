@@ -5,7 +5,7 @@ import { nowIso } from '../lib/db.js';
 import { getSettings, saveSettings, validateSettings } from '../lib/settings.js';
 import { PLATFORM } from '../lib/config.js';
 
-export const APP_VERSION = '1.6.5';
+export const APP_VERSION = '1.6.6';
 const LOG_LEVELS = ['info', 'warning', 'error', 'debug'];
 const LOG_CATEGORIES = ['auth', 'access', 'stream', 'error', 'admin'];
 

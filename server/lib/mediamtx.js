@@ -281,6 +281,16 @@ export class StreamSync {
     return map;
   }
 
+  /** Переподключить источник потока (новый RTSP-сеанс с чистыми метками времени). */
+  async restartSource(streamId) {
+    const want = this.lastWanted || this.desired();
+    const name = this.pathById.get(streamId);
+    const item = name && want.get(name);
+    if (!item) return;
+    await this.client.deletePath(name).catch(() => {});
+    await this.client.addPath(name, item.conf).catch((e) => this.#fail(name, e, item.stream));
+  }
+
   /** Запустить синхронизацию (повторные вызовы во время работы объединяются). */
   trigger() {
     if (this.syncing) {

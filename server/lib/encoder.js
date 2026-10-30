@@ -81,8 +81,11 @@ export function buildSetQuery(input, output, current, changes) {
     throw err;
   }
   const parts = [`input=${input}`, `output=${output}`];
+  // «Как у источника»: страница энкодера шлёт ширину и высоту 0 (get_output отдаёт фактические 1920×1080)
+  const same = String(changes.venc_width_height_same_as_input ?? current.venc_width_height_same_as_input) === '1';
   for (const k of SET_KEYS) {
-    const v = changes[k] !== undefined ? changes[k] : current[k];
+    let v = changes[k] !== undefined ? changes[k] : current[k];
+    if (same && (k === 'venc_width' || k === 'venc_height') && changes[k] === undefined) v = 0;
     parts.push(`${k}=${k === 'rtmp_publish_uri' ? encodeURIComponent(String(v)) : enc(v)}`);
   }
   parts.push(`_=${Date.now()}`);
@@ -141,8 +144,11 @@ export function summary(fields) {
   };
 }
 
-/** Меняет битрейт выхода: читает все поля, отправляет set_output, проверяет результат. */
-export async function setBitrate(e, output, kbps) {
+/**
+ * Меняет битрейт выхода: читает все поля, отправляет set_output, проверяет результат.
+ * Возвращает новый битрейт и прежние поля (для отката).
+ */
+export async function setBitrate(e, output, kbps, { withPrevious = false } = {}) {
   const { fields } = await readOutput(e, output);
   const q = buildSetQuery(0, output, fields, { venc_bitrate: kbps });
   await encGet(e, `/set_output?${q}`, 10000);
@@ -151,7 +157,35 @@ export async function setBitrate(e, output, kbps) {
   const after = await readOutput(e, output);
   const got = Number(after.fields.venc_bitrate);
   if (got !== Number(kbps)) throw new Error(`энкодер ${e.host} не применил битрейт: просили ${kbps}, стоит ${after.fields.venc_bitrate}`);
-  return got;
+  return withPrevious ? { bitrate: got, previous: fields } : got;
+}
+
+/** Вернуть выходу прежние настройки целиком (откат). */
+export async function restoreFields(e, output, previous) {
+  const q = buildSetQuery(0, output, previous, {});
+  await encGet(e, `/set_output?${q}`, 10000);
+}
+
+/**
+ * После смены настроек энкодер перезапускает кодирование, но RTSP-сеанс может остаться прежним —
+ * с «прыгнувшими» метками времени (MediaMTX: «DTS is not monotonically increasing», «sample timestamp is
+ * impossible to handle»), и браузеры показывают «Нет сигнала». Поэтому переподключаем источник в MediaMTX
+ * и ждём, пока поток снова пойдёт.
+ */
+export async function reconnectAndWait(sync, client, streamId, { timeoutMs = 30_000, settleMs = 2500 } = {}) {
+  if (!sync || !client) return true;
+  await new Promise((r) => { const t = setTimeout(r, settleMs); t.unref?.(); });
+  await sync.restartSource(streamId);
+  const name = sync.pathById.get(streamId);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise((r) => { const t = setTimeout(r, 1000); t.unref?.(); });
+    try {
+      const p = await client.getPath(name);
+      if (p?.ready || p?.online) return true;
+    } catch { /* путь ещё создаётся */ }
+  }
+  return false;
 }
 
 /** Меняет несколько полей выхода и проверяет, что энкодер их принял. */
@@ -190,15 +224,18 @@ const DOWN_AFTER_BAD = 2; // два плохих замера подряд (ми
 const DOWN_COOLDOWN_MS = 3 * 60_000; // после изменения ждём: энкодер перезапускает выход, первые секунды бывают с ошибками
 const UP_CLEAN_MS = 20 * 60_000; // 20 минут без потерь — пробуем поднять
 const CEILING_MS = 6 * 3600_000; // если подъём снова дал потери — 6 часов выше не поднимаемся
+const GRACE_MS = 60_000; // после изменения минуту не судим: энкодер и источник перезапускаются
 const STEP_DOWN = 0.8;
 const STEP_UP = 1.15;
 const round50 = (v) => Math.max(50, Math.round(v / 50) * 50);
 
 export class EncoderTuner {
-  constructor({ db, log, client, now = () => Date.now() }) {
+  constructor({ db, log, client, sync = null, now = () => Date.now(), reconnect = reconnectAndWait }) {
     this.db = db;
     this.log = log;
     this.client = client;
+    this.sync = sync;
+    this.reconnect = reconnect;
     this.now = now;
     this.state = new Map(); // streamId -> { lastErr, bad, cleanSince, lastChange, lastDir, prevKbps, ceiling, ceilingUntil, current, output, lastWarn }
     this.timer = null;
@@ -234,22 +271,46 @@ export class EncoderTuner {
 
   async #change(row, e, s, kbps, why) {
     const from = s.current;
+    let previous = null;
     try {
       if (s.output === null) {
         const d = await detectOutput(e, row.url);
         s.output = d.output;
       }
-      s.current = await setBitrate(e, s.output, kbps);
-      s.prevKbps = from;
-      s.lastDir = kbps < from ? -1 : 1;
+      const r = await setBitrate(e, s.output, kbps, { withPrevious: true });
+      previous = r.previous;
+      s.current = r.bitrate;
       s.lastChange = this.now();
+      s.lastErr = null; // счётчик ошибок после перезапуска источника начнётся заново
       s.bad = 0;
       s.cleanSince = this.now();
+      // источник переподключаем и ждём, что поток пошёл; нет — откат и автоподстройка этого потока выключается
+      const ok = await this.reconnect(this.sync, this.client, row.id);
+      if (!ok) {
+        try {
+          await restoreFields(e, s.output, previous);
+          await this.reconnect(this.sync, this.client, row.id);
+        } catch { /* сообщим ниже */ }
+        s.current = from;
+        this.#disable(row);
+        this.log.error('stream', `Автоподстройка «${row.name}»: после смены битрейта ${from} → ${kbps} поток не вернулся за 30 с — `
+          + 'прежние настройки энкодера восстановлены, автоподстройка этого потока выключена', { stream: row.name });
+        return;
+      }
+      s.prevKbps = from;
+      s.lastDir = kbps < from ? -1 : 1;
       s.lastNote = `${kbps < from ? 'снижен' : 'повышен'}: ${why}`;
       this.log.info('stream', `Автоподстройка «${row.name}»: ${why} — битрейт ${from} → ${kbps} Кбит/с`, { stream: row.name });
     } catch (err) {
       this.#warn(row, s, err.message);
     }
+  }
+
+  #disable(row) {
+    try {
+      const own = JSON.parse(row.encoder || '{}');
+      this.db.prepare('UPDATE streams SET encoder = ? WHERE id = ?').run(JSON.stringify({ ...own, auto: false }), row.id);
+    } catch { /* не критично */ }
   }
 
   async tickOne(row, path) {
@@ -274,6 +335,7 @@ export class EncoderTuner {
     const delta = s.lastErr === null || err < s.lastErr ? 0 : err - s.lastErr;
     s.lastErr = err;
     const now = this.now();
+    if (now - s.lastChange < GRACE_MS) return; // первая минута после перезапуска источника — не в счёт
     if (delta >= BAD_FRAMES) {
       s.bad += 1;
       s.cleanSince = now;
