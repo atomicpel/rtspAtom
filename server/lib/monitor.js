@@ -229,8 +229,17 @@ export class Monitor {
     if (st?.disk && st.disk.free < s.archiveMinFreeGb * 1024 ** 3) add('warn', 'Архив', 'Мало места на диске архива', `Свободно ${(st.disk.free / 1024 ** 3).toFixed(0)} ГБ — старые записи удаляются раньше срока.`, 'Уменьшите срок хранения или битрейт, освободите диск.');
     if (st?.capacityDays !== null && st?.capacityDays !== undefined && st.capacityDays < s.archiveDays) add('info', 'Архив', `Места хватит примерно на ${Math.floor(st.capacityDays)} сут. при сроке ${s.archiveDays}`, '', 'Уменьшите «Хранить записи» в настройках или битрейт камер.');
     if (!this.app.sync?.reachable) add('error', 'Видеосервер', 'Видеосервер MediaMTX недоступен', this.app.sync?.lastError || '', 'sudo systemctl restart rtspatom-mediamtx; журнал: journalctl -u rtspatom-mediamtx -n 50');
-    if (!s.camerasAlwaysOn) add('info', 'Панель', 'Камеры подключаются только при просмотре', 'При открытии стены несколько секунд «Нет сигнала».', 'Настройки → Камеры → «Держать подключёнными постоянно».');
-    if (!c.streams.some((x) => x.active && x.record)) add('warn', 'Архив', 'Запись в архив выключена у всех потоков', '', 'Настройки → Архив → «Включить запись для всех».');
+    if (this.timeSynced === false) add('warn', 'Сервер', 'Время сервера не синхронизировано (NTP)', 'Метки времени в архиве и журнале могут уходить; при поиске по архиву время не совпадёт с часами.', 'Настройте синхронизацию времени: timedatectl set-ntp true и сервер NTP вашей сети (chrony / systemd-timesyncd).');
+    if (!s.selfHeal) add('info', 'Панель', 'Самовосстановление выключено', 'Пропавшие камеры не переподключаются автоматически.', 'Настройки → Камеры → «Самовосстановление».');
+    if (!s.camerasAlwaysOn) add('info', 'Панель', 'Камеры подключаются только при просмотре', 'При открытии стены несколько секунд «Нет сигнала»; камеры без записи самовосстановление проверяет, только пока их смотрят.', 'Настройки → Камеры → «Держать подключёнными постоянно».');
+    const activeStreams = c.streams.filter((x) => x.active);
+    const archiveDir = a?.dir || this.app.sync?.archiveDir;
+    if (!archiveDir) add('warn', 'Архив', 'Папка архива не задана — запись не ведётся', 'Галочки «Запись» у потоков ни на что не влияют.', 'Настройки → Архив → «Папка архива».');
+    else if (activeStreams.length && !activeStreams.some((x) => x.record)) add('warn', 'Архив', 'Запись в архив выключена у всех потоков', '', 'Настройки → Архив → «Включить запись для всех».');
+    else {
+      const off = activeStreams.filter((x) => !x.record);
+      if (off.length) add('info', 'Архив', `Запись выключена у ${off.length} из ${activeStreams.length} потоков`, off.slice(0, 8).map((x) => `«${x.name}»`).join(', ') + (off.length > 8 ? '…' : ''), 'Если так задумано — ничего делать не нужно. Включить: окно потока → «Запись».');
+    }
 
     // --- Потоки ---
     const hosts = new Map();
@@ -284,10 +293,23 @@ export class Monitor {
       })),
       history: this.history,
       checks: this.checks(),
+      heal: { enabled: !!getSettings(this.app.db).selfHeal, actions: this.app.watchdog?.actions || [] },
     };
   }
 
+  /** Синхронизировано ли время (Linux, systemd). */
+  async refreshTimeSync() {
+    if (process.platform !== 'linux') return;
+    const { execFile } = await import('node:child_process');
+    execFile('timedatectl', ['show', '-p', 'NTPSynchronized', '--value'], { timeout: 5000 }, (err, out) => {
+      this.timeSynced = err ? null : String(out).trim() === 'yes';
+    });
+  }
+
   start() {
+    this.refreshTimeSync().catch(() => {});
+    this.ntpTimer = setInterval(() => this.refreshTimeSync().catch(() => {}), 10 * 60_000);
+    this.ntpTimer.unref?.();
     this.sample();
     this.timer = setInterval(() => {
       try { this.sample(); } catch (err) { this.app.log?.error('error', `Мониторинг: ${err.message}`); }

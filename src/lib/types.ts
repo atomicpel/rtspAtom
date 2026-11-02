@@ -102,6 +102,8 @@ export interface Settings {
   rateLimitApi: number;
   logRetentionDays: number;
   camerasAlwaysOn: boolean;
+  selfHeal: boolean;
+  selfHealServer: boolean;
   lowLatency: boolean;
   archiveDays: number;
   archiveMinFreeGb: number;
@@ -253,4 +255,5 @@ export interface MonitorSnapshot {
   top: { name: string; cpu: number; count: number }[];
   streams: MonitorStream[];
   checks: MonitorCheck[];
+  heal?: { enabled: boolean; actions: { at: string; level: 'info' | 'warn' | 'error'; message: string }[] };
 }

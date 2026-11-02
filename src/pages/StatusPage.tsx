@@ -177,6 +177,18 @@ export function StatusPage() {
         )}
       </Section>
 
+      <Section title="Самовосстановление" desc={data.heal?.enabled ? 'Включено (Настройки → Камеры)' : 'Выключено (Настройки → Камеры)'}>
+        {data.heal && data.heal.actions.length ? (
+          <ul className="text-[13px] space-y-1">
+            {data.heal.actions.slice(0, 15).map((a, i) => (
+              <li key={i} className={a.level === 'error' ? 'text-alarm' : a.level === 'warn' ? 'text-warn' : 'text-muted'}>
+                <span className="tabular text-muted">{new Date(a.at).toLocaleString('ru-RU')}</span> — {a.message}
+              </li>
+            ))}
+          </ul>
+        ) : <p className="text-[13px] text-muted">Действий не было: все камеры работают.</p>}
+      </Section>
+
       <Section title="Потоки" desc="Входящий битрейт, потери и пропадания">
         <div className="overflow-x-auto">
           <table className="w-full text-[13px]">

@@ -153,10 +153,22 @@ export function VideoPlayer({ streamId, name, className = '', reloadKey = 0, dis
       setErrorMsg('Браузер не поддерживает потоковое видео');
     }
 
+    // Картинка «застыла»: видео считается идущим, но время кадра не меняется 10 с — переподключаемся
+    let lastTime = -1;
+    let frozenSince = 0;
+    const freezeTimer = setInterval(() => {
+      if (cancelled || video.paused || document.visibilityState !== 'visible' || video.readyState < 2) { frozenSince = 0; return; }
+      const t = video.currentTime;
+      if (t !== lastTime) { lastTime = t; frozenSince = 0; return; }
+      frozenSince ||= Date.now();
+      if (Date.now() - frozenSince >= 10_000) { frozenSince = 0; fail('Картинка застыла'); }
+    }, 2000);
+
     return () => {
       cancelled = true;
       clearTimeout(retryTimer);
       clearInterval(statsTimer);
+      clearInterval(freezeTimer);
       hls?.destroy();
       whep?.close();
       video.srcObject = null;

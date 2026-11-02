@@ -8,6 +8,10 @@ export const SETTINGS_SCHEMA = {
   logRetentionDays: { def: 90, min: 1, max: 3650, int: true },
   logFormat: { def: 'json', values: ['json', 'syslog'] },
   camerasAlwaysOn: { def: true, bool: true },
+  // Самовосстановление: переподключать пропавшие камеры (если устройство доступно по сети)
+  selfHeal: { def: true, bool: true },
+  // …и при повторных неудачах перезапускать видеосервер (не чаще раза в 30 минут, до 6 раз в сутки)
+  selfHealServer: { def: true, bool: true },
   // Показ видео: WebRTC (минимальная задержка, с откатом на HLS) или только LL-HLS
   lowLatency: { def: true, bool: true },
   // Архив: срок хранения и минимум свободного места на диске (старые записи удаляются раньше срока)

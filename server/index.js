@@ -12,6 +12,7 @@ import { effectiveArchiveDir, initExpectedMount, startRelocation } from './lib/a
 import { createHandler } from './lib/app.js';
 import { EncoderTuner, setEncoderDefaults } from './lib/encoder.js';
 import { Monitor } from './lib/monitor.js';
+import { Watchdog } from './lib/watchdog.js';
 import { startHealth } from './lib/health.js';
 import { APP_VERSION } from './routes/system.js';
 
@@ -30,6 +31,7 @@ setEncoderDefaults(getValue(db, 'encoderDefaults', {}));
 const tuner = new EncoderTuner({ db, log, client, sync });
 const app = { db, config, log, sync, archive, tuner, startedAt: Date.now() };
 app.monitor = new Monitor({ app });
+app.watchdog = new Watchdog({ app });
 const handler = createHandler(app);
 
 let server;
@@ -77,6 +79,7 @@ try {
   log.error('error', `Каталог архива ${archiveDir} недоступен: ${err.message}`);
 }
 sync.start();
+app.watchdog.start(); // самовосстановление: камеры и видеосервер
 app.monitor.start(); // страница «Состояние»: нагрузка, потоки, проверки
 tuner.start(); // автоподстройка битрейта энкодеров (только у потоков, где она включена)
 // перенос записей из прежней папки, прерванный перезапуском, — продолжаем
