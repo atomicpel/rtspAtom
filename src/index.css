@@ -1,0 +1,76 @@
+@import "tailwindcss";
+
+/* Строгая графитовая палитра пульта наблюдения */
+@theme {
+  --color-ink: #15181c;        /* фон */
+  --color-panel: #1d2126;      /* панели, окна */
+  --color-raised: #252a30;     /* поля ввода, наведение */
+  --color-line: #2c3238;       /* границы */
+  --color-line-strong: #3a4148;
+  --color-fg: #d9dee3;         /* основной текст */
+  --color-muted: #7d8791;      /* второстепенный текст */
+  --color-steel: #7a9cc0;      /* выбранное, фокус */
+  --color-ok: #5fa67a;         /* в сети */
+  --color-warn: #c9a24a;       /* переподключение */
+  --color-alarm: #d0453a;      /* LIVE, ошибки */
+
+  --font-sans: "PT Sans", "Segoe UI", "Noto Sans", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+@layer base {
+  html, body, #root {
+    height: 100%;
+  }
+
+  body {
+    background: var(--color-ink);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  * {
+    border-color: var(--color-line);
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--color-steel) 35%, transparent);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-steel);
+    outline-offset: 2px;
+  }
+
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-line-strong);
+    border: 3px solid var(--color-ink);
+    border-radius: 6px;
+  }
+
+  input[type="checkbox"] {
+    accent-color: var(--color-steel);
+    width: 15px;
+    height: 15px;
+  }
+
+  input[type="range"] { accent-color: var(--color-steel); }
+
+  select {
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%237d8791' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+    background-position: right 0.5rem center;
+    background-repeat: no-repeat;
+    background-size: 1.25em 1.25em;
+    padding-right: 2rem;
+  }
+
+  .tabular { font-variant-numeric: tabular-nums; }
+}
+
+/* Видео в полноэкранном режиме ячейки */
+:fullscreen { background: #000; }

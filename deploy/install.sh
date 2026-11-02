@@ -1,0 +1,322 @@
+#!/bin/bash
+# Установка / обновление RTSP Atom на Astra Linux SE 1.8 (и других Debian-подобных x86_64).
+# Работает без интернета: всё необходимое лежит в этом каталоге.
+#
+#   sudo ./install.sh [--port 8080] [--tls] [--admin ЛОГИН] [--archive-dir /srv/archive] [--no-start]
+#
+set -euo pipefail
+
+SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PREFIX=/opt/rtspatom
+CONF_DIR=/etc/rtspatom
+DATA_DIR=/var/lib/rtspatom
+SVC_USER=rtspatom
+
+PORT=""
+TLS=0
+ADMIN_LOGIN=""
+START=1
+
+say()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
+die()  { printf '\033[1;31mОшибка:\033[0m %s\n' "$*" >&2; exit 1; }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --port) PORT="${2:-}"; shift 2 ;;
+    --tls) TLS=1; shift ;;
+    --admin) ADMIN_LOGIN="${2:-}"; shift 2 ;;
+    --no-start) START=0; shift ;;
+    --archive-dir) ARCHIVE_DIR="${2:-}"; shift 2 ;;
+    -h|--help)
+      sed -n '2,7p' "$0"; exit 0 ;;
+    *) die "неизвестный параметр: $1" ;;
+  esac
+done
+
+[ "$(id -u)" -eq 0 ] || die "запустите от root: sudo ./install.sh"
+# Каталог архива проверяем до записи в config.json, чтобы неверный путь не застрял в настройках
+if [ -n "${ARCHIVE_DIR:-}" ]; then
+  case "$ARCHIVE_DIR" in
+    /home/*|/root/*) die "каталог архива не может быть в /home или /root (службы его не увидят): $ARCHIVE_DIR" ;;
+    /*) ARCHIVE_DIR="${ARCHIVE_DIR%/}" ;;
+    *) die "каталог архива должен быть абсолютным путём: $ARCHIVE_DIR" ;;
+  esac
+fi
+[ "$(uname -m)" = "x86_64" ] || die "пакет собран для x86_64, а эта машина: $(uname -m)"
+[ -x "$SRC/node/bin/node" ] && [ -x "$SRC/mediamtx/mediamtx" ] && [ -f "$SRC/app/server/index.js" ] \
+  || die "пакет неполный — распакуйте архив целиком и запускайте install.sh из его каталога"
+if [ -n "$PORT" ] && ! [[ "$PORT" =~ ^[0-9]+$ && "$PORT" -ge 1 && "$PORT" -le 65535 ]]; then
+  die "неверный порт: $PORT"
+fi
+
+# Проверка целостности файлов пакета
+if [ -f "$SRC/SHA256SUMS" ] && command -v sha256sum >/dev/null; then
+  say "Проверка целостности пакета"
+  (cd "$SRC" && sha256sum --quiet -c SHA256SUMS) || die "файлы пакета повреждены (не совпали контрольные суммы)"
+fi
+
+# Node.js из пакета требует glibc >= 2.28 (в Astra 1.8 — 2.36)
+GLIBC="$(ldd --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+$' || true)"
+if [ -n "$GLIBC" ]; then
+  if [ "$(printf '%s\n2.28\n' "$GLIBC" | sort -V | head -1)" != "2.28" ]; then
+    die "слишком старая glibc ($GLIBC), нужна 2.28 или новее"
+  fi
+fi
+"$SRC/node/bin/node" --disable-warning=ExperimentalWarning -e 'require("node:sqlite")' 2>/dev/null \
+  || die "Node.js из пакета не запускается на этой системе"
+
+if [ -f /etc/astra_version ]; then
+  say "Обнаружена Astra Linux $(cat /etc/astra_version)"
+fi
+
+UPGRADE=0
+[ -d "$PREFIX/app" ] && UPGRADE=1
+
+HAVE_SYSTEMD=0
+if command -v systemctl >/dev/null && [ -d /run/systemd/system ]; then HAVE_SYSTEMD=1; fi
+
+if [ $UPGRADE -eq 1 ] && [ $HAVE_SYSTEMD -eq 1 ]; then
+  say "Обновление: останавливаю службы"
+  systemctl stop rtspatom.service rtspatom-mediamtx.service 2>/dev/null || true
+fi
+
+# Служебный пользователь
+if ! id "$SVC_USER" >/dev/null 2>&1; then
+  say "Создаю служебного пользователя $SVC_USER"
+  NOLOGIN=/usr/sbin/nologin; [ -x "$NOLOGIN" ] || NOLOGIN=/bin/false
+  useradd --system --home-dir "$DATA_DIR" --no-create-home --shell "$NOLOGIN" "$SVC_USER"
+fi
+
+say "Копирую файлы в $PREFIX"
+install -d -m 755 "$PREFIX"
+rm -rf "$PREFIX/app.new" "$PREFIX/node.new" "$PREFIX/mediamtx.new"
+cp -a "$SRC/app" "$PREFIX/app.new"
+cp -a "$SRC/node" "$PREFIX/node.new"
+cp -a "$SRC/mediamtx" "$PREFIX/mediamtx.new"
+for d in app node mediamtx; do
+  rm -rf "$PREFIX/$d"
+  mv "$PREFIX/$d.new" "$PREFIX/$d"
+done
+# остатки быстрого обновления (update.sh): после полной установки откатывать некуда
+rm -rf "$PREFIX/app.prev" "$PREFIX/app.bad" "$PREFIX/VERSION.prev"
+chown -R root:root "$PREFIX"
+chmod -R u=rwX,go=rX "$PREFIX"
+chmod 755 "$PREFIX/node/bin/node" "$PREFIX/mediamtx/mediamtx"
+[ -f "$SRC/VERSION" ] && install -m 644 "$SRC/VERSION" "$PREFIX/VERSION"
+install -m 755 "$SRC/uninstall.sh" "$PREFIX/uninstall.sh"
+[ -f "$SRC/update.sh" ] && install -m 755 "$SRC/update.sh" "$PREFIX/update.sh"
+install -m 755 "$SRC/deploy/rtspatom-admin" /usr/local/bin/rtspatom-admin
+
+say "Каталоги данных и настроек"
+install -d -m 750 -o "$SVC_USER" -g "$SVC_USER" "$DATA_DIR"
+install -d -m 755 "$CONF_DIR"
+
+NODE="$PREFIX/node/bin/node"
+CONF="$CONF_DIR/config.json"
+if [ ! -f "$CONF" ]; then
+  "$NODE" -e '
+    const fs = require("fs");
+    const cfg = {
+      host: "0.0.0.0",
+      port: 8080,
+      dataDir: "/var/lib/rtspatom",
+      publicDir: "/opt/rtspatom/app/public",
+      trustProxy: "loopback",
+      tls: { enabled: false, cert: "/etc/rtspatom/tls/cert.pem", key: "/etc/rtspatom/tls/key.pem" },
+      mediamtx: { apiUrl: "http://127.0.0.1:9997", hlsUrl: "http://127.0.0.1:8888" },
+    };
+    fs.writeFileSync(process.argv[1], JSON.stringify(cfg, null, 2) + "\n");
+  ' "$CONF"
+fi
+chmod 640 "$CONF"
+chown root:"$SVC_USER" "$CONF"
+
+# Общий секрет панели и MediaMTX (hlsCDNSecret): создаётся один раз и хранится в config.json
+SECRET="$("$NODE" -e '
+  const fs = require("fs"), crypto = require("crypto");
+  const file = process.argv[1];
+  const cfg = JSON.parse(fs.readFileSync(file, "utf8"));
+  cfg.mediamtx = cfg.mediamtx || {};
+  if (!cfg.mediamtx.cdnSecret) {
+    cfg.mediamtx.cdnSecret = crypto.randomBytes(24).toString("hex");
+    fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + "\n");
+  }
+  console.log(cfg.mediamtx.cdnSecret);
+' "$CONF")"
+
+# Свободные порты: желаемые — из --port / прежней установки / по умолчанию.
+# Наши службы уже остановлены; если порт занят другой программой — берём следующий свободный.
+read -r WANT_PANEL WANT_HLS WANT_API WANT_WHEP WANT_ICE WANT_RTMP WANT_SRT WANT_PLAY WANT_RTSP < <("$NODE" -e '
+  const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+  const p = (u, d) => { try { return Number(new URL(u).port) || d; } catch { return d; } };
+  console.log(c.port || 8080, p(c.mediamtx?.hlsUrl, 8888), p(c.mediamtx?.apiUrl, 9997),
+    p(c.mediamtx?.webrtcUrl, 8890), c.mediamtx?.icePort || 8189, c.mediamtx?.rtmpPort || 1935, c.mediamtx?.srtPort || 8890,
+    p(c.mediamtx?.playbackUrl, 9996), p((c.mediamtx?.rtspUrl || "").replace(/^rtsp:/, "http:"), 8554));
+' "$CONF")
+[ -n "$PORT" ] && WANT_PANEL="$PORT"
+say "Проверяю, свободны ли порты"
+PORTS_JSON="$("$NODE" "$SRC/deploy/ports.mjs" "panel=$WANT_PANEL@0.0.0.0" "hls=$WANT_HLS@127.0.0.1" "api=$WANT_API@127.0.0.1" \
+  "whep=$WANT_WHEP@127.0.0.1" "ice=$WANT_ICE@0.0.0.0+udp" "rtmp=$WANT_RTMP@0.0.0.0" "srt=$WANT_SRT@0.0.0.0/udp" "playback=$WANT_PLAY@127.0.0.1" "rtsp=$WANT_RTSP@127.0.0.1")" \
+  || die "не удалось подобрать свободные порты"
+read -r P_PANEL P_HLS P_API P_WHEP P_ICE P_RTMP P_SRT P_PLAY P_RTSP < <("$NODE" -e '
+  const r = JSON.parse(process.argv[1]);
+  const labels = { panel: "веб-интерфейса", hls: "видео HLS (внутренний)", api: "управления MediaMTX (внутренний)",
+    whep: "подключения WebRTC (внутренний)", ice: "видео WebRTC", rtmp: "приёма RTMP от энкодеров", srt: "приёма SRT от энкодеров", playback: "выдачи архива (внутренний)", rtsp: "передачи потока энкодера в архив (внутренний)" };
+  for (const k of Object.keys(labels)) {
+    if (r[k].busyBy) console.error(`!! Порт ${r[k].wanted} занят (${r[k].busyBy}) — для ${labels[k]} взят свободный порт ${r[k].port}`);
+  }
+  console.log(r.panel.port, r.hls.port, r.api.port, r.whep.port, r.ice.port, r.rtmp.port, r.srt.port, r.playback.port, r.rtsp.port);
+' "$PORTS_JSON")
+ARCHIVE_NOW="$("$NODE" -e '
+  const fs = require("fs");
+  const [file, panel, hls, api, whep, ice, rtmp, srt, play, rtsp, archiveDir] = process.argv.slice(1);
+  const c = JSON.parse(fs.readFileSync(file, "utf8"));
+  c.port = Number(panel);
+  c.mediamtx = c.mediamtx || {};
+  c.mediamtx.hlsUrl = `http://127.0.0.1:${hls}`;
+  c.mediamtx.apiUrl = `http://127.0.0.1:${api}`;
+  c.mediamtx.webrtcUrl = `http://127.0.0.1:${whep}`;
+  c.mediamtx.icePort = Number(ice);
+  c.mediamtx.rtmpPort = Number(rtmp);
+  c.mediamtx.srtPort = Number(srt);
+  c.mediamtx.playbackUrl = `http://127.0.0.1:${play}`;
+  // доступ через туннель с внешнего сервера: настоящий адрес гостя — из X-Forwarded-For от 127.0.0.1
+  if (c.trustProxy === false || c.trustProxy === undefined) c.trustProxy = "loopback";
+  c.mediamtx.rtspUrl = `rtsp://127.0.0.1:${rtsp}`;
+  if (archiveDir) c.archiveDir = archiveDir;
+  if (!c.archiveDir) c.archiveDir = require("path").join(c.dataDir || "/var/lib/rtspatom", "archive");
+  fs.writeFileSync(file, JSON.stringify(c, null, 2) + "\n");
+  console.log(c.archiveDir);
+' "$CONF" "$P_PANEL" "$P_HLS" "$P_API" "$P_WHEP" "$P_ICE" "$P_RTMP" "$P_SRT" "$P_PLAY" "$P_RTSP" "${ARCHIVE_DIR:-}")"
+case "$ARCHIVE_NOW" in
+  /home/*|/root/*) die "каталог архива не может быть в /home или /root (службы его не увидят): $ARCHIVE_NOW" ;;
+  /*) ;;
+  *) die "каталог архива должен быть абсолютным путём: $ARCHIVE_NOW" ;;
+esac
+install -d -m 750 -o "$SVC_USER" -g "$SVC_USER" "$ARCHIVE_NOW"
+chown "$SVC_USER:$SVC_USER" "$ARCHIVE_NOW"
+if [ -n "${ARCHIVE_DIR:-}" ]; then
+  # явно указанный --archive-dir важнее папки, выбранной раньше в «Настройки → Архив»
+  /usr/local/bin/rtspatom-admin archive-dir --reset >/dev/null || warn "не удалось применить --archive-dir"
+fi
+
+YML="$CONF_DIR/mediamtx.yml"
+RENDERED="$(mktemp)"
+SET_ADDRS=(-e "s/^apiAddress:.*/apiAddress: 127.0.0.1:$P_API/" -e "s/^hlsAddress:.*/hlsAddress: 127.0.0.1:$P_HLS/"
+  -e "s/^webrtcAddress:.*/webrtcAddress: 127.0.0.1:$P_WHEP/"
+  -e "s/^webrtcLocalUDPAddress:.*/webrtcLocalUDPAddress: :$P_ICE/" -e "s/^webrtcLocalTCPAddress:.*/webrtcLocalTCPAddress: :$P_ICE/"
+  -e "s/^rtmpAddress:.*/rtmpAddress: :$P_RTMP/" -e "s/^srtAddress:.*/srtAddress: :$P_SRT/"
+  -e "s/^playbackAddress:.*/playbackAddress: 127.0.0.1:$P_PLAY/" -e "s/^rtspAddress:.*/rtspAddress: 127.0.0.1:$P_RTSP/")
+sed -e "s/@CDN_SECRET@/$SECRET/" "${SET_ADDRS[@]}" "$SRC/deploy/mediamtx.yml" > "$RENDERED"
+if [ -f "$YML" ] && ! grep -q '^playbackAddress:' "$YML"; then
+  # Файл от версии без архива / WebRTC / приёма от энкодеров — заменяем новым, прежний сохраняем
+  cp -p "$YML" "$YML.bak"
+  install -m 640 -o root -g "$SVC_USER" "$RENDERED" "$YML"
+  say "mediamtx.yml обновлён: архив, WebRTC и приём от энкодеров (прежний сохранён как mediamtx.yml.bak)"
+elif [ -f "$YML" ]; then
+  # Адреса API и HLS в существующем файле приводим к выбранным портам
+  sed -i "${SET_ADDRS[@]}" "$YML"
+  if ! grep -q '^hlsCDNSecret:' "$YML"; then
+    printf '\n# Добавлено установщиком RTSP Atom\nhlsCDNSecret: "%s"\n' "$SECRET" >> "$YML"
+  fi
+  if ! cmp -s "$RENDERED" "$YML"; then
+    install -m 640 -o root -g "$SVC_USER" "$RENDERED" "$YML.new"
+    warn "Ваш $YML изменён и оставлен как есть; новая версия — mediamtx.yml.new"
+  fi
+else
+  install -m 640 -o root -g "$SVC_USER" "$RENDERED" "$YML"
+fi
+chown root:"$SVC_USER" "$YML"
+chmod 640 "$YML"
+rm -f "$RENDERED"
+
+if [ $TLS -eq 1 ]; then
+  install -d -m 750 -o root -g "$SVC_USER" "$CONF_DIR/tls"
+  if [ ! -f "$CONF_DIR/tls/cert.pem" ]; then
+    command -v openssl >/dev/null || die "для --tls нужен openssl"
+    say "Создаю самоподписанный сертификат (10 лет)"
+    SAN="DNS:$(hostname),DNS:localhost,IP:127.0.0.1"
+    for ip in $(hostname -I 2>/dev/null || true); do SAN="$SAN,IP:$ip"; done
+    openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=$(hostname)" \
+      -addext "subjectAltName=$SAN" \
+      -keyout "$CONF_DIR/tls/key.pem" -out "$CONF_DIR/tls/cert.pem" 2>/dev/null
+    chown root:"$SVC_USER" "$CONF_DIR/tls/"*.pem
+    chmod 640 "$CONF_DIR/tls/"*.pem
+  fi
+fi
+
+# Применяем --tls к существующему конфигу
+if [ $TLS -eq 1 ]; then
+  "$NODE" -e '
+    const fs = require("fs");
+    const [file, tls] = process.argv.slice(1);
+    const cfg = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (tls === "1") {
+      cfg.tls = cfg.tls || {};
+      cfg.tls.enabled = true;
+      cfg.tls.cert = cfg.tls.cert || "/etc/rtspatom/tls/cert.pem";
+      cfg.tls.key = cfg.tls.key || "/etc/rtspatom/tls/key.pem";
+    }
+    fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + "\n");
+  ' "$CONF" "$TLS"
+fi
+PORT_NOW="$("$NODE" -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).port)' "$CONF")"
+TLS_NOW="$("$NODE" -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).tls?.enabled ? "https" : "http")' "$CONF")"
+
+if [ $HAVE_SYSTEMD -eq 1 ]; then
+  say "Устанавливаю службы systemd"
+  install -m 644 "$SRC/deploy/systemd/rtspatom.service" /etc/systemd/system/rtspatom.service
+  install -m 644 "$SRC/deploy/systemd/rtspatom-mediamtx.service" /etc/systemd/system/rtspatom-mediamtx.service
+  systemctl daemon-reload
+  systemctl enable rtspatom-mediamtx.service rtspatom.service >/dev/null
+else
+  warn "systemd не обнаружен — службы не установлены (запуск вручную, см. INSTALL.md)"
+fi
+
+# Межсетевой экран (если ufw включён)
+if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+  say "Открываю в ufw: $PORT_NOW/tcp (панель), $P_ICE/udp+tcp (видео WebRTC), $P_RTMP/tcp (RTMP), $P_SRT/udp (SRT)"
+  ufw allow "$PORT_NOW/tcp" >/dev/null || warn "не удалось открыть порт в ufw"
+  ufw allow "$P_ICE/udp" >/dev/null || warn "не удалось открыть порт $P_ICE/udp в ufw"
+  ufw allow "$P_ICE/tcp" >/dev/null || warn "не удалось открыть порт $P_ICE/tcp в ufw"
+  ufw allow "$P_RTMP/tcp" >/dev/null || warn "не удалось открыть порт $P_RTMP/tcp в ufw"
+  ufw allow "$P_SRT/udp" >/dev/null || warn "не удалось открыть порт $P_SRT/udp в ufw"
+fi
+
+# Первый администратор
+USERS="$(/usr/local/bin/rtspatom-admin list-users 2>/dev/null | grep -vc '^Пользователей нет' || true)"
+if [ "${USERS:-0}" = "0" ]; then
+  if [ -t 0 ]; then
+    LOGIN="${ADMIN_LOGIN:-admin}"
+    say "Создание администратора «$LOGIN»"
+    /usr/local/bin/rtspatom-admin create-admin "$LOGIN"
+  else
+    warn "Администратор не создан. Выполните: sudo rtspatom-admin create-admin"
+  fi
+fi
+
+if [ $START -eq 1 ] && [ $HAVE_SYSTEMD -eq 1 ]; then
+  say "Запускаю службы"
+  systemctl restart rtspatom-mediamtx.service
+  systemctl restart rtspatom.service
+  sleep 2
+  if systemctl is-active --quiet rtspatom.service && systemctl is-active --quiet rtspatom-mediamtx.service; then
+    say "Службы работают"
+  else
+    warn "Служба не запустилась. Подробности: journalctl -u rtspatom -u rtspatom-mediamtx -n 50"
+  fi
+fi
+
+echo
+say "Готово: $(head -1 "$PREFIX/VERSION" 2>/dev/null || echo "RTSP Atom")"
+echo "    Панель:   $TLS_NOW://$(hostname -I 2>/dev/null | awk '{print $1}'):$PORT_NOW"
+echo "    Видео:    WebRTC через порт $P_ICE (UDP и TCP) — он должен быть открыт для рабочих мест"
+echo "    Энкодеры: RTMP rtmp://<сервер>:$P_RTMP/live, SRT srt://<сервер>:$P_SRT — ключ потока выдаёт панель"
+# действующая папка: выбранная в панели или из config.json
+ARCHIVE_EFF="$(/usr/local/bin/rtspatom-admin archive-dir 2>/dev/null | tail -1 || true)"
+[ -n "$ARCHIVE_EFF" ] || ARCHIVE_EFF="$ARCHIVE_NOW"
+echo "    Архив:    $ARCHIVE_EFF (свободно $(df -h --output=avail "$ARCHIVE_EFF" 2>/dev/null | tail -1 | tr -d ' '))"
+echo "    Журнал:   journalctl -u rtspatom -f"
+echo "    Утилита:  sudo rtspatom-admin help"
+echo "    Удаление: sudo $PREFIX/uninstall.sh"

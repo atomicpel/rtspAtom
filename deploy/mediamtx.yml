@@ -1,0 +1,83 @@
+# Конфигурация MediaMTX для RTSP Atom (проверена с MediaMTX v1.21.2).
+# Новые версии MediaMTX могут добавлять серверы, включённые по умолчанию, —
+# при обновлении MediaMTX сверяйтесь с mediamtx.default.yml из пакета.
+# Управляющие порты слушаются только на 127.0.0.1: камеры забирает MediaMTX, а браузеры
+# подключаются к видео через панель (порт 8080) с проверкой прав. Наружу открыты:
+#   8189 UDP/TCP — видео WebRTC браузерам (уже после проверки в панели);
+#   1935 TCP (RTMP) и 8890 UDP (SRT) — приём от энкодеров, которые отправляют поток сами.
+# Публиковать можно только в пути live/<ключ>, созданные панелью; смотреть — только через панель.
+# Пути (камеры) панель добавляет сама через API — вручную их сюда не пишут.
+
+logLevel: info
+logDestinations: [stdout]
+
+# Управляющий API — им пользуется панель.
+api: yes
+apiAddress: 127.0.0.1:9997
+
+metrics: no
+pprof: no
+
+# Выдача записей архива — только панели на этом компьютере.
+# Что и куда писать (record, recordPath, срок хранения), панель задаёт для каждого потока сама.
+playback: yes
+playbackAddress: 127.0.0.1:9996
+
+# Доступ: читать потоки и управлять MediaMTX может только панель на этом же компьютере.
+# Энкодеры публикуют только в пути live/<20 символов ключа>: путь существует, лишь пока
+# панель держит такой поток, поэтому без ключа опубликовать ничего нельзя.
+authInternalUsers:
+  - user: any
+    pass:
+    ips: ['127.0.0.1', '::1']
+    permissions:
+      - action: read
+      - action: api
+      - action: playback
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: publish
+        path: '~^live/[a-z0-9]{20}$'
+
+# RTSP-сервер — только на 127.0.0.1 и только TCP: через него поток от энкодера (live/<ключ>)
+# передаётся в путь s_<id>, который пишется в архив. Камеры с RTSP MediaMTX забирает сам.
+rtsp: yes
+rtspTransports: [tcp]
+rtspEncryption: "no"
+rtspAddress: 127.0.0.1:8554
+moq: no
+
+# Приём от энкодеров (режим «энкодер отправляет сам»):
+#   RTMP: сервер rtmp://<сервер>:1935/live, ключ потока — из панели
+#   SRT:  srt://<сервер>:8890?streamid=publish:live/<ключ>
+rtmp: yes
+rtmpEncryption: "no"
+rtmpAddress: :1935
+srt: yes
+srtAddress: :8890
+
+# WebRTC: сигнализация (WHEP) — только с 127.0.0.1, через панель;
+# видео — напрямую браузеру через порт ICE (UDP, при блокировке UDP — TCP).
+webrtc: yes
+webrtcAddress: 127.0.0.1:8890
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: :8189
+webrtcIPsFromInterfaces: yes
+webrtcAdditionalHosts: []
+webrtcICEServers2: []
+
+hls: yes
+hlsAddress: 127.0.0.1:8888
+# Держать HLS готовым, чтобы видеостена открывалась без задержки.
+hlsAlwaysRemux: yes
+hlsVariant: lowLatency
+hlsSegmentCount: 7
+hlsSegmentDuration: 1s
+hlsPartDuration: 200ms
+# Панель обращается к HLS как доверенный прокси (без cookie-сессий MediaMTX),
+# подписывая запросы этим секретом. Значение подставляет установщик.
+hlsCDNSecret: "@CDN_SECRET@"
+
+paths: {}
